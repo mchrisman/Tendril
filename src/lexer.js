@@ -4,6 +4,7 @@
 // - Strips // and /* */ comments where whitespace is allowed.
 // - Recognizes JS-like /regex/ with flags (ims supported; u assumed externally).
 // - Keeps spans {start,end} (UTF-16 indices) for source mapping.
+// - Annotates tokens with wsBefore/wsAfter flags to enforce no-WS-around '.'.
 // - Does NOT validate semantic placement (parser & validator handle that).
 
 /**
@@ -77,43 +78,57 @@ export class PatternSyntaxError extends Error {
 
 /**
  * Lex one pattern string into tokens with spans.
+ * Each token has:
+ *   - kind, value, span {start,end}
+ *   - wsBefore: boolean (whitespace/comments before this token)
+ *   - wsAfter:  boolean (whitespace/comments after this token) — set when the NEXT token is lexed
  */
 export function lex(source) {
   const s = String(source);
   const tokens = [];
   let i = 0;
+  let lastTok = null; // to set wsAfter on the previously emitted token
 
-  const push = (kind, value = null, start = i, end = i) => {
-    tokens.push({kind, value, span: {start, end}});
+  const push = (kind, value = null, start = i, end = i, wsBefore = false) => {
+    const tok = {kind, value, span: {start, end}, wsBefore, wsAfter: false};
+    tokens.push(tok);
+    lastTok = tok;
   };
 
   const peek = () => s[i];
   const eat = () => s[i++];
 
-  const isWS = c => c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f";
+  const isWSChar = c => c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f";
   const isDigit = c => c >= "0" && c <= "9";
   const isAlpha = c => (c >= "A" && c <= "Z") || (c >= "a" && c <= "z");
   const isBareStart = c => isAlpha(c) || c === "_";
   const isBareCont = c => isBareStart(c) || isDigit(c);
 
-  // Treat commas as whitespace (spec) — we won't emit COMMA tokens; we skip them like WS.
+  /**
+   * Skip whitespace, commas, and comments.
+   * Returns true if ANY was skipped.
+   */
   const skipWSAndComments = () => {
+    let skipped = false;
     while (i < s.length) {
       const c = peek();
       // Whitespace or comma
-      if (isWS(c) || c === ",") {
+      if (isWSChar(c) || c === ",") {
         i++;
+        skipped = true;
         continue;
       }
       // // comment
       if (c === "/" && s[i + 1] === "/") {
         i += 2;
+        skipped = true;
         while (i < s.length && s[i] !== "\n") i++;
         continue;
       }
       // /* block */
       if (c === "/" && s[i + 1] === "*") {
         i += 2;
+        skipped = true;
         while (i < s.length && !(s[i] === "*" && s[i + 1] === "/")) {
           i++;
         }
@@ -123,19 +138,17 @@ export function lex(source) {
       }
       break;
     }
+    return skipped;
   };
 
-  const lexNumber = () => {
+  const lexNumber = (wsBefore) => {
     const start = i;
-    // optional sign
     if ((s[i] === "+" || s[i] === "-") && isDigit(s[i + 1])) i++;
     while (isDigit(s[i])) i++;
-    // decimal
     if (s[i] === "." && isDigit(s[i + 1])) {
       i++;
       while (isDigit(s[i])) i++;
     }
-    // exponent
     if ((s[i] === "e" || s[i] === "E") && ((s[i + 1] === "+" || s[i + 1] === "-" || isDigit(s[i + 1])))) {
       i++;
       if (s[i] === "+" || s[i] === "-") i++;
@@ -145,10 +158,10 @@ export function lex(source) {
     const text = s.slice(start, i);
     const num = Number(text);
     if (!Number.isFinite(num)) throw new PatternSyntaxError("Invalid number", start);
-    push(T.NUMBER, num, start, i);
+    push(T.NUMBER, num, start, i, wsBefore);
   };
 
-  const lexString = () => {
+  const lexString = (wsBefore) => {
     const quote = eat(); // "
     const start = i - 1;
     let out = "";
@@ -157,17 +170,16 @@ export function lex(source) {
       if (c === "\\") {
         if (i >= s.length) throw new PatternSyntaxError("Unterminated string escape", i);
         const e = eat();
-        // Minimal escapes; delegate more to JS unescape semantics if needed
         if (e === "n") out += "\n";
         else if (e === "r") out += "\r";
         else if (e === "t") out += "\t";
         else if (e === '"') out += '"';
         else if (e === "\\") out += "\\";
-        else out += e; // keep as-is
+        else out += e;
         continue;
       }
       if (c === quote) {
-        push(T.STRING, out, start, i);
+        push(T.STRING, out, start, i, wsBefore);
         return;
       }
       out += c;
@@ -175,9 +187,7 @@ export function lex(source) {
     throw new PatternSyntaxError("Unterminated string", start);
   };
 
-  // Regex literal: /.../flags
-  // Heuristic: scan forward for a slash that, together with subsequent [a-z]* flags, forms a compilable JS regex.
-  const lexRegex = () => {
+  const lexRegex = (wsBefore) => {
     const start = i;
     eat(); // '/'
     let body = "";
@@ -196,46 +206,41 @@ export function lex(source) {
       body += c;
     }
     if (!closed) throw new PatternSyntaxError("Unterminated regex", start);
-    // Flags: only ims accepted; others present are not fatal here—we store flags; runtime may ignore or complain.
     let flags = "";
-    while (i < s.length && /[a-z]/i.test(s[i])) {
-      flags += s[i++];
-    }
-    // try compile to ensure correctness (spec: bad regex → syntax error)
+    while (i < s.length && /[a-z]/i.test(s[i])) flags += s[i++];
     try {
-      // Always include 'u' semantics conceptually; we keep user flags as provided.
-      /* eslint no-new: 0 */
       new RegExp(body, flags);
     } catch (e) {
       throw new PatternSyntaxError("Invalid regex: " + e.message, start);
     }
-    push(T.REGEX, {body, flags}, start, i);
+    push(T.REGEX, {body, flags}, start, i, wsBefore);
   };
 
-  const lexBareOrKeywordOrBool = () => {
+  const lexBareOrKeywordOrBool = (wsBefore) => {
     const start = i;
-    i++; // first char already ensured bare-start
+    i++;
     while (i < s.length && isBareCont(s[i])) i++;
     const txt = s.slice(start, i);
     if (txt === "true" || txt === "false") {
-      push(T.BOOL, txt === "true", start, i);
+      push(T.BOOL, txt === "true", start, i, wsBefore);
       return;
     }
     if (txt === "as") {
-      push(T.AS, txt, start, i);
+      push(T.AS, txt, start, i, wsBefore);
       return;
     }
-    // bareword literal (string)
-    push(T.BARE, txt, start, i);
+    push(T.BARE, txt, start, i, wsBefore);
   };
 
   const tryTwoChar = (a, b) => s[i] === a && s[i + 1] === b;
   const tryThreeChar = (a, b, c) => s[i] === a && s[i + 1] === b && s[i + 2] === c;
 
   while (true) {
-    skipWSAndComments();
+    const skipped = skipWSAndComments();
+    if (lastTok) lastTok.wsAfter = skipped;
+
     if (i >= s.length) {
-      push(T.EOF, null, i, i);
+      push(T.EOF, null, i, i, skipped);
       break;
     }
     const c = peek();
@@ -244,13 +249,13 @@ export function lex(source) {
     if (tryTwoChar(">", ">")) {
       const start = i;
       i += 2;
-      push(T.REPL_L, ">>", start, i);
+      push(T.REPL_L, ">>", start, i, skipped);
       continue;
     }
     if (tryTwoChar("<", "<")) {
       const start = i;
       i += 2;
-      push(T.REPL_R, "<<", start, i);
+      push(T.REPL_R, "<<", start, i, skipped);
       continue;
     }
 
@@ -258,13 +263,13 @@ export function lex(source) {
     if (tryTwoChar("{", "{")) {
       const start = i;
       i += 2;
-      push(T.LDBRACE, "{{", start, i);
+      push(T.LDBRACE, "{{", start, i, skipped);
       continue;
     }
     if (tryTwoChar("}", "}")) {
       const start = i;
       i += 2;
-      push(T.RDBRACE, "}}", start, i);
+      push(T.RDBRACE, "}}", start, i, skipped);
       continue;
     }
 
@@ -272,7 +277,7 @@ export function lex(source) {
     if (tryThreeChar(".", ".", ".")) {
       const start = i;
       i += 3;
-      push(T.ELLIPSIS, "...", start, i);
+      push(T.ELLIPSIS, "...", start, i, skipped);
       continue;
     }
 
@@ -280,107 +285,107 @@ export function lex(source) {
     if (tryThreeChar("(", "?", "=")) {
       const start = i;
       i += 3;
-      push(T.ASSERT_POS, "(?=", start, i);
+      push(T.ASSERT_POS, "(?=", start, i, skipped);
       continue;
     }
     if (tryThreeChar("(", "?", "!")) {
       const start = i;
       i += 3;
-      push(T.ASSERT_NEG, "(?!", start, i);
+      push(T.ASSERT_NEG, "(?!", start, i, skipped);
       continue;
     }
 
     // single char punctuation
     if (c === "[") {
-      push(T.LBRACK, "[", i, ++i);
+      push(T.LBRACK, "[", i, ++i, skipped);
       continue;
     }
     if (c === "]") {
-      push(T.RBRACK, "]", i, ++i);
+      push(T.RBRACK, "]", i, ++i, skipped);
       continue;
     }
     if (c === "{") {
-      push(T.LBRACE, "{", i, ++i);
+      push(T.LBRACE, "{", i, ++i, skipped);
       continue;
     }
     if (c === "}") {
-      push(T.RBRACE, "}", i, ++i);
+      push(T.RBRACE, "}", i, ++i, skipped);
       continue;
     }
     if (c === "(") {
-      push(T.LPAREN, "(", i, ++i);
+      push(T.LPAREN, "(", i, ++i, skipped);
       continue;
     }
     if (c === ")") {
-      push(T.RPAREN, ")", i, ++i);
+      push(T.RPAREN, ")", i, ++i, skipped);
       continue;
     }
     if (c === ":") {
-      push(T.COLON, ":", i, ++i);
+      push(T.COLON, ":", i, ++i, skipped);
       continue;
     }
     if (c === ".") {
-      push(T.DOT, ".", i, ++i);
+      push(T.DOT, ".", i, ++i, skipped);
       continue;
     }
     if (c === "|") {
-      push(T.PIPE, "|", i, ++i);
+      push(T.PIPE, "|", i, ++i, skipped);
       continue;
     }
     if (c === "&") {
-      push(T.AMP, "&", i, ++i);
+      push(T.AMP, "&", i, ++i, skipped);
       continue;
     }
     if (c === "*") {
-      push(T.STAR, "*", i, ++i);
+      push(T.STAR, "*", i, ++i, skipped);
       continue;
     }
     if (c === "+") {
-      push(T.PLUS, "+", i, ++i);
+      push(T.PLUS, "+", i, ++i, skipped);
       continue;
     }
     if (c === "?") {
-      push(T.QMARK, "?", i, ++i);
+      push(T.QMARK, "?", i, ++i, skipped);
       continue;
     }
     if (c === "#") {
-      push(T.HASH, "#", i, ++i);
+      push(T.HASH, "#", i, ++i, skipped);
       continue;
     }
     if (c === "=") {
-      push(T.EQ, "=", i, ++i);
+      push(T.EQ, "=", i, ++i, skipped);
       continue;
     }
     if (c === "$") {
-      push(T.DOLLAR, "$", i, ++i);
+      push(T.DOLLAR, "$", i, ++i, skipped);
       continue;
     }
     if (c === "_") {
-      push(T.ANY, "_", i, ++i);
+      push(T.ANY, "_", i, ++i, skipped);
       continue;
     }
 
     // Strings
     if (c === '"') {
-      lexString();
+      lexString(skipped);
       continue;
     }
 
     // Regex literal
     if (c === "/") {
-      lexRegex();
+      lexRegex(skipped);
       continue;
     }
 
     // Number
     if (isDigit(c) || ((c === "+" || c === "-") && isDigit(s[i + 1]))) {
-      lexNumber();
+      lexNumber(skipped);
       continue;
     }
 
     // Bareword or keyword
     if (isBareStart(c)) {
-      lexBareOrKeywordOrBool();
+      lexBareOrKeywordOrBool(skipped);
       continue;
     }
 

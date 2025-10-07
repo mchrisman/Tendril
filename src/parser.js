@@ -61,7 +61,6 @@ class Parser {
   }
 
   // ====== Grammar ======
-  // pattern := expr_or
   parsePattern() {
     return this.parseOr();
   }
@@ -91,8 +90,6 @@ class Parser {
   }
 
   // expr_adj := expr_dot ( adj expr_dot )*
-  // adjacency is implicit: we treat boundaries between units inside array/set/object contexts.
-  // Here, we parse as a left-associative sequence node "Adj".
   parseAdj() {
     let left = this.parseDot();
     const elems = [left];
@@ -107,7 +104,6 @@ class Parser {
 
   canStartExprAfterAdj() {
     const k = this.cur().kind;
-    // A new expr starts if the next token begins an atom/group/path start
     return (
       k === T.LPAREN ||
       k === T.LBRACK ||
@@ -126,8 +122,21 @@ class Parser {
   // expr_dot := expr_quant ( '.' expr_quant )*
   parseDot() {
     let left = this.parseQuant();
-    while (this.opt(T.DOT)) {
+    while (true) {
+      const dotTok = this.opt(T.DOT);
+      if (!dotTok) break;
+
+      // Enforce NO whitespace/comments around '.'
+      if (dotTok.wsBefore || dotTok.wsAfter) {
+        throw this.err("No whitespace or comments around '.'", dotTok.span.start);
+      }
+
       const right = this.parseQuant();
+
+      // Also ensure the token immediately before '.' was adjacent.
+      // We can peek back one token in the token stream (index this.i - 2 is the dot; -3 is prev),
+      // but wsBefore/wsAfter already encode both sides; above check suffices.
+
       const span = {start: left.span.start, end: right.span.end};
       left = node("Dot", span, {left, right});
     }
@@ -158,9 +167,8 @@ class Parser {
         base = node("Quant", span, {sub: base, min, max, greedy});
         continue;
       }
-      // explicit {m,n} after arrays segments/groups via STAR-like style: we allow trailing {m,n} after any primary
+      // explicit {m,n}
       if (t.kind === T.LBRACE && this.peek(1).kind === T.NUMBER) {
-        // Parse {m,n} or {m}
         const l = this.eat(T.LBRACE);
         const mTok = this.eat(T.NUMBER);
         let min = mTok.value;
@@ -198,7 +206,6 @@ class Parser {
     if (t.kind === T.LBRACK) return this.parseArray();
 
     if (t.kind === T.LBRACE || t.kind === T.LDBRACE) {
-      // distinguish set vs object
       if (t.kind === T.LDBRACE) return this.parseSet();
       return this.parseObject();
     }
@@ -215,7 +222,6 @@ class Parser {
 
     if (t.kind === T.ELLIPSIS) {
       const tok = this.eat(T.ELLIPSIS);
-      // sugar lowered later; keep as explicit AnySpread node here
       return node("Spread", tok.span, {});
     }
 
@@ -228,11 +234,9 @@ class Parser {
     while (!this.at(T.RBRACK)) {
       const pat = this.parseOr();
       elems.push(pat);
-      // commas treated as whitespace by lexer, so no need to consume here
       if (this.at(T.EOF)) throw this.err("Unterminated array", start);
     }
     const end = this.eat(T.RBRACK).span.end;
-    // arrays anchored by default; spread allowed as sugar
     return node("Array", {start, end}, {elems, anchored: true});
   }
 
@@ -248,58 +252,80 @@ class Parser {
     return node("Set", {start, end}, {members});
   }
 
-  parseKV() {
-    // kPat ':' vPat
-    // Left side can be vertical chain (dot), with right-to-left associativity realized by our Dot nodes already.
+  parseKV_NormalOrReplacement() {
+    // Handles:
+    //   >> k << : v      → ReplaceKey
+    //   k : >> v <<      → ReplaceVal
+    //   k : v            → normal KV (possibly with #count)
+    if (this.at(T.REPL_L)) {
+      const start = this.eat(T.REPL_L).span.start;
+      const kPat = this.parseDot();
+      this.eat(T.REPL_R);
+      this.eat(T.COLON);
+      const vPat = this.parseOr();
+      const span = {start, end: vPat.span.end};
+      return {kind: "ReplaceKey", node: node("ReplaceKey", span, {kPat, vPat})};
+    }
+
     const kPat = this.parseDot();
     this.eat(T.COLON);
+
+    if (this.at(T.REPL_L)) {
+      const start = kPat.span.start;
+      this.eat(T.REPL_L);
+      const vPat = this.parseOr();
+      const r = this.eat(T.REPL_R);
+      const span = {start, end: r.span.end};
+      return {kind: "ReplaceVal", node: node("ReplaceVal", span, {kPat, vPat})};
+    }
+
     const vPat = this.parseOr();
-    return {kPat, vPat};
+    let count = null;
+    if (this.at(T.HASH)) {
+      this.eat(T.HASH);
+      this.eat(T.LBRACE);
+      const mTok = this.eat(T.NUMBER);
+      let min = mTok.value;
+      let max = min;
+      if (this.opt(T.COMMA)) {
+        if (this.at(T.NUMBER)) {
+          const nTok = this.eat(T.NUMBER);
+          max = nTok.value;
+        } else {
+          max = Infinity;
+        }
+      }
+      this.eat(T.RBRACE);
+      count = {min, max};
+    }
+    return {kind: "KV", node: {kPat, vPat, count}};
   }
 
   parseObject() {
     const start = this.eat(T.LBRACE).span.start;
     const kvs = [];
-    let typeGuard = null; // "as SomeClass" optional after }
+    let typeGuard = null;
     let hasSpread = false;
 
     while (!this.at(T.RBRACE)) {
-      // object allows ... sugar (= _:_ #?) — we don't lower here; validator/compiler can.
       if (this.at(T.ELLIPSIS)) {
-        const sp = this.eat(T.ELLIPSIS);
+        this.eat(T.ELLIPSIS);
         hasSpread = true;
-        // syntactically it's allowed to appear alongside kvs; no kv added
       } else {
-        const {kPat, vPat} = this.parseKV();
-        // optional counting constraint k:v #{m,n}
-        let count = null;
-        if (this.at(T.HASH)) {
-          this.eat(T.HASH);
-          this.eat(T.LBRACE);
-          const mTok = this.eat(T.NUMBER);
-          let min = mTok.value;
-          let max = min;
-          if (this.opt(T.COMMA)) {
-            if (this.at(T.NUMBER)) {
-              const nTok = this.eat(T.NUMBER);
-              max = nTok.value;
-            } else {
-              max = Infinity;
-            }
-          }
-          this.eat(T.RBRACE);
-          count = {min, max};
+        const res = this.parseKV_NormalOrReplacement();
+        if (res.kind === "KV" || res.kind === "ReplaceKey" || res.kind === "ReplaceVal") {
+          kvs.push(res.node);
+        } else {
+          throw this.err("Unexpected KV form", this.cur().span.start);
         }
-        kvs.push({kPat, vPat, count});
       }
       if (this.at(T.EOF)) throw this.err("Unterminated object", start);
     }
     const end = this.eat(T.RBRACE).span.end;
 
-    // optional "as Type"
     if (this.at(T.AS)) {
       const asTok = this.eat(T.AS);
-      const ident = this.eat(T.BARE); // simple ident; could also allow string
+      const ident = this.eat(T.BARE);
       typeGuard = {name: ident.value, span: {start: asTok.span.start, end: ident.span.end}};
     }
 
@@ -307,13 +333,8 @@ class Parser {
   }
 
   parseReplacement() {
-    // >> a b c <<    or >> k << : v  or k : >> v <<
+    // >> a b c <<   (slice replacement target, typically in arrays)
     const leftTok = this.eat(T.REPL_L);
-    // We don't know context until we see ':' or '<<'
-    if (this.at(T.RBRACE) || this.at(T.RBRACK) || this.at(T.RDBRACE)) {
-      throw this.err("Empty replacement slice not allowed", leftTok.span.start);
-    }
-    // Try to parse a general pattern until we see REPL_R
     const inner = this.parseOr();
     const rightTok = this.eat(T.REPL_R);
     const span = {start: leftTok.span.start, end: rightTok.span.end};
@@ -340,7 +361,6 @@ class Parser {
     const varNode = node("Var", {start: dollar.span.start, end: nameTok.span.end}, {name: nameTok.value});
 
     if (this.at(T.EQ)) {
-      // $x = pattern | $x = $y
       this.eat(T.EQ);
       if (this.at(T.DOLLAR)) {
         const other = this.parseBindingOrVar();
@@ -371,7 +391,6 @@ class Parser {
     }
     if (t.kind === T.BARE) {
       const tok = this.eat(T.BARE);
-      // Barewords are string literals per spec
       return node("String", tok.span, {value: tok.value});
     }
     if (t.kind === T.REGEX) {
@@ -382,13 +401,13 @@ class Parser {
       const tok = this.eat(T.ANY);
       return node("Any", tok.span, {});
     }
-    throw this.err(`Unexpected token ${t.kind}`);
+    throw new PatternSyntaxError(`Unexpected token ${t.kind}`);
   }
 
   expect(kind) {
     const t = this.cur();
     if (t.kind !== kind) {
-      throw this.err(`Expected ${kind}, got ${t.kind}`, t.span.start);
+      throw new PatternSyntaxError(`Expected ${kind}, got ${t.kind}`, t.span.start);
     }
     this.i++;
     return t;

@@ -1,13 +1,12 @@
 // ast-validate.js
 // Structural validation and light normalization passes.
 // Enforces:
-// - One replacement target (>>…<<) per pattern.
+// - Exactly one replacement target (>>…<<) across slice/key/value forms.
 // - Arrays anchored by default; confirm spread sugar presence toggles anchoring in objects.
 // - Lookaheads appear only in allowed places (before array unit / key / value).
-// - Object kv counts well-formed (m<=n; finite n unless {m,} used to mean Infinity).
-// - Vertical dot precedence is already encoded by the parser; here we check shape for object paths.
+// - Object kv counts well-formed (m<=n; finite n unless {m,} → Infinity).
+// - Vertical dot precedence is already encoded by the parser.
 // - BARE === STRING invariant already lowered by parser.
-// Produces a validated AST (can also annotate flags).
 
 import {PatternSyntaxError} from "./lexer.js";
 
@@ -17,7 +16,6 @@ import {PatternSyntaxError} from "./lexer.js";
 export function validateAST(ast) {
   const ctx = {
     replaceTargets: 0,
-    // track path for error reporting
     stack: [],
   };
 
@@ -47,7 +45,6 @@ function visit(n, ctx, meta) {
       out = {...n, elems: n.elems.map(e => visit(e, ctx, meta))};
       break;
     case "Dot":
-      // Dot nodes can appear generally; special handling occurs inside Object kv path compilation.
       out = {...n, left: visit(n.left, ctx, meta), right: visit(n.right, ctx, meta)};
       break;
     case "Quant":
@@ -59,9 +56,7 @@ function visit(n, ctx, meta) {
       break;
 
     case "Array":
-      // arrays anchored by default (parser sets anchored:true)
       out = {...n, elems: n.elems.map(e => visit(e, ctx, {...meta, context: "array"}))};
-      // validate spreads at top-level of array elements: allow "Spread" anywhere
       break;
 
     case "Set":
@@ -74,11 +69,36 @@ function visit(n, ctx, meta) {
 
     case "ReplaceSlice":
       ctx.replaceTargets++;
+      // Slice replacement is allowed anywhere a primary appears (commonly arrays).
       out = {...n, target: visit(n.target, ctx, meta)};
       break;
 
+    case "ReplaceKey":
+      ctx.replaceTargets++;
+      // Must appear only inside Object kv list; parser guarantees placement, but we enforce context weakly.
+      if (meta.context !== "object") {
+        throw new PatternSyntaxError("Key replacement (>>k<<:v) only valid inside an object", n.span.start);
+      }
+      out = {
+        ...n,
+        kPat: visit(n.kPat, ctx, {...meta, context: "object-key"}),
+        vPat: visit(n.vPat, ctx, {...meta, context: "object-val"}),
+      };
+      break;
+
+    case "ReplaceVal":
+      ctx.replaceTargets++;
+      if (meta.context !== "object") {
+        throw new PatternSyntaxError("Value replacement (k:>>v<<) only valid inside an object", n.span.start);
+      }
+      out = {
+        ...n,
+        kPat: visit(n.kPat, ctx, {...meta, context: "object-key"}),
+        vPat: visit(n.vPat, ctx, {...meta, context: "object-val"}),
+      };
+      break;
+
     case "Assert":
-      // Placement: must be directly before a unit in array context or key/value in object context.
       out = validateAssert(n, ctx, meta);
       break;
 
@@ -126,14 +146,17 @@ function checkQuant(q) {
 }
 
 function validateObject(n, ctx, meta) {
-  // kvs independent and non-consuming; counts post-check form is stored.
   const kvs = [];
   for (const kv of n.kvs) {
-    // Validate path on the key: right-assoc Dot is fine. No extra constraints here.
+    if (kv.type === "ReplaceKey" || kv.type === "ReplaceVal") {
+      // Already validated in the node visitor above (placement + recursion)
+      kvs.push(visit(kv, ctx, {...meta, context: "object"}));
+      continue;
+    }
+
     const kPat = visit(kv.kPat, ctx, {...meta, context: "object-key"});
     const vPat = visit(kv.vPat, ctx, {...meta, context: "object-val"});
 
-    // Count shape
     if (kv.count) {
       const {min, max} = kv.count;
       if (!Number.isFinite(min) || min < 0) {
@@ -149,22 +172,14 @@ function validateObject(n, ctx, meta) {
     kvs.push({...kv, kPat, vPat});
   }
 
-  // Anchoring: if hasSpread, object is not anchored; otherwise anchored.
   const anchored = n.anchored && !n.hasSpread ? true : !n.hasSpread;
   return {...n, kvs, anchored};
 }
 
 function validateAssert(n, ctx, meta) {
-  // Must appear immediately before a "unit" depending on context:
-  // - array: before an element (OK wherever a primary would be)
-  // - object: before key unit (in key pattern) or before value unit (in vPat)
-  // - set: before a member unit
-  // We can't fully know "immediately before unit" in the AST without context-sensitive parsing,
-  // but we can at least forbid global/top usage outside a container context.
   if (!(meta.context === "array" || meta.context === "object-key" || meta.context === "object-val" || meta.context === "set")) {
     throw new PatternSyntaxError("Lookahead assertions must guard a unit in array/set or key/value in object", n.span.start);
   }
-  // Validate inner pattern recursively in the same meta-context
   const pat = visit(n.pat, ctx, meta);
   return {...n, pat};
 }
