@@ -6,7 +6,7 @@
 
 # Quick Start
 
-In these examples, `foo =~ bar` is short for `Pattern("foo").matches(bar)`, and `===` denotes equivalence of patterns
+This serves as the primary specification. In these examples, `foo =~ bar` is short for `Pattern("foo").matches(bar)`, and `===` denotes equivalence of patterns
 
 ## Atoms
 
@@ -37,7 +37,7 @@ a b c                               // 3 Set members (only appears within Sets)
 k : >> v <<                         // Designate a value to be replaced
 ```
    
-Precedence high to low:  Parentheses (grouping), quantifiers, space (adjacency), `&`, `|`
+Precedence high to low:  Parentheses (grouping), quantifiers, . (key descent), space (adjacency), `&`, `|`
 
 ```
 pattern1 | pattern2                 // Alternation
@@ -50,7 +50,7 @@ pattern1 & pattern2                 // The single object must match both pattern
 ```
 [ a b ]      =~ ["a","b"]
 [ a b ]     !=~ ["a","b","c"]
-[ a b ... ]  =~ ["a","b","c']       // "..." is the actual syntax
+[ a b ... ]  =~ ["a","b","c"]       // "..." is the actual syntax
 
 { b:_  c:_ }   =~ { b:1, c:2 }      // Every k/v pattern is satisfied, every prop of obj is described
 { b:_  c:_ }  !=~ { b:1 }
@@ -94,23 +94,22 @@ a*{2,3}? a*?, a+?, a??              // lazy (non-greedy)
 ## Quantifiers in object/set context
 
 ```
-k:v #{2,3}     === The object being matched had exactly two to four keys (not more) matching the K pattern.
+k:v #{2,4}     === The object being matched had exactly two to four keys (not more) matching the K pattern.
 k:v #2         === k:v #{2,2}
 k:v #?         === k:v #{0,Infinity}   // watch out, this is different from arrays
 k:v            === k:v #{1,Infinity}   // default
 
 ...            === _:_ #?
+
 ```
-   
 ## Assertions
-
 ```
-(?=pattern)      // lookahead
+
+(?=pattern)      // lookahead, may appear in an array context, or immediately before a key pattern or a value pattern.
 (?!pattern)      // negative lookahead
-```
-      
-## Vertical patterns
 
+``` 
+## Vertical patterns
 ```
 { a.b.c:d } =~ {'a': {'b': {'c':'d'}}}
 ```

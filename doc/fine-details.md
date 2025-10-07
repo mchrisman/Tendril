@@ -1,5 +1,8 @@
-
 # Nitpicky details and resolved ambiguities
+
+Additional details and disambiguations too nit-picky to be included in the main documentation.  
+
+n.b. Most of these are of the "just do the obvious thing" variety and could be open to debate.
 
 ## Reserved words (deduced from spec)
 
