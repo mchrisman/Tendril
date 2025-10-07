@@ -2,7 +2,7 @@
 
 # Tendril
 
-Object graphs grow in all directions. Your pattern matching language should too.
+**Object graphs grow in all directions. Your pattern matching language should too.**
 
 # Quick Start
 
@@ -155,13 +155,4 @@ Compiles to immutable Matcher generator subclasses in the style typical of RegEx
 scope (variable binding) tracking, source map for debugging, pruning of branches when bound variable constraints
 are encountered. API supports iterating over all matches (giving the variable bindings), optional pre-initialized variables, variables that bind to slices, e.g. `Pattern("_ $x=( _ _ )")`. Variable binding works as expected within repetitions/alternations. 
 
-
-
-
-
-
-
-
-
-
-
+---
