@@ -10,6 +10,25 @@ import {lex, T, PatternSyntaxError} from "./lexer.js";
 // AST node constructors
 const node = (type, span, fields = {}) => ({type, span, ...fields});
 
+// Utilities to handle "trailing dot" propagation/merging
+const withTrailingDot = (n, dotTok) => {
+  // return a shallow-cloned node carrying trailingDot=true and span extended to include '.'
+  return {...n, trailingDot: true, span: { start: n.span.start, end: dotTok.span.end }};
+};
+const stripTrailingDot = (n) => {
+  if (!n || !n.trailingDot) return n;
+  // Clear the flag without changing structure
+  const { trailingDot, ...rest } = n;
+  // Recursively clear on wrappers that only shuttle the flag (Group/Quant)
+  if (rest.type === "Group") {
+    return {...rest, sub: stripTrailingDot(rest.sub)};
+  }
+  if (rest.type === "Quant") {
+    return {...rest, sub: stripTrailingDot(rest.sub)};
+  }
+  return rest;
+};
+
 /**
  * Parse entrypoint
  */
@@ -90,14 +109,23 @@ class Parser {
   }
 
   // expr_adj := expr_dot ( adj expr_dot )*
+  // Special rule: if the previous element carries trailingDot, adjacency is upgraded
+  // to a DOT merge: Dot(prev-without-trailing, next).
   parseAdj() {
     let left = this.parseDot();
     const elems = [left];
     while (this.canStartExprAfterAdj()) {
-      const right = this.parseDot();
-      elems.push(right);
+      const next = this.parseDot();
+      const prev = elems[elems.length - 1];
+      if (prev && prev.trailingDot) {
+        const lhs = stripTrailingDot(prev);
+        const span = { start: lhs.span.start, end: next.span.end };
+        elems[elems.length - 1] = node("Dot", span, { left: lhs, right: next });
+      } else {
+        elems.push(next);
     }
-    if (elems.length === 1) return left;
+    }
+    if (elems.length === 1) return elems[0];
     const span = {start: elems[0].span.start, end: elems[elems.length - 1].span.end};
     return node("Adj", span, {elems});
   }
@@ -134,6 +162,15 @@ class Parser {
   // expr_and_noadj := expr_dot ( '&' expr_dot )*
   parseAndNoAdj() {
     let left = this.parseDot();
+
+    // Handle trailingDot merge (like parseAdj does)
+    if (left.trailingDot && this.canStartExprAfterAdj()) {
+      const lhs = stripTrailingDot(left);
+      const next = this.parseDot();
+      const span = { start: lhs.span.start, end: next.span.end };
+      left = node("Dot", span, { left: lhs, right: next });
+    }
+
     while (this.opt(T.AMP)) {
       const right = this.parseDot();
       const span = {start: left.span.start, end: right.span.end};
@@ -147,6 +184,9 @@ class Parser {
   // separator (handled by container loops below), not an operator.
 
   // expr_dot := expr_quant ( '.' expr_quant )*
+  // Trailing-dot support: if '.' is followed by a closer or '<<', we mark the current
+  // left as {trailingDot:true} and extend its span to include '.'. The merge to a real
+  // Dot happens in parseAdj() when the next token appears.
   parseDot() {
     let left = this.parseQuant();
     while (true) {
@@ -158,6 +198,16 @@ class Parser {
         throw this.err("No whitespace or comments around '.'", dotTok.span.start);
       }
 
+      const k = this.cur().kind;
+      const rhsWouldTerminate =
+        k === T.RPAREN || k === T.RBRACK || k === T.RBRACE || k === T.RDBRACE || k === T.REPL_R;
+      if (rhsWouldTerminate) {
+        // Produce a trailing-dot marker on the left node
+        left = withTrailingDot(left, dotTok);
+        // Do not attempt to consume a rhs here; parseAdj() will attach it later
+        continue;
+      }
+
       const right = this.parseQuant();
 
       const span = {start: left.span.start, end: right.span.end};
@@ -167,6 +217,7 @@ class Parser {
   }
 
   // expr_quant := primary quantifier*
+  // Propagate trailingDot flag through Group/Quant wrappers.
   parseQuant() {
     let base = this.parsePrimary();
     while (true) {
@@ -187,7 +238,9 @@ class Parser {
           min = 0;
           max = 1;
         }
-        base = node("Quant", span, {sub: base, min, max, greedy});
+        const q = node("Quant", span, {sub: base, min, max, greedy});
+        if (base.trailingDot) q.trailingDot = true;
+        base = q;
         continue;
       }
       // explicit {m,n}
@@ -207,7 +260,9 @@ class Parser {
         this.eat(T.RBRACE);
         const greedy = this.opt(T.QMARK) ? false : true;
         const span = {start: base.span.start, end: this.lastSpan.end};
-        base = node("Quant", span, {sub: base, min, max, greedy});
+        const q = node("Quant", span, {sub: base, min, max, greedy});
+        if (base.trailingDot) q.trailingDot = true;
+        base = q;
         continue;
       }
       break;
@@ -223,7 +278,9 @@ class Parser {
       const start = this.eat(T.LPAREN).span.start;
       const inner = this.parseOr();
       const end = this.eat(T.RPAREN).span.end;
-      return node("Group", {start, end}, {sub: inner});
+      const g = node("Group", {start, end}, {sub: inner});
+      if (inner.trailingDot) g.trailingDot = true;
+      return g;
     }
 
     if (t.kind === T.LBRACK) return this.parseArray();
