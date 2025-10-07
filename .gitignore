@@ -1,0 +1,9 @@
+.idea
+venv*
+activate
+*.iml
+build
+dist
+node_modules
+package_lock.json
+
