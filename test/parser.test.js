@@ -3,7 +3,7 @@
  * Tests AST generation from pattern strings
  */
 
-const { test, assert, run, runner, group } = require('./framework.js');
+const { test, skip, assert, run, runner, group } = require('./framework.js');
 
 // Import parser (using dynamic import for ES modules)
 let parse, PatternSyntaxError;
@@ -85,10 +85,11 @@ group('arrays', () => {
   test('parse array with multiple elements', async () => {
     const ast = parse('[a b c]');
     assert.equal(ast.type, 'Array');
-    // a b c is a single adjacency pattern
-    assert.equal(ast.elems.length, 1);
-    assert.ok(isNode(ast.elems[0], 'Adj'));
-    assert.equal(ast.elems[0].elems.length, 3);
+    // Inside arrays, whitespace is a separator, not adjacency
+    assert.equal(ast.elems.length, 3);
+    assert.ok(isNode(ast.elems[0], 'String'));
+    assert.ok(isNode(ast.elems[1], 'String'));
+    assert.ok(isNode(ast.elems[2], 'String'));
   }, { group: 'parser' });
 
   test('parse array with spread', async () => {
@@ -100,7 +101,7 @@ group('arrays', () => {
   }, { group: 'parser' });
 
   test('parse nested arrays', async () => {
-    const ast = parse('[[a] [b]]');
+    const ast = parse('[ [a] [b] ]');
     assert.equal(ast.type, 'Array');
     assert.equal(ast.elems.length, 2);
     assert.ok(isNode(ast.elems[0], 'Array'));
@@ -126,13 +127,13 @@ group('objects', () => {
   }, { group: 'parser' });
 
   test('parse object with multiple key-values', async () => {
-    const ast = parse('{a:1 b:2}');
+    const ast = parse('{ a:1 b:2 }');
     assert.equal(ast.type, 'Object');
     assert.equal(ast.kvs.length, 2);
   }, { group: 'parser' });
 
   test('parse object with spread', async () => {
-    const ast = parse('{a:b ...}');
+    const ast = parse('{ a:b ... }');
     assert.equal(ast.type, 'Object');
     assert.equal(ast.anchored, false);
     assert.equal(ast.hasSpread, true);
@@ -169,13 +170,13 @@ group('sets', () => {
   }, { group: 'parser' });
 
   test('parse set with elements', async () => {
-    const ast = parse('{{a b c}}');
+    const ast = parse('{{ a b c }}');
     assert.equal(ast.type, 'Set');
     assert.equal(ast.members.length, 3);
   }, { group: 'parser' });
 
   test('parse set with spread', async () => {
-    const ast = parse('{{a ...}}');
+    const ast = parse('{{ a ... }}');
     assert.equal(ast.type, 'Set');
     assert.equal(ast.members.length, 2);
     assert.ok(isNode(ast.members[1], 'Spread'));
@@ -393,9 +394,10 @@ group('variables and binding', () => {
   }, { group: 'parser' });
 
   test('parse binding in array', async () => {
-    const ast = parse('[$x $x]');
+    const ast = parse('[ $x $x ]');
     assert.equal(ast.type, 'Array');
     assert.ok(isNode(ast.elems[0], 'Var'));
+    assert.ok(isNode(ast.elems[1], 'Var'));
   }, { group: 'parser' });
 });
 
@@ -447,7 +449,7 @@ group('replacement', () => {
   }, { group: 'parser' });
 
   test('parse replacement in array', async () => {
-    const ast = parse('[a >> b << c]');
+    const ast = parse('[ a >> b << c ]');
     assert.equal(ast.type, 'Array');
     assert.ok(isNode(ast.elems[1], 'ReplaceSlice'));
   }, { group: 'parser' });
@@ -456,19 +458,19 @@ group('replacement', () => {
 // Spread (ellipsis)
 group('spread', () => {
   test('parse spread in array', async () => {
-    const ast = parse('[a b ...]');
+    const ast = parse('[ a b ... ]');
     assert.equal(ast.type, 'Array');
     assert.ok(isNode(ast.elems[2], 'Spread'));
   }, { group: 'parser' });
 
   test('parse spread in object', async () => {
-    const ast = parse('{a:b ...}');
+    const ast = parse('{ a:b ... }');
     assert.equal(ast.type, 'Object');
     assert.equal(ast.hasSpread, true);
   }, { group: 'parser' });
 
   test('parse spread in set', async () => {
-    const ast = parse('{{a ...}}');
+    const ast = parse('{{ a ... }}');
     assert.equal(ast.type, 'Set');
     assert.ok(isNode(ast.members[1], 'Spread'));
   }, { group: 'parser' });

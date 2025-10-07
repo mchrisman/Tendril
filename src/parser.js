@@ -119,6 +119,31 @@ class Parser {
     );
   }
 
+  // ====== No-adjacency variants (for inside containers) ======
+  // expr_or_noadj := expr_and_noadj ( '|' expr_and_noadj )*
+  parseOrNoAdj() {
+    let left = this.parseAndNoAdj();
+    while (this.opt(T.PIPE)) {
+      const right = this.parseAndNoAdj();
+      const span = { start: left.span.start, end: right.span.end };
+      left = node("Alt", span, { options: [left, right] });
+    }
+    return left;
+  }
+  // expr_and_noadj := expr_dot ( '&' expr_dot )*
+  parseAndNoAdj() {
+    let left = this.parseDot();
+    while (this.opt(T.AMP)) {
+      const right = this.parseDot();
+      const span = { start: left.span.start, end: right.span.end };
+      left = node("And", span, { parts: [left, right] });
+    }
+    return left;
+  }
+  // Note: no "adjacency" combiner here; parseDot() already handles '.' with
+  // the strict no-whitespace rule. Whitespace inside containers acts as a
+  // separator (handled by container loops below), not an operator.
+
   // expr_dot := expr_quant ( '.' expr_quant )*
   parseDot() {
     let left = this.parseQuant();
@@ -232,7 +257,7 @@ class Parser {
     const start = this.eat(T.LBRACK).span.start;
     const elems = [];
     while (!this.at(T.RBRACK)) {
-      const pat = this.parseOr();
+      const pat = this.parseOrNoAdj(); // adjacency = separator inside arrays
       elems.push(pat);
       if (this.at(T.EOF)) throw this.err("Unterminated array", start);
     }
