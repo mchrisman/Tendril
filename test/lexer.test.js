@@ -135,7 +135,8 @@ group('punctuation', () => {
 
   test('lex double braces (set)', async () => {
     const tokens = lex('{{ }}');
-    assert.deepEqual(kinds(tokens), [T.LDBRACE, T.RDBRACE]);
+    // Now emits individual braces; parser determines it's a set
+    assert.deepEqual(kinds(tokens), [T.LBRACE, T.LBRACE, T.RBRACE, T.RBRACE]);
   }, { group: 'lexer' });
 
   test('lex parentheses', async () => {
@@ -244,9 +245,9 @@ group('whitespace and comments', () => {
     assert.deepEqual(kinds(tokens), [T.BARE, T.BARE, T.BARE]);
   }, { group: 'lexer' });
 
-  test('commas are treated as whitespace', async () => {
+  test('commas are emitted as tokens', async () => {
     const tokens = lex('a,b,c');
-    assert.deepEqual(kinds(tokens), [T.BARE, T.BARE, T.BARE]);
+    assert.deepEqual(kinds(tokens), [T.BARE, T.COMMA, T.BARE, T.COMMA, T.BARE]);
   }, { group: 'lexer' });
 
   test('line comment is skipped', async () => {
@@ -279,7 +280,8 @@ group('complex patterns', () => {
 
   test('set pattern', async () => {
     const tokens = lex('{{ a b }}');
-    assert.deepEqual(kinds(tokens), [T.LDBRACE, T.BARE, T.BARE, T.RDBRACE]);
+    // Now emits individual braces; parser determines it's a set
+    assert.deepEqual(kinds(tokens), [T.LBRACE, T.LBRACE, T.BARE, T.BARE, T.RBRACE, T.RBRACE]);
   }, { group: 'lexer' });
 
   test('quantifier pattern', async () => {

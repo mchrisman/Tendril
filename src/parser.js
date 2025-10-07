@@ -125,21 +125,23 @@ class Parser {
     let left = this.parseAndNoAdj();
     while (this.opt(T.PIPE)) {
       const right = this.parseAndNoAdj();
-      const span = { start: left.span.start, end: right.span.end };
-      left = node("Alt", span, { options: [left, right] });
+      const span = {start: left.span.start, end: right.span.end};
+      left = node("Alt", span, {options: [left, right]});
     }
     return left;
   }
+
   // expr_and_noadj := expr_dot ( '&' expr_dot )*
   parseAndNoAdj() {
     let left = this.parseDot();
     while (this.opt(T.AMP)) {
       const right = this.parseDot();
-      const span = { start: left.span.start, end: right.span.end };
-      left = node("And", span, { parts: [left, right] });
+      const span = {start: left.span.start, end: right.span.end};
+      left = node("And", span, {parts: [left, right]});
     }
     return left;
   }
+
   // Note: no "adjacency" combiner here; parseDot() already handles '.' with
   // the strict no-whitespace rule. Whitespace inside containers acts as a
   // separator (handled by container loops below), not an operator.
@@ -157,10 +159,6 @@ class Parser {
       }
 
       const right = this.parseQuant();
-
-      // Also ensure the token immediately before '.' was adjacent.
-      // We can peek back one token in the token stream (index this.i - 2 is the dot; -3 is prev),
-      // but wsBefore/wsAfter already encode both sides; above check suffices.
 
       const span = {start: left.span.start, end: right.span.end};
       left = node("Dot", span, {left, right});
@@ -230,8 +228,11 @@ class Parser {
 
     if (t.kind === T.LBRACK) return this.parseArray();
 
-    if (t.kind === T.LBRACE || t.kind === T.LDBRACE) {
-      if (t.kind === T.LDBRACE) return this.parseSet();
+    if (t.kind === T.LBRACE) {
+      // Check if it's {{ (set) or just { (object)
+      if (this.peek(1).kind === T.LBRACE) {
+        return this.parseSet();
+      }
       return this.parseObject();
     }
 
@@ -259,6 +260,7 @@ class Parser {
     while (!this.at(T.RBRACK)) {
       const pat = this.parseOrNoAdj(); // adjacency = separator inside arrays
       elems.push(pat);
+      this.opt(T.COMMA); // optional comma separator
       if (this.at(T.EOF)) throw this.err("Unterminated array", start);
     }
     const end = this.eat(T.RBRACK).span.end;
@@ -266,14 +268,17 @@ class Parser {
   }
 
   parseSet() {
-    const start = this.eat(T.LDBRACE).span.start;
+    const start = this.eat(T.LBRACE).span.start;
+    this.eat(T.LBRACE); // {{ opens a set
     const members = [];
-    while (!this.at(T.RDBRACE)) {
-      const pat = this.parseOr();
+    while (!(this.at(T.RBRACE) && this.peek(1).kind === T.RBRACE)) {
+      const pat = this.parseOrNoAdj();  // adjacency = separator inside sets
       members.push(pat);
+      this.opt(T.COMMA); // optional comma separator
       if (this.at(T.EOF)) throw this.err("Unterminated set", start);
     }
-    const end = this.eat(T.RDBRACE).span.end;
+    this.eat(T.RBRACE);
+    const end = this.eat(T.RBRACE).span.end; // }} closes a set
     return node("Set", {start, end}, {members});
   }
 
@@ -284,27 +289,27 @@ class Parser {
     //   k : v            → normal KV (possibly with #count)
     if (this.at(T.REPL_L)) {
       const start = this.eat(T.REPL_L).span.start;
-      const kPat = this.parseDot();
+      const kPat = this.parseOrNoAdj();       // ⟵ no adjacency in object key
       this.eat(T.REPL_R);
       this.eat(T.COLON);
-      const vPat = this.parseOr();
+      const vPat = this.parseOrNoAdj();       // ⟵ no adjacency in object value
       const span = {start, end: vPat.span.end};
       return {kind: "ReplaceKey", node: node("ReplaceKey", span, {kPat, vPat})};
     }
 
-    const kPat = this.parseDot();
+    const kPat = this.parseOrNoAdj();         // ⟵ no adjacency in object key
     this.eat(T.COLON);
 
     if (this.at(T.REPL_L)) {
       const start = kPat.span.start;
       this.eat(T.REPL_L);
-      const vPat = this.parseOr();
+      const vPat = this.parseOrNoAdj();       // ⟵ no adjacency in object value
       const r = this.eat(T.REPL_R);
       const span = {start, end: r.span.end};
       return {kind: "ReplaceVal", node: node("ReplaceVal", span, {kPat, vPat})};
     }
 
-    const vPat = this.parseOr();
+    const vPat = this.parseOrNoAdj();         // ⟵ no adjacency in object value
     let count = null;
     if (this.at(T.HASH)) {
       this.eat(T.HASH);
@@ -344,6 +349,7 @@ class Parser {
           throw this.err("Unexpected KV form", this.cur().span.start);
         }
       }
+      this.opt(T.COMMA); // optional comma separator
       if (this.at(T.EOF)) throw this.err("Unterminated object", start);
     }
     const end = this.eat(T.RBRACE).span.end;

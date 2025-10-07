@@ -105,15 +105,15 @@ export function lex(source) {
   const isBareCont = c => isBareStart(c) || isDigit(c);
 
   /**
-   * Skip whitespace, commas, and comments.
+   * Skip whitespace and comments.
    * Returns true if ANY was skipped.
    */
   const skipWSAndComments = () => {
     let skipped = false;
     while (i < s.length) {
       const c = peek();
-      // Whitespace or comma
-      if (isWSChar(c) || c === ",") {
+      // Whitespace (but NOT comma - comma is a real token)
+      if (isWSChar(c)) {
         i++;
         skipped = true;
         continue;
@@ -259,19 +259,8 @@ export function lex(source) {
       continue;
     }
 
-    // set braces
-    if (tryTwoChar("{", "{")) {
-      const start = i;
-      i += 2;
-      push(T.LDBRACE, "{{", start, i, skipped);
-      continue;
-    }
-    if (tryTwoChar("}", "}")) {
-      const start = i;
-      i += 2;
-      push(T.RDBRACE, "}}", start, i, skipped);
-      continue;
-    }
+    // Note: {{ and }} are handled by the parser as consecutive { { or } }
+    // The lexer stays context-free by only emitting single-char tokens
 
     // ellipsis
     if (tryThreeChar(".", ".", ".")) {
@@ -350,6 +339,10 @@ export function lex(source) {
     }
     if (c === "#") {
       push(T.HASH, "#", i, ++i, skipped);
+      continue;
+    }
+    if (c === ",") {
+      push(T.COMMA, ",", i, ++i, skipped);
       continue;
     }
     if (c === "=") {
