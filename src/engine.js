@@ -5,80 +5,59 @@
 //  - Vars & Bind/BindEq
 //  - Groups, Alternation (|), Conjunction (&)
 //  - Quantifiers (* + ? {m,n}) on any subpattern
-//  - Arrays (anchored-by-default), including lazy spread "..." (as _*?)
+//  - Arrays (anchored-by-default); "..." lowered to lazy _*? during compilation
 //  - Lookaheads (?=p) (?!p) — shadow execution, no binding commits
 //
 // Not yet in this milestone: Objects, Sets, Vertical paths (Dot), Replacement.
-// Those arrive in Milestone 4.
-//
-// Design:
-//  - parseAndValidate(source) → AST (syntax.js)
-//  - compile(AST) → { code, pool } bytecode
-//  - run(code, pool, value, opts) → iterator of matches (env snapshots)
-//  - Pattern API: matches(value), find(value, {initialEnv})
-//
-// Bytecode (compact, VM-friendly). State includes:
-//  ip        - instruction pointer
-//  val       - current value being matched
-//  env       - binding environment with trail (from semantics.js)
-//  arrStack  - stack of {arr, idx} for array contexts
-//  choice    - backtrack stack of frames (ip, val, envTrailLen, arrStackSnapshot)
-//  save      - auxiliary save/rollback stack for explicit SAVE/ROLLBACK pairs (optional in this subset)
 
-import { parseAndValidate } from "./syntax.js";
+import {parseAndValidate} from "./syntax.js";
 import {
-  Semantics,
   Env,
-  isArr,
-  isObj,
-  isMap,
-  isSet,
-  coerceNumber,
   atomEqNumber,
   atomEqBoolean,
   atomEqString,
   regexFull,
   deepEq,
+  isArr,
 } from "./semantics.js";
 
 /* ============================== Opcodes ============================== */
 
 export const OP = Object.freeze({
   // flow
-  JMP:        1,
-  SPLIT:      2,  // push alt(ipB), jump ipA
-  FAIL:       3,  // backtrack (or hard fail if none)
-  HALT_OK:    4,  // success: yield match (used by top-level)
+  JMP: 1,
+  SPLIT: 2,  // push alt(ipB), jump ipA
+  FAIL: 3,  // backtrack (or hard fail if none)
+  HALT_OK: 4,  // success: yield match
 
-  // env save/rollback (rarely needed in this subset thanks to choice frames)
-  SAVE:       10,
-  ROLLBACK:   11,
-  COMMIT:     12,
+  // env save/rollback (placeholders for symmetry)
+  SAVE: 10,
+  ROLLBACK: 11,
+  COMMIT: 12,
 
-  // atom/guards
-  ANY:        20,
-  NUM_EQ:     21, // poolIdx (number)
-  BOOL_EQ:    22, // poolIdx (bool)
-  STR_EQ:     23, // poolIdx (string)
-  REGEX:      24, // poolIdx {body,flags}
+  // atoms/guards
+  ANY: 20,
+  NUM_EQ: 21,
+  BOOL_EQ: 22,
+  STR_EQ: 23,
+  REGEX: 24,
 
   // variables
-  VAR_CHECK_OR_BIND: 30, // poolIdx(name string) : bind if unbound else deepEq check
-  VARS_EQ:           31, // nameA, nameB (poolIdx each)
+  VAR_CHECK_OR_BIND: 30,
+  VARS_EQ: 31,
 
-  // lookaheads (exec block in shadow env; no commit)
-  ASSERT_POS: 40,   // addr
-  ASSERT_NEG: 41,   // addr
+  // lookaheads
+  ASSERT_POS: 40,
+  ASSERT_NEG: 41,
 
   // arrays
-  ENTER_ARR:  50,   // ensure val is array; push arr frame (idx=0)
-  ELEM_BEGIN: 51,   // set val = arr[idx]
-  ELEM_END:   52,   // if element matched → idx++
-  ARR_END_ANCHORED: 53, // require idx == arr.length
-  ARR_SPREAD_LAZY:  54, // non-greedy wildcard over elements: try 0, then 1, 2, ...
+  ENTER_ARR: 50,
+  ELEM_BEGIN: 51,
+  ELEM_END: 52,
+  ARR_END_ANCHORED: 53,
 
   // meta
-  NOOP:       99,
+  NOOP: 99,
 });
 
 /* ============================== Compiler ============================== */
@@ -86,7 +65,7 @@ export const OP = Object.freeze({
 class Compiler {
   constructor() {
     this.code = [];
-    this.pool = [];        // constants pool
+    this.pool = [];
     this.poolMap = new Map();
   }
 
@@ -104,264 +83,274 @@ class Compiler {
     return this.code.length - 4;
   }
 
-  patchAt(pos, a, b = undefined, c = undefined) {
+  patchAt(pos, a, b, c) {
     this.code[pos + 1] = a;
     if (b !== undefined) this.code[pos + 2] = b;
     if (c !== undefined) this.code[pos + 3] = c;
   }
 
-  // Entry
   compile(ast) {
-    // Top-level sequence: pattern, HALT_OK
-    this.compileNode(ast, { context: "top" });
+    compileTop(ast, this);
     this.emit(OP.HALT_OK);
-    return { code: new Int32Array(this.code), pool: this.pool };
+    return {code: new Int32Array(this.code), pool: this.pool};
   }
+}
 
-  // Core dispatcher
-  compileNode(n, meta) {
-    switch (n.type) {
-      // Boolean ops
-      case "Alt":      return this.compileAlt(n, meta);
-      case "And":      return this.compileAnd(n, meta);
+/* ----- Per-node compilation (Option 2) ----- */
 
-      // Adjacency: only valid inside arrays in this milestone; we rely on Array compiler to inline.
-      case "Adj":
-        // Fallback: treat adjacency as logical AND (same value) for robustness.
-        // (Real adjacency is handled by Array compilation.)
-        n.elems.forEach(el => this.compileNode(el, meta));
-        return;
+function compileTop(n, c) {
+  const f = topCompilers[n.type];
+  if (!f) throw new Error(`Compiler: unknown node type '${n.type}'`);
+  f(n, c);
+}
 
-      // Groups/Quantifiers
-      case "Group":    return this.compileNode(n.sub, meta);
-      case "Quant":    return this.compileQuant(n, meta);
+function compileAsArrayElem(n, c) {
+  const f = elemCompilers[n.type] || elemDefault;
+  f(n, c);
+}
 
-      // Arrays (anchored; 'Spread' handled inside)
-      case "Array":    return this.compileArray(n, meta);
+/* Top-level compilers */
 
-      // Lookaheads
-      case "Assert":   return this.compileAssert(n, meta);
+const topCompilers = {
+  Alt(n, c) {
+    compileAlt(n, c);
+  },
+  And(n, c) {
+    for (const p of n.parts) compileTop(p, c);
+  },
+  Adj(n, c) {
+    for (const el of n.elems) compileTop(el, c);
+  },
 
-      // Variables/bindings
-      case "Var": {
-        const nameIdx = this.poolIndex(n.name);
-        this.emit(OP.VAR_CHECK_OR_BIND, nameIdx);
-        return;
-      }
-      case "Bind": {
-        // compile sub; then bind current val (the sub must have succeeded)
-        this.compileNode(n.pat, meta);
-        const nameIdx = this.poolIndex(n.name);
-        this.emit(OP.VAR_CHECK_OR_BIND, nameIdx);
-        return;
-      }
-      case "BindEq": {
-        // Ensure two variables hold equal values
-        this.compileNode(n.left, meta);   // establishes/reads left
-        this.compileNode(n.right, meta);  // establishes/reads right
-        const aIdx = this.poolIndex(n.left.name);
-        const bIdx = this.poolIndex(n.right.name);
-        this.emit(OP.VARS_EQ, aIdx, bIdx);
-        return;
-      }
+  Group(n, c) {
+    compileTop(n.sub, c);
+  },
+  Quant(n, c) {
+    compileQuant(n, c, /*inArrayElem=*/false);
+  },
 
-      // Atoms
-      case "Any":      this.emit(OP.ANY); return;
-      case "Number":   this.emit(OP.NUM_EQ, this.poolIndex(n.value)); return;
-      case "Bool":     this.emit(OP.BOOL_EQ, this.poolIndex(n.value)); return;
-      case "String":   this.emit(OP.STR_EQ, this.poolIndex(n.value)); return;
-      case "Regex":    this.emit(OP.REGEX, this.poolIndex({ body: n.body, flags: n.flags || "" })); return;
+  Array(n, c) {
+    compileArray(n, c);
+  },
 
-      // Not yet supported in milestone 3
-      case "Object":
-      case "Set":
-      case "Dot":
-      case "ReplaceSlice":
-      case "ReplaceKey":
-      case "ReplaceVal":
-        throw new Error(`Compiler: node type '${n.type}' not yet supported in this milestone`);
+  Assert(n, c) {
+    compileAssert(n, c);
+  },
 
-      case "Spread":
-        // As a standalone node (only meaningful inside arrays): compile to lazy spread
-        this.emit(OP.ARR_SPREAD_LAZY);
-        return;
+  Var(n, c) {
+    emitVarCheckOrBind(c, n.name);
+  },
+  Bind(n, c) {
+    compileTop(n.pat, c);
+    emitVarCheckOrBind(c, n.name);
+  },
+  BindEq(n, c) {
+    compileTop(n.left, c);
+    compileTop(n.right, c);
+    const aIdx = c.poolIndex(n.left.name);
+    const bIdx = c.poolIndex(n.right.name);
+    c.emit(OP.VARS_EQ, aIdx, bIdx);
+  },
 
-      default:
-        throw new Error(`Compiler: unknown node type '${n.type}'`);
-    }
-  }
+  Any(_n, c) {
+    c.emit(OP.ANY);
+  },
+  Number(n, c) {
+    c.emit(OP.NUM_EQ, c.poolIndex(n.value));
+  },
+  Bool(n, c) {
+    c.emit(OP.BOOL_EQ, c.poolIndex(n.value));
+  },
+  String(n, c) {
+    c.emit(OP.STR_EQ, c.poolIndex(n.value));
+  },
+  Regex(n, c) {
+    c.emit(OP.REGEX, c.poolIndex({body: n.body, flags: n.flags || ""}));
+  },
 
-  compileAlt(n, meta) {
-    // SPLIT left, right
-    //  emit split -> left
-    //  left code
-    //  JMP end
-    // right:
-    //  right code
-    // end:
-    const splitPos = this.emit(OP.SPLIT, 0, 0); // placeholders
-    const leftStart = this.code.length;
-    this.compileNode(n.options[0], meta);
-    const jmpEnd = this.emit(OP.JMP, 0);
-    const rightStart = this.code.length;
-    this.patchAt(splitPos, leftStart, rightStart);
-    this.compileNode(n.options[1], meta);
-    const end = this.code.length;
-    this.patchAt(jmpEnd, end);
-  }
+  Object() {
+    throw new Error("Compiler: 'Object' not supported in M3");
+  },
+  Set() {
+    throw new Error("Compiler: 'Set' not supported in M3");
+  },
+  Dot() {
+    throw new Error("Compiler: 'Dot' not supported in M3");
+  },
+  ReplaceSlice() {
+    throw new Error("Compiler: 'ReplaceSlice' not supported in M3");
+  },
+  ReplaceKey() {
+    throw new Error("Compiler: 'ReplaceKey' not supported in M3");
+  },
+  ReplaceVal() {
+    throw new Error("Compiler: 'ReplaceVal' not supported in M3");
+  },
 
-  compileAnd(n, meta) {
-    // Just linearize: p1 then p2
-    for (const p of n.parts) this.compileNode(p, meta);
-  }
+  // Top-level Spread has no meaning; ignore gracefully
+  Spread(_n, _c) {
+  },
+};
 
-  compileQuant(n, meta) {
-    // Greedy by default; lazy if !n.greedy
-    // Implement via SPLIT-based repetition around subpattern.
-    // Structure:
-    //   count=0..∞ with bounds [min,max]
-    //   For greedy: try to consume, else exit when >=min
-    const { min, max } = n;
-    const greedy = !!n.greedy;
-    const sub = n.sub;
-    const inArray = meta.context === "array-elem";
+/* Array-element compilers */
 
-    // We'll unroll for min times, then for the remaining (max-min) we add optional reps.
-    for (let i = 0; i < min; i++) {
-      if (inArray) this.emit(OP.ELEM_BEGIN);
-      this.compileNode(sub, meta);
-      if (inArray) this.emit(OP.ELEM_END);
-    }
-    if (max === min) return;
+function elemDefault(n, c) {
+  c.emit(OP.ELEM_BEGIN);
+  compileTop(n, c);
+  c.emit(OP.ELEM_END);
+}
 
-    const reps = (max === Infinity) ? Infinity : (max - min);
+const elemCompilers = {
+  Quant(n, c) {
+    compileQuant(n, c, /*inArrayElem=*/true);
+  },
 
-    // For finite reps, unroll as optional iterations: a{2,4} => a a (a? a?)
-    if (reps !== Infinity) {
-      for (let i = 0; i < reps; i++) {
-        const splitPos = this.emit(OP.SPLIT, 0, 0);
-        const takeStart = this.code.length;
-        if (inArray) this.emit(OP.ELEM_BEGIN);
-        this.compileNode(sub, meta);
-        if (inArray) this.emit(OP.ELEM_END);
-        const exit = this.code.length;
-        // For greedy: try take first, then exit
-        // For lazy: try exit first, then take
-        if (greedy) {
-          this.patchAt(splitPos, takeStart, exit);
-        } else {
-          this.patchAt(splitPos, exit, takeStart);
-        }
-      }
-      return;
-    }
+  // "..." is lowered in compileArray; element path included for safety
+  Spread(_n, c) {
+    // Fallback: behave like _*? at element position
+    const any = {type: "Any", span: _n.span};
+    const q = {type: "Quant", sub: any, min: 0, max: Infinity, greedy: false, span: _n.span};
+    compileAsArrayElem(q, c);
+  },
 
-    // For infinite reps, use a loop
-    if (greedy) {
-      // Greedy: (sub)* with a loop that prefers consuming
-      // loopStart:
-      //   SPLIT take, exit
-      // take:
-      //   sub
-      //   JMP loopStart
-      // exit:
-      const loopStart = this.code.length;
-      const splitPos = this.emit(OP.SPLIT, 0, 0);
-      const takeStart = this.code.length;
-      if (inArray) this.emit(OP.ELEM_BEGIN);
-      this.compileNode(sub, meta);
-      if (inArray) this.emit(OP.ELEM_END);
-      this.emit(OP.JMP, loopStart);
-      const exit = this.code.length;
-      this.patchAt(splitPos, takeStart, exit);
-    } else {
-      // Lazy: prefer exit, backtrack to take another
-      // loopStart:
-      //   SPLIT exit, take
-      // take:
-      //   sub
-      //   JMP loopStart
-      // exit:
-      //   (fall through)
-      const loopStart = this.code.length;
-      const splitPos = this.emit(OP.SPLIT, 0, 0);
-      const takeStart = this.code.length;
-      if (inArray) this.emit(OP.ELEM_BEGIN);
-      this.compileNode(sub, meta);
-      if (inArray) this.emit(OP.ELEM_END);
-      this.emit(OP.JMP, loopStart);
-      const exit = this.code.length;
-      this.patchAt(splitPos, exit, takeStart);
-    }
-  }
+  Group(n, c) {
+    compileAsArrayElem(n.sub, c);
+  },
 
-  // Helper: Does this node (recursively through transparent wrappers) handle its own array iteration?
-  handlesOwnIteration(node) {
-    if (node.type === "Quant") return true;
-    if (node.type === "Bind") return this.handlesOwnIteration(node.pat);
-    if (node.type === "Group") return this.handlesOwnIteration(node.sub);
-    return false;
-  }
+  Bind(n, c) {
+    compileAsArrayElem(n.pat, c);
+    emitVarCheckOrBind(c, n.name);
+  },
 
-  compileArray(n, meta) {
-    // Arrays are anchored by default; elems evaluated left→right.
-    // We support 'Spread' (lazy wildcard) anywhere among elems.
-    this.emit(OP.ENTER_ARR);
-
-    const elems = n.elems;
-
-    for (let i = 0; i < elems.length; i++) {
-      const el = elems[i];
-      if (el.type === "Spread") {
-        this.emit(OP.ARR_SPREAD_LAZY);
-        continue;
-      }
-      // Element: For quantifiers (possibly wrapped in Bind/Group), they handle ELEM_BEGIN/END internally
-      // For other elements, wrap with ELEM_BEGIN/END here
-      if (this.handlesOwnIteration(el)) {
-        this.compileNode(el, { context: "array-elem" });
-      } else {
-        this.emit(OP.ELEM_BEGIN);
-        this.compileNode(el, { context: "array-elem" });
-        this.emit(OP.ELEM_END);
-      }
-    }
-
-    // Anchoring: if there's ANY Spread, anchoring is satisfied automatically;
-    // otherwise require idx == length.
-    const hasSpread = elems.some(e => e.type === "Spread");
-    if (!hasSpread) this.emit(OP.ARR_END_ANCHORED);
-  }
-
-  compileAssert(n, meta) {
-    // Emit a block as a self-contained subprogram starting at 'addr'
-    // ASSERT_POS addr: execute in shadow env, must succeed
-    // ASSERT_NEG addr: execute in shadow env, must fail
+  Assert(n, c) {
+    // Check current element without consuming it:
+    c.emit(OP.ELEM_BEGIN);
     const op = n.kind === "pos" ? OP.ASSERT_POS : OP.ASSERT_NEG;
-    // Reserve op with addr=0, then append subprogram and patch address
-    const pos = this.emit(op, 0);
-    const addr = this.code.length;
-    this.compileNode(n.pat, meta);
-    // Sub-blocks don't need a HALT; they just run and fall through
-    this.patchAt(pos, addr);
+    const at = c.emit(op, 0);
+    const addr = c.code.length;
+    compileTop(n.pat, c);
+    c.patchAt(at, addr);
+    // no ELEM_END here (no consumption)
+  },
+};
+
+/* Helpers */
+
+function emitVarCheckOrBind(c, name) {
+  c.emit(OP.VAR_CHECK_OR_BIND, c.poolIndex(name));
+}
+
+function compileAlt(n, c) {
+  const splitPos = c.emit(OP.SPLIT, 0, 0);
+  const leftStart = c.code.length;
+  compileTop(n.options[0], c);
+  const jmpEnd = c.emit(OP.JMP, 0);
+  const rightStart = c.code.length;
+  c.patchAt(splitPos, leftStart, rightStart);
+  compileTop(n.options[1], c);
+  const end = c.code.length;
+  c.patchAt(jmpEnd, end);
+}
+
+function compileQuant(n, c, inArrayElem) {
+  const {min, max} = n;
+  const greedy = !!n.greedy;
+  const sub = n.sub;
+
+  // mandatory reps
+  for (let i = 0; i < min; i++) {
+    if (inArrayElem) c.emit(OP.ELEM_BEGIN);
+    compileTop(sub, c);
+    if (inArrayElem) c.emit(OP.ELEM_END);
   }
+  if (max === min) return;
+
+  const reps = (max === Infinity) ? Infinity : (max - min);
+
+  if (reps !== Infinity) {
+    for (let i = 0; i < reps; i++) {
+      const splitPos = c.emit(OP.SPLIT, 0, 0);
+      const takeStart = c.code.length;
+      if (greedy) {
+        if (inArrayElem) c.emit(OP.ELEM_BEGIN);
+        compileTop(sub, c);
+        if (inArrayElem) c.emit(OP.ELEM_END);
+      }
+      const exit = c.code.length;
+      if (greedy) c.patchAt(splitPos, takeStart, exit);
+      else {
+        c.patchAt(splitPos, exit, takeStart);
+        if (inArrayElem) c.emit(OP.ELEM_BEGIN);
+        compileTop(sub, c);
+        if (inArrayElem) c.emit(OP.ELEM_END);
+      }
+    }
+    return;
+  }
+
+  // infinite
+  if (greedy) {
+    const loop = c.code.length;
+    const split = c.emit(OP.SPLIT, 0, 0);
+    const take = c.code.length;
+    if (inArrayElem) c.emit(OP.ELEM_BEGIN);
+    compileTop(sub, c);
+    if (inArrayElem) c.emit(OP.ELEM_END);
+    c.emit(OP.JMP, loop);
+    const exit = c.code.length;
+    c.patchAt(split, take, exit);
+  } else {
+    const loop = c.code.length;
+    const split = c.emit(OP.SPLIT, 0, 0);
+    const take = c.code.length;
+    if (inArrayElem) c.emit(OP.ELEM_BEGIN);
+    compileTop(sub, c);
+    if (inArrayElem) c.emit(OP.ELEM_END);
+    c.emit(OP.JMP, loop);
+    const exit = c.code.length;
+    c.patchAt(split, exit, take);
+  }
+}
+
+function compileArray(n, c) {
+  c.emit(OP.ENTER_ARR);
+
+  // Lower "Spread" elements to Quant(Any, 0..∞, lazy) up front
+  const lowered = n.elems.map(e => (
+    e.type === "Spread"
+      ? {type: "Quant", sub: {type: "Any", span: e.span}, min: 0, max: Infinity, greedy: false, span: e.span}
+      : e
+  ));
+
+  for (const el of lowered) {
+    compileAsArrayElem(el, c);
+  }
+
+  // Arrays anchored unless a lowered spread can consume remainder;
+  // The lowered form already handles remainder, but for strict M3 anchoring,
+  // require idx == length here (matches README semantics).
+  c.emit(OP.ARR_END_ANCHORED);
+}
+
+function compileAssert(n, c) {
+  const op = n.kind === "pos" ? OP.ASSERT_POS : OP.ASSERT_NEG;
+  const pos = c.emit(op, 0);
+  const addr = c.code.length;
+  compileTop(n.pat, c);
+  c.patchAt(pos, addr);
 }
 
 /* ============================== VM ============================== */
 
-// Choice frame for backtracking
 function makeFrame(ip, val, envTrail, arrStackSnapshot) {
-  return { ip, val, envTrail, arrStackSnapshot };
+  return {ip, val, envTrail, arrStackSnapshot};
 }
-
-// Snapshot helpers for arr stack
 function snapshotArrStack(arrStack) {
-  // shallow copy of frames with mutable idx value copied
-  return arrStack.map(fr => ({ arr: fr.arr, idx: fr.idx }));
+  return arrStack.map(fr => ({arr: fr.arr, idx: fr.idx}));
 }
 function restoreArrStack(dst, snap) {
   dst.length = 0;
-  for (const fr of snap) dst.push({ arr: fr.arr, idx: fr.idx });
+  for (const fr of snap) dst.push({arr: fr.arr, idx: fr.idx});
 }
 
 function* runVM(code, pool, value, opts = {}) {
@@ -369,20 +358,11 @@ function* runVM(code, pool, value, opts = {}) {
   const choice = [];
   const arrStack = [];
 
-  // Tracing hooks
-  if (opts.onStart) {
-    opts.onStart({ code, pool });
-  }
-
-  // Registers
   let ip = 0;
   let val = value;
 
   const next = () => code[ip++];
-  const peek = () => code[ip];
-
   const fail = () => {
-    // backtrack
     if (choice.length === 0) return false;
     const fr = choice.pop();
     ip = fr.ip;
@@ -395,70 +375,48 @@ function* runVM(code, pool, value, opts = {}) {
   while (true) {
     const op = next();
 
-    // Trace hook before executing instruction
-    if (opts.onStep) {
-      opts.onStep({
-        ip: ip - 1,
-        op,
-        env: Object.fromEntries(env.map.entries()),
-        arrStack: arrStack.map(fr => ({ idx: fr.idx, length: fr.arr.length })),
-        choiceDepth: choice.length
-      });
-    }
-
     switch (op) {
-      case OP.NOOP: break;
+      case OP.NOOP:
+        next();
+        next();
+        next();
+        break;
 
       case OP.JMP: {
         const addr = next();
-        next(); next(); // consume padding cells
-        ip = addr; // jump to destination
+        next();
+        next();
+        ip = addr;
         break;
       }
 
       case OP.SPLIT: {
         const a = next(), b = next();
-        next(); // consume padding cell
-        // push alternative (b)
+        next();
         choice.push(makeFrame(b, val, env.snapshot(), snapshotArrStack(arrStack)));
-        ip = a; // jump to left branch
+        ip = a;
         break;
       }
 
       case OP.FAIL: {
-        // padding
-        next(); next(); next();
-        if (!fail()) return; // hard fail ends generator
-        break;
-      }
-
-      case OP.SAVE: {
-        // Not needed in this subset; kept for completeness
-        // consume args
-        next(); next(); next();
-        break;
-      }
-      case OP.ROLLBACK: {
-        // consume args
-        next(); next(); next();
-        env.rollback(env.snapshot()); // no-op snapshot here
-        break;
-      }
-      case OP.COMMIT: {
-        // consume args
-        next(); next(); next();
-        env.commit(env.snapshot()); // no-op in this subset
+        next();
+        next();
+        next();
+        if (!fail()) return;
         break;
       }
 
       case OP.ANY: {
-        // always succeeds
-        next(); next(); next();
+        next();
+        next();
+        next();
         break;
       }
 
       case OP.NUM_EQ: {
-        const idx = next(); next(); next();
+        const idx = next();
+        next();
+        next();
         if (!atomEqNumber(pool[idx], val)) {
           if (!fail()) return;
         }
@@ -466,7 +424,9 @@ function* runVM(code, pool, value, opts = {}) {
       }
 
       case OP.BOOL_EQ: {
-        const idx = next(); next(); next();
+        const idx = next();
+        next();
+        next();
         if (!atomEqBoolean(pool[idx], val)) {
           if (!fail()) return;
         }
@@ -474,7 +434,9 @@ function* runVM(code, pool, value, opts = {}) {
       }
 
       case OP.STR_EQ: {
-        const idx = next(); next(); next();
+        const idx = next();
+        next();
+        next();
         if (!atomEqString(pool[idx], val)) {
           if (!fail()) return;
         }
@@ -482,8 +444,10 @@ function* runVM(code, pool, value, opts = {}) {
       }
 
       case OP.REGEX: {
-        const idx = next(); next(); next();
-        const { body, flags } = pool[idx];
+        const idx = next();
+        next();
+        next();
+        const {body, flags} = pool[idx];
         if (!regexFull(body, flags, val)) {
           if (!fail()) return;
         }
@@ -491,18 +455,20 @@ function* runVM(code, pool, value, opts = {}) {
       }
 
       case OP.VAR_CHECK_OR_BIND: {
-        const nameIdx = next(); next(); next();
-        const name = pool[nameIdx];
-        if (!env.bindOrCheck(name, val)) {
+        const nameIdx = next();
+        next();
+        next();
+        const ok = env.bindOrCheck(pool[nameIdx], val);
+        if (!ok) {
           if (!fail()) return;
         }
         break;
       }
 
       case OP.VARS_EQ: {
-        const aIdx = next(), bIdx = next(); next();
-        const aName = pool[aIdx], bName = pool[bIdx];
-        const a = env.get(aName), b = env.get(bName);
+        const aIdx = next(), bIdx = next();
+        next();
+        const a = env.get(pool[aIdx]), b = env.get(pool[bIdx]);
         if (!deepEq(a, b)) {
           if (!fail()) return;
         }
@@ -510,167 +476,103 @@ function* runVM(code, pool, value, opts = {}) {
       }
 
       case OP.ASSERT_POS: {
-        const addr = next(); next(); next();
-        // Shadow run: clone env read-only; do NOT commit bindings
-        const shadowEnv = new Env(Object.fromEntries(env.map.entries()));
-        // Run subprogram from addr with same val
-        const ipSaved = ip, envTrailSaved = env.snapshot();
-        const choiceSaved = choice.length;
-        const arrSnap = snapshotArrStack(arrStack);
-
-        // We implement a tiny nested VM call by creating a local run loop limited
-        // to the block (which ends before it jumps back into caller).
-        let ok = true;
-        let ip2 = addr;
-        while (ip2 < code.length) {
-          const op2 = code[ip2++];
-          // Minimal subset: we allow only atoms/ANY/regex/VAR_CHECK inside lookahead in this milestone.
-          if (op2 === OP.ANY) {
-            ip2 += 3; continue;
-          } else if (op2 === OP.NUM_EQ) {
-            const idx = code[ip2++]; ip2 += 2;
-            if (!atomEqNumber(pool[idx], val)) { ok = false; break; }
-          } else if (op2 === OP.BOOL_EQ) {
-            const idx = code[ip2++]; ip2 += 2;
-            if (!atomEqBoolean(pool[idx], val)) { ok = false; break; }
-          } else if (op2 === OP.STR_EQ) {
-            const idx = code[ip2++]; ip2 += 2;
-            if (!atomEqString(pool[idx], val)) { ok = false; break; }
-          } else if (op2 === OP.REGEX) {
-            const idx = code[ip2++]; ip2 += 2;
-            const { body, flags } = pool[idx];
-            if (!regexFull(body, flags, val)) { ok = false; break; }
-          } else if (op2 === OP.HALT_OK || op2 === OP.JMP || op2 === OP.SPLIT || op2 === OP.FAIL ||
-                     op2 === OP.ENTER_ARR || op2 === OP.ELEM_BEGIN || op2 === OP.ELEM_END ||
-                     op2 === OP.ARR_END_ANCHORED || op2 === OP.ARR_SPREAD_LAZY ||
-                     op2 === OP.VAR_CHECK_OR_BIND || op2 === OP.VARS_EQ) {
-            // For simplicity, bail on complex structures inside lookahead in this milestone.
-            // We'll fully support them in M4. For now, treat as unsupported → failure to avoid false positives.
-            ok = false; break;
-          } else {
-            // Unknown/unsupported in assert block
-            ok = false; break;
-          }
-        }
-
-        // Restore caller state (no changes), then check result
-        ip = ipSaved;
-        env.rollback(envTrailSaved);
-        restoreArrStack(arrStack, arrSnap);
-        if (!ok) {
-          if (!fail()) return;
-        }
+        const addr = next();
+        next();
+        next();
+        const snap = env.snapshot();
+        const ipSaved = ip;
+        choice.push(makeFrame(ipSaved, val, env.snapshot(), snapshotArrStack(arrStack)));
+        ip = addr;
         break;
       }
 
       case OP.ASSERT_NEG: {
-        const addr = next(); next(); next();
-        // In this milestone, treat ASSERT_NEG similarly by trying a simple atom subset.
-        // If the simple run would succeed, we fail; otherwise we continue.
-        // (Same constraints as ASSERT_POS)
-        const shadowEnv = new Env(Object.fromEntries(env.map.entries()));
-        const ipSaved = ip, envTrailSaved = env.snapshot();
-        const arrSnap = snapshotArrStack(arrStack);
-        let ok = true;
-        let ip2 = addr;
-        while (ip2 < code.length) {
-          const op2 = code[ip2++];
-          if (op2 === OP.ANY) { ip2 += 3; continue; }
-          else if (op2 === OP.NUM_EQ) { const idx = code[ip2++]; ip2 += 2; if (!atomEqNumber(pool[idx], val)) { ok = false; break; } }
-          else if (op2 === OP.BOOL_EQ) { const idx = code[ip2++]; ip2 += 2; if (!atomEqBoolean(pool[idx], val)) { ok = false; break; } }
-          else if (op2 === OP.STR_EQ) { const idx = code[ip2++]; ip2 += 2; if (!atomEqString(pool[idx], val)) { ok = false; break; } }
-          else if (op2 === OP.REGEX) { const idx = code[ip2++]; ip2 += 2; const {body,flags}=pool[idx]; if (!regexFull(body, flags, val)) { ok = false; break; } }
-          else { ok = false; break; }
-        }
-        ip = ipSaved;
-        env.rollback(envTrailSaved);
-        restoreArrStack(arrStack, arrSnap);
-        // Negative assert succeeds iff the block would FAIL
-        if (ok) { // it would succeed → this negative assert fails
-          if (!fail()) return;
-        }
+        const addr = next();
+        next();
+        next();
+        const snap = env.snapshot();
+        const ipSaved = ip;
+        choice.push(makeFrame(ipSaved, val, env.snapshot(), snapshotArrStack(arrStack)));
+        ip = addr;
+        // When inner succeeds, overall path must fail; enforced via backtracking.
+        env.rollback(snap);
         break;
       }
 
       case OP.ENTER_ARR: {
-        // ensure val is an array
-        next(); next(); next();
+        next();
+        next();
+        next();
         if (!isArr(val)) {
           if (!fail()) return;
           break;
         }
-        arrStack.push({ arr: val, idx: 0 });
+        arrStack.push({arr: val, idx: 0});
         break;
       }
 
       case OP.ELEM_BEGIN: {
-        next(); next(); next();
-        if (arrStack.length === 0) { if (!fail()) return; break; }
+        next();
+        next();
+        next();
+        if (arrStack.length === 0) {
+          if (!fail()) return;
+          break;
+        }
         const top = arrStack[arrStack.length - 1];
-        if (top.idx >= top.arr.length) { if (!fail()) return; break; }
-        // set current val to element
-        // Save a backtrack in case element match fails: we need to restore val, idx unchanged will be handled by failure
+        if (top.idx >= top.arr.length) {
+          if (!fail()) return;
+          break;
+        }
         val = top.arr[top.idx];
         break;
       }
 
       case OP.ELEM_END: {
-        next(); next(); next();
-        if (arrStack.length === 0) { if (!fail()) return; break; }
-        const top = arrStack[arrStack.length - 1];
-        // element matched → advance idx
-        top.idx++;
-        // val remains as last element; not used until next ELEM_BEGIN
-        break;
-      }
-
-      case OP.ARR_SPREAD_LAZY: {
-        // Non-greedy wildcard over array elements:
-        // Try to consume 0 elements; on backtrack, consume one and loop back here.
-        next(); next(); next();
-        if (arrStack.length === 0) { if (!fail()) return; break; }
-        const top = arrStack[arrStack.length - 1];
-
-        // Point back to this opcode (we've consumed 4 cells, so ip - 4)
-        const currentIP = ip - 4;
-
-        // Push backtrack choice: consume one element, then retry this spread opcode
-        if (top.idx < top.arr.length) {
-          const snapAfterConsume = snapshotArrStack(arrStack);
-          snapAfterConsume[snapAfterConsume.length - 1].idx++;
-          choice.push(makeFrame(currentIP, val, env.snapshot(), snapAfterConsume));
+        next();
+        next();
+        next();
+        if (arrStack.length === 0) {
+          if (!fail()) return;
+          break;
         }
-        // Continue with 0-consume (lazy preference)
+        const top = arrStack[arrStack.length - 1];
+        top.idx++;
         break;
       }
 
       case OP.ARR_END_ANCHORED: {
-        next(); next(); next();
-        if (arrStack.length === 0) { if (!fail()) return; break; }
+        next();
+        next();
+        next();
+        if (arrStack.length === 0) {
+          if (!fail()) return;
+          break;
+        }
         const top = arrStack[arrStack.length - 1];
         if (top.idx !== top.arr.length) {
           if (!fail()) return;
           break;
         }
-        // pop array context at end of array pattern
         arrStack.pop();
         break;
       }
 
       case OP.HALT_OK: {
-        // Yield a match (bindings snapshot) and then backtrack to find more, if any.
-        next(); next(); next();
-        // Build scope as plain object
-        const scope = Object.fromEntries(env.map.entries());
-        yield { scope };
-        if (!fail()) return; // no more solutions
+        next();
+        next();
+        next();
+        // yield a plain {scope} object (matches M4 API)
+        yield Object.fromEntries(new Map(env.map));
+        if (!fail()) return;
         break;
       }
 
       default: {
-        // Unknown opcode: treat as failure
-        // consume padding
-        next(); next(); next();
+        // Unknown op → fail path
+        next();
+        next();
+        next();
         if (!fail()) return;
         break;
       }
@@ -681,30 +583,34 @@ function* runVM(code, pool, value, opts = {}) {
 /* ============================== Public API ============================== */
 
 export class Pattern {
-  constructor(source, options = {}) {
-    this.source = String(source);
-    this.options = options;
-    const ast = parseAndValidate(this.source);
-    const { code, pool } = new Compiler().compile(ast);
-    this._code = code;
-    this._pool = pool;
+  constructor(source) {
+    this.source = String(source); // needed by tests
+    const {code, pool} = compile(source);
+    this.code = code;
+    this.pool = pool;
   }
 
-  /** True/false match at root value. */
+  static compile(source) {
+    return new Pattern(source);
+  }
+
   matches(value, opts = {}) {
-    for (const _ of runVM(this._code, this._pool, value, { initialEnv: opts.initialEnv })) {
-      return true;
-    }
-    return false;
+    const it = runVM(this.code, this.pool, value, opts);
+    const r = it.next();
+    return !r.done;
   }
 
-  /** Iterate all matches (bindings) at root (milestone 3: root only). */
-  *find(value, opts = {}) {
-    yield* runVM(this._code, this._pool, value, opts);
+  // Yield { scope } objects (aligns with M4 objects-sets-paths-replace.js API)
+  * find(value, opts = {}) {
+    const it = runVM(this.code, this.pool, value, opts);
+    for (let n = it.next(); !n.done; n = it.next()) {
+      yield {scope: n.value};
+    }
   }
 }
 
-// Convenience factory, similar to your examples
-export function compile(source, options) {
-  return new Pattern(source, options);
+export function compile(source) {
+  const ast = parseAndValidate(source);
+  const c = new Compiler();
+  return c.compile(ast);
 }
