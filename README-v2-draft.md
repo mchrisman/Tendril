@@ -4,10 +4,67 @@
 
 **Object graphs grow in all directions. Your pattern matching language should too.**
 
+Tendril = structural pattern matching **+** relational logic, in a small, generator-inspired language for **match** and **replace** across JSON-like graphs.
+
+## Hello, world
+```
+    data = {
+              "planets": { "Jupiter": {"size":"big"}, "Earth": {"size":"small"}, "Ceres": {"size":"tiny"} },
+              "aka": [["Jupiter","Jove","Zeus"],["Earth","Terra"],["Ceres","Demeter"]] 
+           }
+    pattern = "{ 
+              planets.$name.size: $size
+              aka: [... [$name ... $alias ... | $alias=$name ...] ... ]   // $name itself as a possible alias
+           }"
+    
+    Tendril(pattern).match(data).map((m)=> `Hello, ${m.$size} world ${m.$alias} `)
+    
+    => [
+    "Hello, big world Jupiter",
+    "Hello, big world Jove",
+    "Hello, big world Zeus",
+    "Hello, small world Earth",
+    "Hello, small world Terra",
+    "Hello, tiny world Ceres",
+    "Hello, tiny world Demeter",
+    ]
+```
+
 # Quick Start
 
-This serves as the primary specification. In these examples, `foo =~ bar` is short for `Pattern("foo").matches(bar)`, and `===` denotes equivalence of patterns
+```
+    PATTERN                              ~= DATA
+    { foo: bar }                         ~= { "foo":"bar" }
+    [ a b c ...]                         ~= [ "a", "b", "c", "d", "e" ]  // A slice wildcard, not a "spread"
+    
+    {                                    ~=  // An object such that 
+       data.users[3].name : "John Smith"     // object?.data?.users?.[3]?.name=="John Smith"
+       _: /permission/                       // *and* all the object's property values are strings like /permission/.
+    } 
+    
+    [ a? b+ c* ]                  ~ An array containing one optional 'a'
+                                     followed by one or more 'b's
+                                     follwed by zero or more 'c's                  
+    
+    [ $X=(_ _) ... $X ] ~=    - An array whose first two items are the same as the last two  
+```
 
+# Reference
+
+*In these examples, `foo ~= bar` is short for `Tendril("foo").matches(bar)`, and `===` denotes equivalence of patterns.*
+
+Patterns may include C-style comments and use white space as separators.
+
+    ROOT_PATTERN = SINGLETON_PATTERN
+    
+    SINGLETON_PATTERN = LITERAL | ARRAY_PATTERN | OBJ_PATTERN | MAP_PATTERN | SET_PATTERN
+    
+    WS = ' ' | '\n' | '\t'  // whitespace
+
+    ARRAY_PATTERN = '[' WS?
+
+
+**Patterns** 
 ## Atoms
 
 ```
@@ -48,16 +105,16 @@ pattern1 & pattern2                 // The single object must match both pattern
 ## Anchoring
 
 ```
-[ a b ]      =~ ["a","b"]
-[ a b ]     !=~ ["a","b","c"]
-[ a b ... ]  =~ ["a","b","c"]       // "..." is the actual syntax
+[ a b ]      ~= ["a","b"]
+[ a b ]     !~= ["a","b","c"]
+[ a b ... ]  ~= ["a","b","c"]       // "..." is the actual syntax
 
-{ b:_  c:_ }   =~ { b:1, c:2 }      // Every k/v pattern is satisfied, every prop of obj is described
-{ b:_  c:_ }  !=~ { b:1 }
-{ b:_      }  !=~ { b:1, c:2 }
-{ b:_  ... }   =~ { a:1, c:2, Z:1 }
-{ /[ab]/:_  /[ad]/:_ }   =~ { a:1 } // k/v patterns are independent, non-consuming, possibly overlapping.
-{ /[ab]/:_  /[ad]/:_ }  !=~ { d:1 }
+{ b:_  c:_ }   ~= { b:1, c:2 }      // Every k/v pattern is satisfied, every prop of obj is described
+{ b:_  c:_ }  !~= { b:1 }
+{ b:_      }  !~= { b:1, c:2 }
+{ b:_  ... }   ~= { a:1, c:2, Z:1 }
+{ /[ab]/:_  /[ad]/:_ }   ~= { a:1 } // k/v patterns are independent, non-consuming, possibly overlapping.
+{ /[ab]/:_  /[ad]/:_ }  !~= { d:1 }
 ```        
    
 ## Binding
@@ -66,10 +123,10 @@ pattern1 & pattern2                 // The single object must match both pattern
 $name=pattern                           // If the pattern matches, binds the variable.
 $name          === $name:_
 
-[ $x $x=/[ab] $y ]   =~  ['a','a','y']  // Values must be consistent in global scope.
-[ $x $x=/[ab] $y ]  !=~  ['a','b','y']
-[ $x $x=$y $y ]      =~  ['q','q','q']
-[ $x=($z $y) $y $z ] =~  ['r','q','q','r']
+[ $x $x=/[ab] $y ]   ~=  ['a','a','y']  // Values must be consistent in global scope.
+[ $x $x=/[ab] $y ]  !~=  ['a','b','y']
+[ $x $x=$y $y ]      ~=  ['q','q','q']
+[ $x=($z $y) $y $z ] ~=  ['r','q','q','r']
 
 k1:v1 k2:v2          // 2 key/value pair patterns (only appears within objects)
 $key: $val           // binds to anything
@@ -117,19 +174,19 @@ k:v            === k:v #{1,}          // default (one or more)
 ``` 
 ## Vertical patterns
 ```
-{ a.b.c:d } =~ {'a': {'b': {'c':'d'}}}
+{ a.b.c:d } ~= {'a': {'b': {'c':'d'}}}
 ```
 
-Formally, `kPat.kvPat` matches a `K`/`V` pair such that `kPat =~ K` and `{ kvPat ... } =~ V`, with right-to-left associativity. No whitespace around the dot.
+Formally, `kPat.kvPat` matches a `K`/`V` pair such that `kPat ~= K` and `{ kvPat ... } ~= V`, with right-to-left associativity. No whitespace around the dot.
 
 ```
-{a[3].c:d} =~   {'a': [el0, el1, el2, {'c':'d'}]}
+{a[3].c:d} ~=   {'a': [el0, el1, el2, {'c':'d'}]}
 ```
 
 Array quantifiers can be used on the `"kPat."` part of the construct:
 
 ```
-{ ((a.b.)*3)c:d } =~ {'a': {'b': {'a': {'b': {'a': {'b': {'c':'d'}}}}}}}
+{ ((a.b.)*3)c:d } ~= {'a': {'b': {'a': {'b': {'a': {'b': {'c':'d'}}}}}}}
 ```
 
 

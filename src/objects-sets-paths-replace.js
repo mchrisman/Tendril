@@ -35,7 +35,7 @@ import { Pattern as CorePattern } from "./engine.js";
 
 /* ============================== AST utilities ============================== */
 
-// Detect if AST uses any “advanced” features that engine.js doesn’t compile.
+// Detect if AST uses any "advanced" features that engine.js doesn't compile.
 function needsAdvanced(n) {
   if (!n || typeof n !== "object") return false;
   switch (n.type) {
@@ -45,6 +45,7 @@ function needsAdvanced(n) {
     case "ReplaceSlice":
     case "ReplaceKey":
     case "ReplaceVal":
+    case "Assert": // Assertions always use M4 path for proper support
       return true;
     case "Alt": return n.options.some(needsAdvanced);
     case "And": return n.parts.some(needsAdvanced);
@@ -54,7 +55,6 @@ function needsAdvanced(n) {
     case "Quant": return needsAdvanced(n.sub);
     case "Bind": return needsAdvanced(n.pat);
     case "BindEq": return needsAdvanced(n.left) || needsAdvanced(n.right);
-    case "Assert": return needsAdvanced(n.pat);
     default: return false;
   }
 }
@@ -221,9 +221,10 @@ function* matchNode(n, val, ctx) {
 
       function* matchFrom(i, j) {
         if (i === lowered.length) {
-          // Anchoring: must consume all (unless there's a trailing Any*? that could eat rest)
-          if (n.elems.some(e => e.type === "Spread")) { yield ctx.env; return; }
-          if (j === val.length) { yield ctx.env; }
+          // Anchoring: arrays are anchored, must consume all elements
+          if (j === val.length) {
+            yield ctx.env;
+          }
           return;
         }
         const el = lowered[i];
@@ -243,31 +244,52 @@ function* matchNode(n, val, ctx) {
           return;
         }
 
-        // Normal element: run it against val[j], respecting quantifiers recursively
-        function* runElemAt(pos) {
-          if (pos > val.length) return;
-          // Base case for Any*? (lazy) may match empty at same j
-          if (el.type === "Quant" && el.min === 0 && el.max === Infinity && el.greedy === false) {
-            // Option 1: zero
-            yield* matchFrom(i + 1, j);
-            // Option 2+: consume progressively
-            for (let k = j; k < val.length; k++) {
-              // match single Any for one item
-              for (const _ of matchNode({ type: "Any" }, val[k], ctx)) {
-                // try more Any*?
-                // temporarily change el to Any*? again and continue
-                yield* matchFrom(i, k + 1);
-              }
+        // Special case for Assert: check current element without consuming
+        if (el.type === "Assert") {
+          if (j >= val.length) return;
+          for (const _ of matchNode(el, val[j], ctx)) {
+            yield* matchFrom(i + 1, j); // advance pattern but NOT position
+          }
+          return;
+        }
+
+        // Special case for Quant: consume multiple array elements
+        if (el.type === "Quant") {
+          const { min, max, greedy, sub } = el;
+          const maxReps = Math.min(max, val.length - j);
+
+          // Match 'count' consecutive elements with sub-pattern, threading environment
+          function* matchReps(count, pos) {
+            if (count === 0) {
+              yield* matchFrom(i + 1, pos);
+              return;
             }
-            return;
+            if (pos >= val.length) return;
+
+            // Match current element and recurse for remaining count
+            for (const _ of matchNode(sub, val[pos], ctx)) {
+              yield* matchReps(count - 1, pos + 1);
+            }
           }
 
-          if (pos >= val.length) return;
-          for (const _ of matchNode(el, val[pos], ctx)) {
-            yield* matchFrom(i + 1, pos + 1);
+          // Try different repetition counts based on greedy/lazy
+          if (greedy) {
+            for (let reps = maxReps; reps >= min; reps--) {
+              yield* matchReps(reps, j);
+            }
+          } else {
+            for (let reps = min; reps <= maxReps; reps++) {
+              yield* matchReps(reps, j);
+            }
           }
+          return;
         }
-        yield* runElemAt(j);
+
+        // Normal element: match single array element
+        if (j >= val.length) return;
+        for (const _ of matchNode(el, val[j], ctx)) {
+          yield* matchFrom(i + 1, j + 1);
+        }
       }
 
       yield* matchFrom(0, 0);
@@ -359,11 +381,20 @@ function* matchNode(n, val, ctx) {
       if (!isSet(val)) return;
       const elems = Array.from(val);
       // Greedy try: backtracking matching of pattern members to set elems
-      const pats = n.members;
+      const pats = n.members.filter(m => m.type !== "Spread");
+      const hasSpread = n.members.some(m => m.type === "Spread");
       const used = new Array(elems.length).fill(false);
 
       function* assign(i) {
-        if (i === pats.length) { yield ctx.env; return; }
+        if (i === pats.length) {
+          // Anchoring: if no spread, all elements must be matched
+          if (!hasSpread) {
+            const allUsed = used.every(u => u);
+            if (!allUsed) return;
+          }
+          yield ctx.env;
+          return;
+        }
         for (let j = 0; j < elems.length; j++) {
           if (used[j]) continue;
           used[j] = true;

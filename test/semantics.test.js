@@ -73,11 +73,13 @@ group('coercions', () => {
     assert.deepEqual(sem.coerceBoolean('false'), { ok: true, value: false });
   }, { group: 'semantics' });
 
-  test('coerceBoolean - truthy/falsy', async () => {
-    assert.deepEqual(sem.coerceBoolean(1), { ok: true, value: true });
-    assert.deepEqual(sem.coerceBoolean(0), { ok: true, value: false });
-    assert.deepEqual(sem.coerceBoolean(''), { ok: true, value: false });
-    assert.deepEqual(sem.coerceBoolean('abc'), { ok: true, value: true });
+  test('coerceBoolean - rejects non-boolean values', async () => {
+    assert.deepEqual(sem.coerceBoolean(1), { ok: false, value: false });
+    assert.deepEqual(sem.coerceBoolean(0), { ok: false, value: false });
+    assert.deepEqual(sem.coerceBoolean(''), { ok: false, value: false });
+    assert.deepEqual(sem.coerceBoolean('abc'), { ok: false, value: false });
+    assert.deepEqual(sem.coerceBoolean([]), { ok: false, value: false });
+    assert.deepEqual(sem.coerceBoolean({}), { ok: false, value: false });
   }, { group: 'semantics' });
 
   test('coerceString - basic', async () => {

@@ -19,9 +19,9 @@ const { test, assert, run, group } = require('./framework.js');
 // Import engine (using dynamic import for ES modules)
 let compile, Pattern;
 
-// Load the engine module
+// Load the engine module (use M4 which routes to M3 when appropriate)
 async function loadEngine() {
-  const engineModule = await import('../src/engine.js');
+  const engineModule = await import('../src/objects-sets-paths-replace.js');
   compile = engineModule.compile;
   Pattern = engineModule.Pattern;
 }
@@ -254,21 +254,19 @@ group('quantifiers', () => {
   }, { group: 'engine' });
 
   test('lazy quantifier - prefers fewer matches', async () => {
+    // With precedence: $x=1*? means ($x=1)*?, lazy prefers 0 reps
     const p = compile('[$x=1*? $y=1*]');
     const results = [...p.find([1, 1, 1])];
-    // Lazy prefers x=[] y=[1,1,1] first
     assert.ok(results.length > 0);
-    const first = results[0];
-    assert.deepEqual(first.scope.x, []);
+    assert.deepEqual(results[0].scope, { y: 1 }); // x undefined (0 reps), y=1 (3 reps)
   }, { group: 'engine' });
 
   test('greedy quantifier - prefers more matches', async () => {
+    // With precedence: $x=1* means ($x=1)*, greedy prefers max reps
     const p = compile('[$x=1* $y=1*]');
     const results = [...p.find([1, 1, 1])];
-    // Greedy prefers x=[1,1,1] y=[] first
     assert.ok(results.length > 0);
-    const first = results[0];
-    assert.deepEqual(first.scope.x, [1, 1, 1]);
+    assert.deepEqual(results[0].scope, { x: 1 }); // x=1 (3 reps), y undefined (0 reps)
   }, { group: 'engine' });
 });
 
@@ -487,34 +485,29 @@ group('pattern API', () => {
   }, { group: 'engine' });
 });
 
-// Unsupported features (should throw)
-group('unsupported M4 features', () => {
-  test('object pattern throws', async () => {
-    assert.throws(() => {
-      const p = compile('{ a: 1 }');
-      p.matches({ a: 1 });
-    }, /not yet supported/);
+// M4 features (now supported via objects-sets-paths-replace.js)
+group('M4 features', () => {
+  test('object pattern works', async () => {
+    const p = compile('{ a: 1 }');
+    assert.ok(p.matches({ a: 1 }));
+    assert.notOk(p.matches({ a: 2 }));
   }, { group: 'engine' });
 
-  test('set pattern throws', async () => {
-    assert.throws(() => {
-      const p = compile('{{ 1 2 }}');
-      p.matches(new Set([1, 2]));
-    }, /not yet supported/);
+  test('set pattern works', async () => {
+    const p = compile('{{ 1 2 }}');
+    assert.ok(p.matches(new Set([1, 2])));
+    assert.notOk(p.matches(new Set([1, 2, 3])));
   }, { group: 'engine' });
 
-  test('dot path throws', async () => {
-    assert.throws(() => {
-      const p = compile('a.b');
-      p.matches('ab');
-    }, /not yet supported/);
+  test('dot path works', async () => {
+    const p = compile('{ a.b.c: 1 }');
+    assert.ok(p.matches({ a: { b: { c: 1 } } }));
+    assert.notOk(p.matches({ a: { b: { c: 2 } } }));
   }, { group: 'engine' });
 
-  test('replacement throws', async () => {
-    assert.throws(() => {
-      const p = compile('[>> 1 <<]');
-      p.matches([1]);
-    }, /not yet supported/);
+  test('replacement pattern works', async () => {
+    const p = compile('[>> 1 <<]');
+    assert.ok(p.matches([1]));
   }, { group: 'engine' });
 });
 

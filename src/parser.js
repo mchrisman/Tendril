@@ -393,11 +393,13 @@ class Parser {
     const kvs = [];
     let typeGuard = null;
     let hasSpread = false;
+    let spreadCount = 0;
 
     while (!this.at(T.RBRACE)) {
       if (this.at(T.ELLIPSIS)) {
         this.eat(T.ELLIPSIS);
         hasSpread = true;
+        spreadCount++;
       } else {
         const res = this.parseKV_NormalOrReplacement();
         if (res.kind === "KV" || res.kind === "ReplaceKey" || res.kind === "ReplaceVal") {
@@ -417,7 +419,7 @@ class Parser {
       typeGuard = {name: ident.value, span: {start: asTok.span.start, end: ident.span.end}};
     }
 
-    return node("Object", {start, end}, {kvs, anchored: !hasSpread, hasSpread, typeGuard});
+    return node("Object", {start, end}, {kvs, anchored: !hasSpread, hasSpread, spreadCount, typeGuard});
   }
 
   parseReplacement() {

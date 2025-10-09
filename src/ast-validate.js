@@ -48,8 +48,10 @@ function visit(n, ctx, meta) {
       out = {...n, left: visit(n.left, ctx, meta), right: visit(n.right, ctx, meta)};
       break;
     case "Quant":
-      checkQuant(n);
-      out = {...n, sub: visit(n.sub, ctx, meta)};
+      // Normalize: null max means unbounded (Infinity)
+      const normalizedQuant = {...n, max: n.max === null ? Infinity : n.max};
+      checkQuant(normalizedQuant);
+      out = {...normalizedQuant, sub: visit(normalizedQuant.sub, ctx, meta)};
       break;
     case "Group":
       out = {...n, sub: visit(n.sub, ctx, meta)};
@@ -172,14 +174,19 @@ function validateObject(n, ctx, meta) {
     kvs.push({...kv, kPat, vPat});
   }
 
+  // Warn if multiple spreads (redundant but allowed)
+  if (n.spreadCount > 1) {
+    console.warn(`Pattern validation warning: Object has ${n.spreadCount} spread operators (...), but only one is needed.`);
+  }
+
   const anchored = n.anchored && !n.hasSpread ? true : !n.hasSpread;
   return {...n, kvs, anchored};
 }
 
 function validateAssert(n, ctx, meta) {
-  if (!(meta.context === "array" || meta.context === "object-key" || meta.context === "object-val" || meta.context === "set")) {
-    throw new PatternSyntaxError("Lookahead assertions must guard a unit in array/set or key/value in object", n.span.start);
-  }
+  // Assertions are syntactically unrestricted - they can appear anywhere in a pattern.
+  // They are semantically meaningful when guarding array/set elements or object keys/values,
+  // but the validator doesn't enforce context since complex patterns like [a | (?=b)] are valid.
   const pat = visit(n.pat, ctx, meta);
   return {...n, pat};
 }

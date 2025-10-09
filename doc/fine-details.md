@@ -6,7 +6,7 @@ n.b. Most of these are of the "just do the obvious thing" variety and could be o
 
 ## Reserved words (deduced from spec)
 
-* **Literals:** `true`, `false`, numeric forms (incl. `Infinity`, `NaN` if allowed), string literals `"..."`, regex `/.../ims`.
+* **Literals:** `true`, `false`, numeric forms (excluding `Infinity` and `NaN`), string literals `"..."`, regex `/.../ims`.
 * **Special tokens:** `_`, `...`, `as`, `Map`, `Set`, class names after `as`.
 * **Operators/symbols:** `[ ] { } {{ }} ( ) : , | & >> << = .* ? + #{ } .
 * **Vars:** `$name` (bindables).
@@ -18,7 +18,8 @@ n.b. Most of these are of the "just do the obvious thing" variety and could be o
 
 **Recommended matching/coercion rules**
 
-* **Numbers:** compare numerically for atomic equality; when matched by regex or coerced to string, use `String(value)` (so `NaN` → `"NaN"`, `Infinity` → `"Infinity"`).
+* **Numbers:** compare numerically for atomic equality using finite numbers only (`NaN` and `Infinity` do not match numeric atoms); when matched by regex or coerced to string, use `String(value)` (so `NaN` → `"NaN"`, `Infinity` → `"Infinity"`).
+* **Booleans:** strict coercion - pattern `true` matches boolean `true` or string `"true"` only; pattern `false` matches boolean `false` or string `"false"` only. All other values (numbers, arrays, objects) are rejected. Use `_` (wildcard) for truthy/falsy matching.
 * **BigInt:** only equals the **same BigInt**; no implicit cross-equality with Number. When coerced to string (e.g., regex), use `value.toString()`.
 * **null / undefined:** match only `_` or explicit `null`/`undefined` atoms if you choose to include them as atoms; avoid auto-coercion to `"null"`/`"undefined"` unless a regex forces stringification.
 * **Date / Function / Symbol:** **do not match** except via `_`; if coerced by regex, convert with `String(value)` (Symbol → throws in JS; safer to **reject** Symbols at compile-time or fail match).
@@ -33,7 +34,13 @@ n.b. Most of these are of the "just do the obvious thing" variety and could be o
 * JS regex `/u` **does not** do canonical equivalence. **Default:** no normalization.
 * **Option:** `normalize: 'NFC' | 'NFD' | false` in Pattern options; when enabled, normalize **all** strings (input and pattern barewords/strings) before equality/regex.
 
-## Sets and “extras”
+## Spread operator (`...`)
+
+* **Arrays:** `...` ≡ `_*?` (lazy wildcard). Can appear anywhere and multiple times: `[a ... b ... c]` matches `[a, x, y, b, z, c]`. All arrays are anchored; `...` is just syntactic sugar.
+* **Objects:** `...` ≡ `_:_ #?` (allows unknown keys). Multiple spreads are allowed but redundant; implementations should warn.
+* **Sets:** `...` ≡ `_ *?` (allows extra members). Same semantics as arrays.
+
+## Sets and "extras"
 
 * `{{ a b }}` means exactly those two members (size==2).
 * Use `...` sugar in sets too: `{{ a b ... }}` ≡ allow extras (`_ *?`).
@@ -43,9 +50,18 @@ n.b. Most of these are of the "just do the obvious thing" variety and could be o
 
 * Each `k:v #{m,n}` clause counts **independently** over the full set of matching pairs in the object. Matching is **non-consuming**; compute matches, then validate counts. No backtracking to satisfy counts. (Keep this highlighted in docs.)
 
-## Lookaheads in objects/sets
+## Lookahead assertions (`(?=...)` and `(?!...)`)
 
-* Only allowed **immediately before** key or value unit patterns; must match a **unit**, not a slice. They do not search the whole container; they guard the adjacent unit.
+* **Syntax:** Lookaheads are syntactically unrestricted - they can appear anywhere in a pattern (top-level, inside alternations, groups, etc.).
+* **Semantics:** Lookaheads test if a pattern matches the current value without consuming it or committing bindings. They are most useful when guarding:
+  - Array/set elements: `[(?=foo) _]` matches an array whose first element matches `foo`
+  - Object keys: `{(?=/^id/) k : v}` matches if a key matching `/^id/` exists
+  - Object values: `{k : (?=123) _}` matches if a value equals `123`
+* **Placement notes:**
+  - At top-level (`(?=foo) _`) they guard the entire input value
+  - At end of array/object they check but don't advance position (may not be useful but allowed)
+  - Nested in alternations like `[a | (?=b)]` they work as expected
+* **Implementation:** Lookaheads execute their pattern in a shadow environment; bindings made during lookahead execution are discarded.
 
 ## Slices
 
@@ -110,11 +126,12 @@ class Pattern {
 }
 ```
 
-## Infinity in quantifiers
+## Quantifier syntax
 
 * Allow `*`, `+`, `?` as primary forms.
-* Permit `{m,n}` with **finite** `n`.
-* Treat `{m,Infinity}` as **syntax sugar** for `{m,}` if you like, but document that engines optimize to the same as `*`/`+`. Simpler: **disallow** `Infinity` literal in `{m,n}` to keep the grammar tight.
+* Permit `{m,n}` with **finite** `n` (both `m` and `n` must be integer literals).
+* Use `{m,}` for open-ended ranges (equivalent to min=m, max=Infinity internally).
+* `Infinity` is **not** a valid literal in pattern syntax; implementations represent unbounded quantifiers internally using JavaScript's `Infinity` value.
 
 ## Comments
 
@@ -547,11 +564,11 @@ Design this with ergonomics in mind.
 Ditto.
 
 > Grammar Nits
-> 
+>
 > Infinity in quantifiers
 > *{0,Infinity}: is Infinity a literal token or must users write */+/? instead? Consider requiring */+/? and restricting {m,n} to finite n.
 
-Is there a problem with allowing Infinity here?
+**Resolution:** `Infinity` is not allowed as a literal in pattern syntax. Use `*`, `+`, or `{m,}` for unbounded quantifiers. Implementations may use JavaScript's `Infinity` value internally.
 
 > Escaping >> <<
 > How to match the literal sequences >> or << in strings/regex/barewords?

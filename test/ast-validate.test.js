@@ -294,18 +294,18 @@ group('assertion validation', () => {
     assert.ok(ast);
   }, { group: 'validate' });
 
-  test('reject assertion at top level', async () => {
-    // Manually construct invalid AST
-    const invalidAST = {
+  test('allow assertion at top level', async () => {
+    // Assertions are syntactically unrestricted - they can appear anywhere
+    const ast = {
       type: 'Assert',
       span: { start: 0, end: 5 },
       kind: 'pos',
       pat: { type: 'String', value: 'foo', span: { start: 3, end: 6 } }
     };
 
-    assert.throws(() => {
-      validateAST(invalidAST);
-    }, /Lookahead assertions must guard a unit/);
+    const validated = validateAST(ast);
+    assert.ok(validated);
+    assert.equal(validated.type, 'Assert');
   }, { group: 'validate' });
 });
 

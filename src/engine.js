@@ -43,7 +43,7 @@ import {
 
 /* ============================== Opcodes ============================== */
 
-const OP = Object.freeze({
+export const OP = Object.freeze({
   // flow
   JMP:        1,
   SPLIT:      2,  // push alt(ipB), jump ipA
@@ -224,13 +224,39 @@ class Compiler {
     const { min, max } = n;
     const greedy = !!n.greedy;
     const sub = n.sub;
+    const inArray = meta.context === "array-elem";
 
     // We'll unroll for min times, then for the remaining (max-min) we add optional reps.
-    for (let i = 0; i < min; i++) this.compileNode(sub, meta);
+    for (let i = 0; i < min; i++) {
+      if (inArray) this.emit(OP.ELEM_BEGIN);
+      this.compileNode(sub, meta);
+      if (inArray) this.emit(OP.ELEM_END);
+    }
     if (max === min) return;
 
     const reps = (max === Infinity) ? Infinity : (max - min);
 
+    // For finite reps, unroll as optional iterations: a{2,4} => a a (a? a?)
+    if (reps !== Infinity) {
+      for (let i = 0; i < reps; i++) {
+        const splitPos = this.emit(OP.SPLIT, 0, 0);
+        const takeStart = this.code.length;
+        if (inArray) this.emit(OP.ELEM_BEGIN);
+        this.compileNode(sub, meta);
+        if (inArray) this.emit(OP.ELEM_END);
+        const exit = this.code.length;
+        // For greedy: try take first, then exit
+        // For lazy: try exit first, then take
+        if (greedy) {
+          this.patchAt(splitPos, takeStart, exit);
+        } else {
+          this.patchAt(splitPos, exit, takeStart);
+        }
+      }
+      return;
+    }
+
+    // For infinite reps, use a loop
     if (greedy) {
       // Greedy: (sub)* with a loop that prefers consuming
       // loopStart:
@@ -242,7 +268,9 @@ class Compiler {
       const loopStart = this.code.length;
       const splitPos = this.emit(OP.SPLIT, 0, 0);
       const takeStart = this.code.length;
+      if (inArray) this.emit(OP.ELEM_BEGIN);
       this.compileNode(sub, meta);
+      if (inArray) this.emit(OP.ELEM_END);
       this.emit(OP.JMP, loopStart);
       const exit = this.code.length;
       this.patchAt(splitPos, takeStart, exit);
@@ -250,18 +278,20 @@ class Compiler {
       // Lazy: prefer exit, backtrack to take another
       // loopStart:
       //   SPLIT exit, take
-      // exit:
-      //   (fall through)
       // take:
       //   sub
       //   JMP loopStart
+      // exit:
+      //   (fall through)
       const loopStart = this.code.length;
       const splitPos = this.emit(OP.SPLIT, 0, 0);
-      const exit = this.code.length;
       const takeStart = this.code.length;
-      this.patchAt(splitPos, exit, takeStart);
+      if (inArray) this.emit(OP.ELEM_BEGIN);
       this.compileNode(sub, meta);
+      if (inArray) this.emit(OP.ELEM_END);
       this.emit(OP.JMP, loopStart);
+      const exit = this.code.length;
+      this.patchAt(splitPos, exit, takeStart);
     }
   }
 
@@ -278,10 +308,15 @@ class Compiler {
         this.emit(OP.ARR_SPREAD_LAZY);
         continue;
       }
-      // Element:
-      this.emit(OP.ELEM_BEGIN);
-      this.compileNode(el, { context: "array-elem" });
-      this.emit(OP.ELEM_END);
+      // Element: For quantifiers, they handle ELEM_BEGIN/END internally
+      // For other elements, wrap with ELEM_BEGIN/END here
+      if (el.type === "Quant") {
+        this.compileNode(el, { context: "array-elem" });
+      } else {
+        this.emit(OP.ELEM_BEGIN);
+        this.compileNode(el, { context: "array-elem" });
+        this.emit(OP.ELEM_END);
+      }
     }
 
     // Anchoring: if there's ANY Spread, anchoring is satisfied automatically;
@@ -326,6 +361,11 @@ function* runVM(code, pool, value, opts = {}) {
   const choice = [];
   const arrStack = [];
 
+  // Tracing hooks
+  if (opts.onStart) {
+    opts.onStart({ code, pool });
+  }
+
   // Registers
   let ip = 0;
   let val = value;
@@ -347,23 +387,33 @@ function* runVM(code, pool, value, opts = {}) {
   while (true) {
     const op = next();
 
+    // Trace hook before executing instruction
+    if (opts.onStep) {
+      opts.onStep({
+        ip: ip - 1,
+        op,
+        env: Object.fromEntries(env.map.entries()),
+        arrStack: arrStack.map(fr => ({ idx: fr.idx, length: fr.arr.length })),
+        choiceDepth: choice.length
+      });
+    }
+
     switch (op) {
       case OP.NOOP: break;
 
       case OP.JMP: {
-        const addr = next(); ip = addr;
-        // skip arg cells
-        next(); next();
+        const addr = next();
+        next(); next(); // consume padding cells
+        ip = addr; // jump to destination
         break;
       }
 
       case OP.SPLIT: {
         const a = next(), b = next();
+        next(); // consume padding cell
         // push alternative (b)
         choice.push(makeFrame(b, val, env.snapshot(), snapshotArrStack(arrStack)));
-        ip = a;
-        // consume padding
-        next();
+        ip = a; // jump to left branch
         break;
       }
 
@@ -568,28 +618,21 @@ function* runVM(code, pool, value, opts = {}) {
 
       case OP.ARR_SPREAD_LAZY: {
         // Non-greedy wildcard over array elements:
-        // Try to consume 0 elements; on backtrack, consume one and stay here.
+        // Try to consume 0 elements; on backtrack, consume one and loop back here.
         next(); next(); next();
         if (arrStack.length === 0) { if (!fail()) return; break; }
         const top = arrStack[arrStack.length - 1];
 
-        // choice: (stay) vs (consume one and retry ARR_SPREAD_LAZY)
-        // alt: consume path
-        const ipAfter = ip;
-        // Push alternative that consumes one element and re-enters spread if possible
+        // Point back to this opcode (we've consumed 4 cells, so ip - 4)
+        const currentIP = ip - 4;
+
+        // Push backtrack choice: consume one element, then retry this spread opcode
         if (top.idx < top.arr.length) {
-          const snap = makeFrame(ipAfter, val, env.snapshot(), snapshotArrStack(arrStack));
-          // mutate the snapshot to represent 'consume one, then try again at this opcode'
-          // We'll simulate by applying consumption immediately on resume:
-          // We'll store a special marker by bumping idx in arr snapshot; but easier: we just push a frame
-          // that resumes at this same opcode with idx+1 applied now:
-          const snap2 = makeFrame(ipAfter, val, env.snapshot(), snapshotArrStack(arrStack));
-          // consume one element now in the saved snapshot
-          const last = snap2.arrStackSnapshot[snap2.arrStackSnapshot.length - 1];
-          last.idx = Math.min(last.idx + 1, last.arr.length);
-          choice.push(snap2);
+          const snapAfterConsume = snapshotArrStack(arrStack);
+          snapAfterConsume[snapAfterConsume.length - 1].idx++;
+          choice.push(makeFrame(currentIP, val, env.snapshot(), snapAfterConsume));
         }
-        // fast-path: take 0-consume and continue
+        // Continue with 0-consume (lazy preference)
         break;
       }
 
@@ -649,7 +692,7 @@ export class Pattern {
 
   /** Iterate all matches (bindings) at root (milestone 3: root only). */
   *find(value, opts = {}) {
-    yield* runVM(this._code, this._pool, value, { initialEnv: opts.initialEnv });
+    yield* runVM(this._code, this._pool, value, opts);
   }
 }
 

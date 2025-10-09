@@ -35,15 +35,20 @@ export function coerceNumber(x) {
   return Number.isFinite(n) ? { ok: true, value: n } : { ok: false, value: NaN };
 }
 
-/** Coerce to boolean with JS semantics (only 'true'/'false' string special-cased). */
+/**
+ * Coerce to boolean - strict mode.
+ * Only accepts boolean primitives and string literals "true"/"false".
+ * Rejects all other values (numbers, arrays, objects, etc.).
+ * Use _ (wildcard) if you need to match any truthy/falsy value.
+ */
 export function coerceBoolean(x) {
   if (typeof x === "boolean") return { ok: true, value: x };
   if (typeof x === "string") {
     if (x === "true") return { ok: true, value: true };
     if (x === "false") return { ok: true, value: false };
   }
-  // Fallback: JS truthiness (documented behavior)
-  return { ok: true, value: !!x };
+  // Reject all other values
+  return { ok: false, value: false };
 }
 
 /** Coerce to string (String(x)) then optional Unicode normalization. */
