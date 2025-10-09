@@ -46,6 +46,7 @@ class Parser {
     this.src = source;
     this.i = 0;
     this.lastSpan = {start: 0, end: 0};
+    this._noAdjDepth = 0;
   }
 
   peek(k = 0) {
@@ -150,13 +151,18 @@ class Parser {
   // ====== No-adjacency variants (for inside containers) ======
   // expr_or_noadj := expr_and_noadj ( '|' expr_and_noadj )*
   parseOrNoAdj() {
-    let left = this.parseAndNoAdj();
-    while (this.opt(T.PIPE)) {
-      const right = this.parseAndNoAdj();
-      const span = {start: left.span.start, end: right.span.end};
-      left = node("Alt", span, {options: [left, right]});
+    this._noAdjDepth++;
+    try {
+      let left = this.parseAndNoAdj();
+      while (this.opt(T.PIPE)) {
+        const right = this.parseAndNoAdj();
+        const span = {start: left.span.start, end: right.span.end};
+        left = node("Alt", span, {options: [left, right]});
+      }
+      return left;
+    } finally {
+      this._noAdjDepth--;
     }
-    return left;
   }
 
   // expr_and_noadj := expr_dot ( '&' expr_dot )*
@@ -457,7 +463,9 @@ class Parser {
         const span = {start: varNode.span.start, end: other.span.end};
         return node("BindEq", span, {left: varNode, right: other}); // $x=$y
       } else {
-        const rhs = this.parseOr();
+        // Bind: $x=pattern — RHS is a primary only (binding has higher precedence than quantifiers)
+        // For complex patterns, use parens: $x=(_*), $x=(a.b)
+        const rhs = this.parsePrimary();
         const span = {start: varNode.span.start, end: rhs.span.end};
         return node("Bind", span, {name: varNode.name, pat: rhs});
       }

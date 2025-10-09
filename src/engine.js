@@ -295,6 +295,14 @@ class Compiler {
     }
   }
 
+  // Helper: Does this node (recursively through transparent wrappers) handle its own array iteration?
+  handlesOwnIteration(node) {
+    if (node.type === "Quant") return true;
+    if (node.type === "Bind") return this.handlesOwnIteration(node.pat);
+    if (node.type === "Group") return this.handlesOwnIteration(node.sub);
+    return false;
+  }
+
   compileArray(n, meta) {
     // Arrays are anchored by default; elems evaluated left→right.
     // We support 'Spread' (lazy wildcard) anywhere among elems.
@@ -308,9 +316,9 @@ class Compiler {
         this.emit(OP.ARR_SPREAD_LAZY);
         continue;
       }
-      // Element: For quantifiers, they handle ELEM_BEGIN/END internally
+      // Element: For quantifiers (possibly wrapped in Bind/Group), they handle ELEM_BEGIN/END internally
       // For other elements, wrap with ELEM_BEGIN/END here
-      if (el.type === "Quant") {
+      if (this.handlesOwnIteration(el)) {
         this.compileNode(el, { context: "array-elem" });
       } else {
         this.emit(OP.ELEM_BEGIN);
