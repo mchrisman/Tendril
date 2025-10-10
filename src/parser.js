@@ -213,11 +213,6 @@ class Parser {
       // Dot chaining only allowed in object key context
       if (!this._inObjectKey) break;
 
-      // Enforce NO whitespace/comments around '.'
-      if (dotTok.wsBefore || dotTok.wsAfter) {
-        throw this.err("No whitespace or comments around '.'", dotTok.span.start);
-      }
-
       const k = this.cur().kind;
       const rhsWouldTerminate =
         k === T.RPAREN || k === T.RBRACK || k === T.RBRACE || k === T.RDBRACE || k === T.REPL_R;

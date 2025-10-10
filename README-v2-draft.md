@@ -218,7 +218,7 @@ k:v          === k:v #{1,}      // default: one or more
    ~= { a:{ b:{ a:{ b:{ a:{ b:{ c:'d' }}}}}}}
 ```
 
-Right-to-left associative; no whitespace around `.`.
+Right-to-left associative.
 Array quantifiers apply to the *path prefix* (`a.b.` portion).
 
 ---
@@ -699,125 +699,6 @@ Object key patterns (not Map patterns) containing non-string primitive patterns 
  
 // Primitive matchers (literals, regexes) are affected; wildcards aren't.
 [ ~~$x=~~[ /\w+/+ .. ] ]    ~= [ [ 123, 456, [], 789 ] ]   // yes, $x == [ "123", "456", [], 789 ]
-
-
-```
-
-Array, Object, Map, and Set patterns:
-
-**this is a specification change**
-
-These strictly match objects, maps, sets, arrays respectively:
-OBJECT_PATTERN          := '{' OBJECT_ASSERTION* '}'
-MAP_PATTERN             := 'Map{' OBJECT_ASSERTION* '}'
-SET_PATTERN             := 'Set{' SINGLETON_PATTERN* '}'
-ARRAY_PATTERN           := '[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTERN)*)? ']'
-
-These coerce the data collection to the indicated type.
-LIKE_OBJECT_PATTERN          := '~{' OBJECT_ASSERTION* '}'
-LIKE_MAP_PATTERN             := '~Map{' OBJECT_ASSERTION* '}'
-LIKE_ARRAY_PATTERN           := '~[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTERN)*)? ']'
-
-Examples:
-~{ 0:a 1:b }            ~= [ 'a' 'b' ]   
-~{ a:b "true":d }       ~= new Map([["a","b"],[true,"d"]]) // Keys are stringified, perforce.
-
-~Map{ 0:a 1:b }            ~= [ 'a' 'b' ]   
-~Map{ a:b true:d }        !~= { 'a':'b', 'true','d' } // Keys are not coerced in Object=>Map!
-~Map{ a:b ~true:d }        ~= { 'a':'b', 'true','d' }
-
-[ a b ]                ~= { "0":"a", "1":"b" }
-[ a b ]                ~= Map{ 0:"a", 0:"b" }
-
-```
-
-
-
-```
-Array, Object, Map, and Set patterns: 
-
-**this is a specification change**
-
-These strictly match objects, maps, sets, arrays respectively:
-OBJECT_PATTERN          := '{' OBJECT_ASSERTION* '}'
-MAP_PATTERN             := 'Map{' OBJECT_ASSERTION* '}'
-SET_PATTERN             := 'Set{' SINGLETON_PATTERN* '}'
-ARRAY_PATTERN           := '[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTERN)*)? ']'
-
-These coerce the data collection to the indicated type.
-LIKE_OBJECT_PATTERN          := '~{' OBJECT_ASSERTION* '}'
-LIKE_MAP_PATTERN             := '~Map{' OBJECT_ASSERTION* '}'
-LIKE_SET_PATTERN             := '~Set{' SINGLETON_PATTERN* '}'
-LIKE_ARRAY_PATTERN           := '~[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTERN)*)? ']'
-
-Examples:
-~{ 0:a 1:b }            ~= [ 'a' 'b' ]   
-~{ a:b "true":d }       ~= new Map([["a","b"],[true,"d"]]) // Keys are stringified, perforce.
-~{ a:true "true":true } ~= new Set(["a", true])  // Keys are stringified and values are boolean `true`.
-
-~Map{ 0:a 1:b }            ~= [ 'a' 'b' ]   
-~Map{ a:b true:d }        !~= { 'a':'b', 'true','d' } // Keys are not coerced in Object=>Map!
-~Map{ a:b ~true:d }        ~= { 'a':'b', 'true','d' } 
-~Map{ a:true true:true }   ~= new Set(["a", true])  // Keys are stringified and values are boolean `true`.
-
-~Set{ 0 1 }            ~= [ 'a' 'b' ]  // We only look at keys, not values   
-~Set{ a true }        !~= { 'a':'b', 'true','d' } // Keys are not coerced in Object=>Set!
-~Set{ a ~true }        ~= { 'a':'b', 'true','d' }
-~Set{ a true }         ~= new Map([['a','x'],[true,'y']]) 
-
-[ a b ]                ~= { "0":"a", "1":"b" }
-[ a b ]                ~= Map{ 0:"a", 0:"b" }
-[ a b ]                ~= Set{ 0, 1 }
-
-
-
-
-
-
-
-Arrays may match an Object or Map pattern with the ~ operator.
-{ 0:a 1:b }        !~= [ a b ]
-~{ 0:a 1:b }        ~= [ a b ]
-~Map{ 0:a 1:b }     ~= [ a b ]
-
-
-~Map{ 
-
-**After**
-
-{ KV
-
-```
-[ 123 ]            !~=  [ "123" ]
-   
-[ "123" ]          ~=  [ 123 ]   
-
-
-
-Tendril(" [ false ] ").matches(false)   // yes
-Tendril(" [ false ] ").matches('false')   // no
-Tendril(" [ ~false ] ").matches('false')   // yes
-
-Tendril(" [ 123 ] ").matches(123)   // yes
-Tendril(" [ 123 ] ").matches('123')   // no
-Tendril(" [ ~123 ] ").matches('123')   // yes
-
-Tendril("~false       ").matches('false')   // yes, coerces the data to boolean before comparing
-
-Option 1
-Tendril("$x=~false    ").matches('false')   // yes, $x <- false
-Tendril("(?$x=.)~false").matches('false')   // yes, $x <- 'false'
-
-Option 2
-Tendril("$x=~false    ").matches('false')   // yes, $x <- 'false'
-Tendril("~$x=false    ").matches('false')   // yes, $x <- false
-
----
-
-Tendril("[ $x $x ]    ").matches([ false, "false"])  // no
-Tendril("[ $x ~$x ]   ").matches([ false, "false"])  // yes
-Tendril("[ ~$x $x ]   ").matches([ false, "false"])  // error, Or else we have to get clever in the implementation. 
-
 
 
 ```
