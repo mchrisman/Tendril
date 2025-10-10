@@ -3,7 +3,9 @@
  * Tests AST generation from pattern strings
  */
 
-const { test, skip, assert, run, runner, group } = require('./framework.js');
+const { test, skip, assert, run, runner, group, setSourceFile } = require('./framework.js');
+
+setSourceFile('parser.test.js');
 
 // Import parser (using dynamic import for ES modules)
 let parse, PatternSyntaxError;
@@ -327,37 +329,10 @@ group('precedence', () => {
     assert.ok(isNode(ast.elems[0].sub, 'Alt'));
   }, { group: 'parser' });
 
-  test('dot binds tighter than adjacency', async () => {
-    const ast = parse('a.b c');
-    assert.equal(ast.type, 'Adj');
-    assert.ok(isNode(ast.elems[0], 'Dot'));
-    assert.ok(isNode(ast.elems[1], 'String'));
-  }, { group: 'parser' });
 });
 
-// Vertical patterns
+// Vertical patterns (only valid in object keys)
 group('vertical patterns', () => {
-  test('parse simple dot', async () => {
-    const ast = parse('a.b');
-    assert.equal(ast.type, 'Dot');
-    assert.ok(isNode(ast.left, 'String'));
-    assert.ok(isNode(ast.right, 'String'));
-  }, { group: 'parser' });
-
-  test('parse chained dots', async () => {
-    const ast = parse('a.b.c');
-    assert.equal(ast.type, 'Dot');
-    // Should be left-associative: (a.b).c
-    assert.ok(isNode(ast.left, 'Dot'));
-    assert.ok(isNode(ast.right, 'String'));
-  }, { group: 'parser' });
-
-  test('parse vertical with quantifier', async () => {
-    const ast = parse('a.b*');
-    assert.equal(ast.type, 'Dot');
-    assert.ok(isNode(ast.right, 'Quant'));
-  }, { group: 'parser' });
-
   test('parse vertical in object', async () => {
     const ast = parse('{a.b.c:d}');
     assert.equal(ast.type, 'Object');

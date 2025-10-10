@@ -47,6 +47,9 @@ function visit(n, ctx, meta) {
     case "Dot":
       out = {...n, left: visit(n.left, ctx, meta), right: visit(n.right, ctx, meta)};
       break;
+    case "IndexedPath":
+      out = {...n, obj: visit(n.obj, ctx, meta), index: visit(n.index, ctx, meta)};
+      break;
     case "Quant":
       // Normalize: null max means unbounded (Infinity)
       const normalizedQuant = {...n, max: n.max === null ? Infinity : n.max};

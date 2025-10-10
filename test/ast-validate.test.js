@@ -3,7 +3,9 @@
  * Tests structural validation of AST nodes
  */
 
-const { test, skip, assert, run, runner, group } = require('./framework.js');
+const { test, skip, assert, run, runner, group, setSourceFile } = require('./framework.js');
+
+setSourceFile('ast-validate.test.js');
 
 // Import validator and parser (using dynamic import for ES modules)
 let validateAST, parse, PatternSyntaxError;
@@ -77,9 +79,10 @@ group('valid patterns', () => {
   }, { group: 'validate' });
 
   test('validate vertical pattern', async () => {
-    const ast = parseAndValidate('a.b.c');
+    const ast = parseAndValidate('{ a.b.c:d }');
     assert.ok(ast);
-    assert.equal(ast.type, 'Dot');
+    assert.equal(ast.type, 'Object');
+    assert.equal(ast.kvs[0].kPat.type, 'Dot');
   }, { group: 'validate' });
 });
 

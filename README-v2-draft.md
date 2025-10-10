@@ -344,7 +344,7 @@ ARRAY_PATTERN           := '[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTER
 ARRAY_WS                := single space (array adjacency)
 
 ARRAY_SLICE_PATTERN     := '...'                               // == _*? (lazy)
-                         | SYMBOL ('=' ARRAY_SLICE_PATTERN)?
+                         | SYMBOL ('=' SINGLETON_PATTERN)?
                          | '(' ARRAY_SLICE_PATTERN ')' ARRAY_QUANT?
                          | SINGLETON_PATTERN ARRAY_QUANT?
                          | ARRAY_SLICE_PATTERN ARRAY_WS ARRAY_SLICE_PATTERN
@@ -361,26 +361,16 @@ OBJECT_PATTERN          := '{' OBJECT_ASSERTION* '}'
 OBJECT_ASSERTION        := KV_ASSERTION
                          | PATH_ASSERTION
                          | INDEXED_PATH_ASSERTION
-                         | SLICE_BINDING
                          | NEGATIVE_SLICE_ASSERTION
 
 KV_ASSERTION            := SINGLETON_PATTERN ':' SINGLETON_PATTERN
 PATH_ASSERTION          := SINGLETON_PATTERN '.' OBJECT_ASSERTION
 INDEXED_PATH_ASSERTION  := '[' SINGLETON_PATTERN ']' OBJECT_ASSERTION
-SLICE_BINDING           := SYMBOL '=' '(' OBJECT_ASSERTION+ ')'
 NEGATIVE_SLICE_ASSERTION:= '(?!=others)'
 
 SET_OR_MAP_PATTERN      := OBJECT_PATTERN 'as' 'Set'
                          | OBJECT_PATTERN 'as' 'Map'
 ```
-
----
-
-## Keywords
-
-| Keyword    | Meaning                                    | Scope                                 |
-| ---------- | ------------------------------------------ | ------------------------------------- |
-| **others** | Residual slice (unmatched key/value pairs) | Valid **only within object matchers** |
 
 ---
 
@@ -400,8 +390,8 @@ Precedence: `( )` > quantifiers > `.` > space > `&` > `|`.
 
 ## Binding and Unification
 
-* `$name = pattern` binds `$name` to the matched value or slice.
-* Bare `$name` is shorthand for `$name=_` (singleton) or `$name=_*?` (in array slice).
+* `$name = pattern` binds `$name` to the matched value. The pattern must be a singleton pattern, not a slice pattern.
+* Bare `$name` is shorthand for `$name=_`.
 * **Unification is global and Prolog-style**: repeated symbols must agree across branches.
 
 Examples:
@@ -612,7 +602,6 @@ $x                   === $x=_ or $x=_*?     // depends on position
 | # | Issue | Impact |
 |---|-------|--------|
 | **2** | **Object anchoring default** | 🔴 MAJOR - v1 anchored, v2 unanchored |
-| **6** | **Replacement restrictions** | 🟡 MEDIUM - v2 adds new constraints |
 | **7** | **Binding context-dependence** | 🟡 MEDIUM - v2 makes `$x` ambiguous |
 | **8** | **Object anchoring mechanism** | 🔴 MAJOR - v1 has none, v2 uses `(?!=others)` |
 | **11** | **Map syntax** | 🟡 MEDIUM - `as Map` → `as @AsMap` |
@@ -622,3 +611,26 @@ $x                   === $x=_ or $x=_*?     // depends on position
 | **17** | **Regex coercion** | 🟡 MEDIUM - contradictory statements |
 
 The biggest issue is **#2**: Are objects anchored or unanchored by default? The two versions directly contradict each other.
+
+```
+Tendril("false        ").matches(false)   // yes
+Tendril("false        ").matches('false')   // no
+Tendril("~false       ").matches('false')   // yes, coerces the data to boolean before comparing
+
+Option 1
+Tendril("$x=~false    ").matches('false')   // yes, $x <- false
+Tendril("(?$x=.)~false").matches('false')   // yes, $x <- 'false'
+
+Option 2
+Tendril("$x=~false    ").matches('false')   // yes, $x <- 'false'
+Tendril("~$x=false    ").matches('false')   // yes, $x <- false
+
+---
+
+Tendril("[ $x $x ]    ").matches([ false, "false"])  // no
+Tendril("[ $x ~$x ]   ").matches([ false, "false"])  // yes
+Tendril("[ ~$x $x ]   ").matches([ false, "false"])  // error, Or else we have to get clever in the implementation. 
+
+
+
+```

@@ -3,7 +3,9 @@
  * Tests basic tokenization functionality
  */
 
-const { test, assert, run, runner, group } = require('./framework.js');
+const { test, assert, run, runner, group, setSourceFile } = require('./framework.js');
+
+setSourceFile('lexer.test.js');
 
 // Import lexer (using dynamic import for ES modules)
 let lex, T, PatternSyntaxError;

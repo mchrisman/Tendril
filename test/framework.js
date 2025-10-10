@@ -24,6 +24,7 @@ class TestRunner {
     this.afterEachHooks = [];
     this.filterPattern = null;
     this.filterGroup = null;
+    this.defaultSourceFile = null;
   }
 
   /**
@@ -35,7 +36,8 @@ class TestRunner {
       fn,
       group: options.group || 'default',
       skip: options.skip || false,
-      only: options.only || false
+      only: options.only || false,
+      sourceFile: options.sourceFile || this.defaultSourceFile
     };
 
     this.tests.push(test);
@@ -44,6 +46,14 @@ class TestRunner {
       this.groups.set(test.group, []);
     }
     this.groups.get(test.group).push(test);
+  }
+
+  /**
+   * Set default source file for subsequent tests
+   */
+  setSourceFile(fileName) {
+    this.defaultSourceFile = fileName;
+    return this;
   }
 
   /**
@@ -147,8 +157,16 @@ class TestRunner {
       testsToRun = testsToRun.filter(t => t.group === this.filterGroup);
     }
 
-    // Run tests
+    // Run tests (grouped by source file)
+    let currentFile = null;
     for (const test of testsToRun) {
+      // Print file header when switching files
+      if (test.sourceFile && test.sourceFile !== currentFile) {
+        if (currentFile !== null) console.log(''); // blank line between files
+        console.log(`\n📄 ${test.sourceFile}`);
+        currentFile = test.sourceFile;
+      }
+
       if (test.skip) {
         this.results.skipped.push(test);
         console.log(`⊘ ${test.name} (skipped)`);
@@ -409,6 +427,7 @@ module.exports = {
   run: () => runner.run(),
   filter: (pattern) => runner.filter(pattern),
   filterByGroup: (group) => runner.filterByGroup(group),
+  setSourceFile: (fileName) => runner.setSourceFile(fileName),
   assert: Assert,
   runner
 };

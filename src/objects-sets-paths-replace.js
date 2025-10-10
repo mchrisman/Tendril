@@ -42,6 +42,7 @@ function needsAdvanced(n) {
     case "Object":
     case "Set":
     case "Dot":
+    case "IndexedPath":
     case "ReplaceSlice":
     case "ReplaceKey":
     case "ReplaceVal":
@@ -60,10 +61,15 @@ function needsAdvanced(n) {
 }
 
 // Lower vertical key paths inside Object kvs: k1.k2.k3 : v  ⇒  k1 : { k2.k3 : v } (anchored)
+// Also handles indexed paths: a[$x].c : v  ⇒  a : { $x : { c : v } } (anchored)
 function lowerVerticalInObject(obj) {
   const lowerDot = (kPat, vPat) => {
-    // kPat is a Dot-chain; split leftmost and rest
-    const peel = (k) => (k.type === "Dot" ? [k.left, k.right] : [k, null]);
+    // kPat is a Dot-chain or IndexedPath; split leftmost and rest
+    const peel = (k) => {
+      if (k.type === "Dot") return [k.left, k.right];
+      if (k.type === "IndexedPath") return [k.obj, k.index];
+      return [k, null];
+    };
     const [left, rest] = peel(kPat);
     if (!rest) return { kPat: left, vPat };
     // Build nested object on right: { rest : vPat } (anchored), then recurse
@@ -76,7 +82,7 @@ function lowerVerticalInObject(obj) {
   for (const kv of obj.kvs) {
     if (kv.type === "ReplaceKey" || kv.type === "ReplaceVal") {
       // Replacement: also allow vertical on the key side
-      if (kv.kPat?.type === "Dot") {
+      if (kv.kPat?.type === "Dot" || kv.kPat?.type === "IndexedPath") {
         const lowered = lowerDot(kv.kPat, kv.vPat);
         kvs.push({ ...kv, kPat: lowered.kPat, vPat: lowered.vPat });
       } else {
@@ -85,7 +91,7 @@ function lowerVerticalInObject(obj) {
       continue;
     }
     const { kPat, vPat, count } = kv;
-    if (kPat.type === "Dot") {
+    if (kPat.type === "Dot" || kPat.type === "IndexedPath") {
       const lowered = lowerDot(kPat, vPat);
       kvs.push({ kPat: lowered.kPat, vPat: lowered.vPat, count });
     } else {
@@ -125,6 +131,7 @@ function lowerVerticalEverywhere(n) {
     case "Bind":  return { ...n, pat: lowerVerticalEverywhere(n.pat) };
     case "BindEq":return { ...n, left: lowerVerticalEverywhere(n.left), right: lowerVerticalEverywhere(n.right) };
     case "Assert":return { ...n, pat: lowerVerticalEverywhere(n.pat) };
+    case "IndexedPath": return { ...n, obj: lowerVerticalEverywhere(n.obj), index: lowerVerticalEverywhere(n.index) };
     default:      return n;
   }
 }

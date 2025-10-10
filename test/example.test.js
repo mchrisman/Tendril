@@ -6,7 +6,9 @@
  * Run specific group: node test/example.test.js --group "math"
  */
 
-const { test, skip, only, group, beforeAll, afterAll, beforeEach, afterEach, assert, run, runner } = require('./framework.js');
+const { test, skip, only, group, beforeAll, afterAll, beforeEach, afterEach, assert, run, runner, setSourceFile } = require('./framework.js');
+
+setSourceFile('example.test.js');
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -99,11 +101,11 @@ test('async throws', async () => {
 //   assert.equal(2 + 2, 5, 'This will fail');
 // });
 
-// Skipped test
-skip('skipped test example', () => {
-  // This won't run
-  assert.equal(1, 2);
-});
+// Skipped test example (commented out to avoid false alarm in test output)
+// skip('skipped test example', () => {
+//   // This won't run
+//   assert.equal(1, 2);
+// });
 
 // Grouped tests
 group('math operations', () => {

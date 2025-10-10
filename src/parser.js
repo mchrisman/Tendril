@@ -47,6 +47,7 @@ class Parser {
     this.i = 0;
     this.lastSpan = {start: 0, end: 0};
     this._noAdjDepth = 0;
+    this._inObjectKey = false;
   }
 
   peek(k = 0) {
@@ -196,8 +197,21 @@ class Parser {
   parseDot() {
     let left = this.parseQuant();
     while (true) {
+      // Check for indexed path: [pat] (only in object key context)
+      if (this._inObjectKey && this.at(T.LBRACK)) {
+        const lbrack = this.eat(T.LBRACK);
+        const index = this.parseOrNoAdj();
+        this.eat(T.RBRACK);
+        const span = {start: left.span.start, end: this.lastSpan.end};
+        left = node("IndexedPath", span, {obj: left, index});
+        continue;
+      }
+
       const dotTok = this.opt(T.DOT);
       if (!dotTok) break;
+
+      // Dot chaining only allowed in object key context
+      if (!this._inObjectKey) break;
 
       // Enforce NO whitespace/comments around '.'
       if (dotTok.wsBefore || dotTok.wsAfter) {
@@ -352,7 +366,9 @@ class Parser {
     //   k : v            → normal KV (possibly with #count)
     if (this.at(T.REPL_L)) {
       const start = this.eat(T.REPL_L).span.start;
+      this._inObjectKey = true;
       const kPat = this.parseOrNoAdj();       // ⟵ no adjacency in object key
+      this._inObjectKey = false;
       this.eat(T.REPL_R);
       this.eat(T.COLON);
       const vPat = this.parseOrNoAdj();       // ⟵ no adjacency in object value
@@ -360,7 +376,9 @@ class Parser {
       return {kind: "ReplaceKey", node: node("ReplaceKey", span, {kPat, vPat})};
     }
 
+    this._inObjectKey = true;
     const kPat = this.parseOrNoAdj();         // ⟵ no adjacency in object key
+    this._inObjectKey = false;
     this.eat(T.COLON);
 
     if (this.at(T.REPL_L)) {

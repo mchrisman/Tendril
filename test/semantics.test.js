@@ -3,7 +3,9 @@
  * Tests semantic helper functions
  */
 
-const { test, assert, run, group } = require('./framework.js');
+const { test, assert, run, group, setSourceFile } = require('./framework.js');
+
+setSourceFile('semantics.test.js');
 
 // Import semantics (using dynamic import for ES modules)
 let sem;

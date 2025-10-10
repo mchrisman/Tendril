@@ -14,7 +14,9 @@
  * - Object, Set, Dot, ReplaceSlice, ReplaceKey, ReplaceVal
  */
 
-const { test, assert, run, group } = require('./framework.js');
+const { test, assert, run, group, setSourceFile } = require('./framework.js');
+
+setSourceFile('engine.test.js');
 
 // Import engine (using dynamic import for ES modules)
 let compile, Pattern;
@@ -522,6 +524,33 @@ group('M4 features', () => {
   test('replacement pattern works', async () => {
     const p = compile('[>> 1 <<]');
     assert.ok(p.matches([1]));
+  }, { group: 'engine' });
+
+  test('key-value binding', async () => {
+    // Objects are anchored by default, so { $k:$v } only matches objects with exactly one key
+    const p = compile('{ $k:$v }');
+    const results = [...p.find({ foo: 'bar' })];
+    assert.equal(results.length, 1, 'expected exactly one result');
+    assert.equal(results[0].scope.k, 'foo', '$k should bind to "foo"');
+    assert.equal(results[0].scope.v, 'bar', '$v should bind to "bar"');
+  }, { group: 'engine' });
+
+  test('variables in indexed paths (not yet implemented)', async () => {
+    // TODO: Indexed path syntax [$c] not yet implemented in parser
+    const p = compile('{ a.$b[$c].d:e }');
+    const input = {
+      a: {
+        foo: {
+          bar: {
+            d: 'e'
+          }
+        }
+      }
+    };
+    const results = [...p.find(input)];
+    assert.ok(results.length > 0, 'pattern should match');
+    assert.equal(results[0].scope.b, 'foo', '$b should bind to "foo"');
+    assert.equal(results[0].scope.c, 'bar', '$c should bind to "bar"');
   }, { group: 'engine' });
 });
 

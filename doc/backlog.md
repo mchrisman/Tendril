@@ -119,6 +119,7 @@ You have `/regex/` literals but no way to compose them with your structural oper
 - Explicit alternation + quantifier examples
   . Clarifications to Add to Spec
 
+allow [ a.b.c ] meaning [ {a.b.c ..} ]
 
 -------
 
