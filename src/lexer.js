@@ -263,10 +263,10 @@ export function lex(source) {
     // The lexer stays context-free by only emitting single-char tokens
 
     // ellipsis
-    if (tryThreeChar(".", ".", ".")) {
+    if (tryTwoChar(".", ".")) {
       const start = i;
-      i += 3;
-      push(T.ELLIPSIS, "...", start, i, skipped);
+      i += 2;
+      push(T.ELLIPSIS, "..", start, i, skipped);
       continue;
     }
 

@@ -1,7 +1,7 @@
 // parser.js
 // Pratt-style parser with explicit precedence:
 // () > quantifiers > DOT > adjacency (space/comma) > & > |
-// Arrays are anchored by default; "..." is lowered to sugar per spec.
+// Arrays are anchored by default; ".." is lowered to sugar per spec.
 // Vertical paths are right-to-left associative for kPat.kvPat.
 // Produces an AST with spans carried from tokens.
 

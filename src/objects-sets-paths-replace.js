@@ -14,10 +14,10 @@
 // • Vertical keys (`{ a.b.c: v }`) are desugared before matching into nested
 //   object patterns (right-to-left), e.g. `{ a: { b: { c: v } } }` (anchored).
 // • Object kvs are unordered, **overlapping** and **non-consuming**; anchoring
-//   means every input key is “covered” by at least one kv-pattern (unless `...`).
+//   means every input key is “covered” by at least one kv-pattern (unless `..`).
 // • Counts `k:v #{m,n}` are post-checks over keys satisfying both k and v.
 // • Sets use order-insensitive bipartite matching; extras allowed only with
-//   set-level spread `...` (sugar for “allow extras”).
+//   set-level spread `..` (sugar for “allow extras”).
 // • Replacement: exactly one `>>…<<` overall (enforced by validator). We support
 //   array-slice, object-key, and object-value captures; `replaceAll()` applies
 //   non-overlapping edits left→right, returning a new immutable structure.

@@ -17,7 +17,7 @@ const data = {
 
 const pattern = `{
   planets.$name.size: $size
-  aka: [... [$name ... $alias ... | $alias=$name ...] ... ] // $name itself as a possible alias
+  aka: [.. [$name .. $alias .. | $alias=$name ..] .. ] // $name itself as a possible alias
 }`;
 
 Tendril(pattern).match(data).map(m => `Hello, ${m.$size} world ${m.$alias}`);
@@ -42,7 +42,7 @@ Defaults differ across arrays, objects, and sets; don’t assume identical behav
 ```
 // Basic equivalences
 { foo: bar }                       ~= { "foo": "bar", "baz": "buzz" }   // objects are unanchored by default
-[ a b c ... ]                      ~= [ "a", "b", "c", "d", "e" ]       // slice wildcard (lazy), not a spread
+[ a b c .. ]                      ~= [ "a", "b", "c", "d", "e" ]       // slice wildcard (lazy), not a spread
 
 // Object with constraints
 {
@@ -54,7 +54,7 @@ Defaults differ across arrays, objects, and sets; don’t assume identical behav
 [ a? b+ c* ]                       // optional a; one-or-more b; zero-or-more c
 
 // Repeated slice reuse
-[ $X=( _ _ ) ... $X ]              // first two items equal the last two
+[ $X=( _ _ ) .. $X ]              // first two items equal the last two
 
 ```
 
@@ -116,17 +116,17 @@ p1 & p2                    // conjunction (same value matches both)
 ```
 [ a b ]        ~= ["a","b"]
 [ a b ]       !~= ["a","b","c"]
-[ a b ... ]    ~= ["a","b","c"]       // yes, "..." is the actual syntax
+[ a b .. ]    ~= ["a","b","c"]       // yes, ".." is the actual syntax
 
 { b:_  c:_ }   ~= { b:1, c:2 }        // every kv assertion satisfied
 { b:_      }  !~= { b:1, c:2 }        
 { b:_  c:_ }  !~= { b:1 }             // objects anchored by default
-{ b:_  ... }   ~= { a:1, c:2, Z:1 }   
+{ b:_  .. }   ~= { a:1, c:2, Z:1 }   
 
 { /[ab]/:_  /[ad]/:_ }   ~= { a:1 }   // kv assertions can overlap
 { /[ab]/:_  /[ad]/:_ }  !~= { d:1 }
 
-{ b:_  $s=(...) }   ~= { a:1, c:2, Z:1 }  // Extracting the set of KV pairs that were not constrained by any of the assertions:  $s = { 'c':2, 'Z':1 }
+{ b:_  $s=(..) }   ~= { a:1, c:2, Z:1 }  // Extracting the set of KV pairs that were not constrained by any of the assertions:  $s = { 'c':2, 'Z':1 }
 ```
 
 
@@ -161,13 +161,13 @@ a+           === a*{1,}
 a?           === a*{0,1}
 a            === a*1
 a*{2,3}?     // lazy
-...          === _*?            // lazy wildcard slice
+..          === _*?            // lazy wildcard slice
 
 // Multiple ellipses allowed
-[a ... b ... c]  ~=  [a x y b z c]
+[a .. b .. c]  ~=  [a x y b z c]
 ```
 
-Arrays are always anchored; `...` (or `_ *?`) relaxes that boundary.
+Arrays are always anchored; `..` (or `_ *?`) relaxes that boundary.
 
 ---
 
@@ -190,10 +190,10 @@ k:v #2       === k:v #{2,2}
 k:v #?       === k:v #{0,}      // optional
 k:v          === k:v #{1,}      // default: one or more
 
-...          === _:_ #?         // allow unknown keys
+..          === _:_ #?         // allow unknown keys
 
 // Multiple ellipsess allowed but redundant
-{ ... a:1 ... b:2 }   // valid; warns about redundancy
+{ .. a:1 .. b:2 }   // valid; warns about redundancy
 ```
 
 ---
@@ -250,8 +250,8 @@ Not valid around an entire `k:v` pair or a multi-step path.
 ```
 (?=p) q      // succeed if p matches
 (?!p) q      // succeed if p does not match
-[ (?=a b) a b ... ]
-[ (?!a b) ... ]
+[ (?=a b) a b .. ]
+[ (?!a b) .. ]
 ```
 
 ---
@@ -259,7 +259,7 @@ Not valid around an entire `k:v` pair or a multi-step path.
 ## Cheat-Sheet Summary
 
 ```
-...                === _*?            // lazy array wildcard
+..                === _*?            // lazy array wildcard
 a*{m,n}            === repeat m–n times (greedy)
 a*{m,n}?           === same, lazy
 [ a b ]            !~= [ a b c ]      // arrays anchored
@@ -274,7 +274,7 @@ $x                 === $x=_ (singleton) or $x=_*? (slice)
 ## Conventions
 
 * **Whitespace & comments**
-  C-style comments (`/* ... */`, `// ...`) are allowed anywhere between tokens.
+  C-style comments (`/* .. */`, `// ..`) are allowed anywhere between tokens.
   Whitespace is ignored except where **space denotes adjacency** (array sequences).
   No explicit `ws` annotations appear in productions; treat inter-token whitespace/comments as implicit.
 
@@ -343,7 +343,7 @@ LOOKAHEAD_SINGLETON     := '(?=' SINGLETON_PATTERN ')' SINGLETON_PATTERN
 ARRAY_PATTERN           := '[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTERN)*)? ']'
 ARRAY_WS                := single space (array adjacency)
 
-ARRAY_SLICE_PATTERN     := '...'                               // == _*? (lazy)
+ARRAY_SLICE_PATTERN     := '..'                               // == _*? (lazy)
                          | SYMBOL ('=' SINGLETON_PATTERN)?
                          | '(' ARRAY_SLICE_PATTERN ')' ARRAY_QUANT?
                          | SINGLETON_PATTERN ARRAY_QUANT?
@@ -381,7 +381,7 @@ p1 | p2                   // alternation
 p1 & p2                   // conjunction on a single value
 a.b:c                     // vertical/path assertion (right-associative)
 [a].b:c                   // index/key indirection
->> ... <<                 // replacement target
+>> .. <<                 // replacement target
 ```
 
 Precedence: `( )` > quantifiers > `.` > space > `&` > `|`.
@@ -392,7 +392,7 @@ Precedence: `( )` > quantifiers > `.` > space > `&` > `|`.
 
 ## Arrays
 
-* **Sequencing** is by space inside `[...]`.
+* **Sequencing** is by space inside `[..]`.
 * **Quantifiers**:
 
   ```
@@ -402,7 +402,7 @@ Precedence: `( )` > quantifiers > `.` > space > `&` > `|`.
   a+        === a*{1,}
   a?        === a*{0,1}
   a*?       // lazy
-  ...       === _*?       // lazy wildcard slice
+  ..       === _*?       // lazy wildcard slice
   ```
 * **Nested quantifiers** are allowed via grouping:
 
@@ -495,8 +495,8 @@ These use the object form but enforce set/map semantics internally.
 Array-slice lookaheads:
 
 ```
-[ (?= a b ) a b ... ]
-[ (?! a b ) ... ]
+[ (?= a b ) a b .. ]
+[ (?! a b ) .. ]
 ```
 
 Objects use the dedicated negation `(?!=others)` for anchoring.
@@ -505,7 +505,7 @@ Objects use the dedicated negation `(?!=others)` for anchoring.
 
 ## Replacement
 
-Mark what to replace with `>> ... <<`.
+Mark what to replace with `>> .. <<`.
 
 ```
 >> pattern <<           // singleton
@@ -568,7 +568,7 @@ Tendril("{ (_.)*password: >>value<< }").replaceAll(input, "REDACTED");
     * Each assertion → subset of k/v pairs.
     * `others` = residual (unmatched) properties.
     * `(?!=others)` ensures residual is empty.
-* **Arrays** anchored; `...` relaxes boundaries.
+* **Arrays** anchored; `..` relaxes boundaries.
 * **Replacement** uses tracked source spans; replacements are exact.
 
 ---
@@ -591,7 +591,7 @@ Tendril("{ (_.)*password: >>value<< }").replaceAll(input, "REDACTED");
 ## Quick Equivalence Cheatsheet
 
 ```
-...                  === _*?                 // array lazy slice
+..                  === _*?                 // array lazy slice
 a*{m}                === repeat m times
 a*{m,n}              === m..n repetitions (greedy)
 a*{m,n}?             === m..n repetitions (lazy)
@@ -698,7 +698,7 @@ Object key patterns (not Map patterns) containing non-string primitive patterns 
 [ ~~$x=~~[ 123 "456" true ] ]    ~= [ [ "123.0", 456, 1 ] ]   // yes, $x == [ 123, "456", true ]
  
 // Primitive matchers (literals, regexes) are affected; wildcards aren't.
-[ ~~$x=~~[ /\w+/+ ... ] ]    ~= [ [ 123, 456, [], 789 ] ]   // yes, $x == [ "123", "456", [], 789 ]
+[ ~~$x=~~[ /\w+/+ .. ] ]    ~= [ [ 123, 456, [], 789 ] ]   // yes, $x == [ "123", "456", [], 789 ]
 
 
 ```

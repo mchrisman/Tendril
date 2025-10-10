@@ -59,7 +59,7 @@ export function coerceString(x, opts = defaultSemOpts) {
 /** Full-string regex match after string coercion + normalization. */
 export function regexFull(reBody, reFlags, value, opts = defaultSemOpts) {
   const { value: s } = coerceString(value, opts);
-  // Ensure ^...$ semantics even if caller passed a body without anchors.
+  // Ensure ^..$ semantics even if caller passed a body without anchors.
   // We avoid double-anchoring by not adding ^/$; instead we test with lastIndex=0 and ^$ in source:
   // For simplicity and perf, rebuild a RegExp and anchor explicitly.
   const anchored = new RegExp(`^(?:${reBody})$`, reFlags);
@@ -286,7 +286,7 @@ export function makeObjectKeysSlice(objRef, keysIterable) {
 
 /**
  * Coverage tracks which keys of an object have been "described" by kv-patterns.
- * Used to enforce anchored-object semantics (every prop must be covered unless '...').
+ * Used to enforce anchored-object semantics (every prop must be covered unless '..').
  */
 export class Coverage {
   constructor(objRef) {

@@ -38,7 +38,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
       // for arrays
       index: int           // current position if inside an array context
       // for object "coverage"
-      coveredKeys: BitSet | Set<KeyId> // only used when {...} without "..."
+      coveredKeys: BitSet | Set<KeyId> // only used when {..} without ".."
       // captures for replacement
       captures: { slices: [SliceRef], keys: [KeyRef], vals: [ValRef] }
       // debug
@@ -86,11 +86,11 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
 
 ## Arrays
 
-* `Seq(a b c)` appears **only inside** `Array([...])`.
-* `Array([p1 p2 ... pk], anchored=true)`:
+* `Seq(a b c)` appears **only inside** `Array([..])`.
+* `Array([p1 p2 .. pk], anchored=true)`:
 
-  * Without `...`: require `len == k` after expanding quantifiers/groups.
-  * With `...`: allow trailing slack; equivalently match `p1 p2 ... pk` starting at `index=0` and then `... === _*?` absorbs the rest.
+  * Without `..`: require `len == k` after expanding quantifiers/groups.
+  * With `..`: allow trailing slack; equivalently match `p1 p2 .. pk` starting at `index=0` and then `.. === _*?` absorbs the rest.
 * `Quant` on groups applies to the **compiled sub-generator**.
 * Slice bindings:
 
@@ -105,7 +105,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
 * **Overlaps allowed**: the same `k` may satisfy multiple kv-patterns.
 * **Coverage** (anchoring):
 
-  * If object pattern has **no `...`**, require: for **every property** `p` in input, **∃ some kv-pattern** that matches `p:obj[p]`. (Not one-to-one; many-to-one OK.)
+  * If object pattern has **no `..`**, require: for **every property** `p` in input, **∃ some kv-pattern** that matches `p:obj[p]`. (Not one-to-one; many-to-one OK.)
   * Implement by marking `coveredKeys.add(keyId)` when any kv-pattern matches that key; at end, check `coveredKeys.size == obj.size`.
 * **Counting `#`**:
 
@@ -138,7 +138,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
   * `step("c")` → check key/index exists; recurse into value.
   * Quantifiers allowed on **segments**: `((a.b.)*3)c:d`.
   * Arrays: `a[3]` zero-based; compile to index-step.
-* For `...` inside path quantifiers, support as repeating wildcard **segment** only if you add it to the grammar; otherwise omit.
+* For `..` inside path quantifiers, support as repeating wildcard **segment** only if you add it to the grammar; otherwise omit.
 
 ## Assertions
 
@@ -304,13 +304,13 @@ def bind(name, m):
    * `[ a b ] !=~ ["a","b","c"]`
 2. Array spread:
 
-   * `[ a b ... ] =~ ["a","b","c"]`
+   * `[ a b .. ] =~ ["a","b","c"]`
 3. Objects anchoring & spread:
 
    * `{ b:_ c:_ } =~ {b:1,c:2}`
    * `{ b:_ c:_ } !=~ {b:1}`
    * `{ b:_ } !=~ {b:1,c:2}`
-   * `{ b:_ ... } =~ {a:1,c:2,Z:1}`
+   * `{ b:_ .. } =~ {a:1,c:2,Z:1}`
 4. Overlapping kv:
 
    * `{ /[ab]/:_  /[ad]/:_ } =~ { a:1 }`
@@ -336,7 +336,7 @@ def bind(name, m):
    * `Pattern("{ (_.)*password: >>value<< }").replaceAll(obj, "REDACTED")` changes both `user.password` and `admin.password` once each.
 10. Type guard:
 
-* `{ b:_ ... } as Map` fails if object isn’t `instanceof Map` after match.
+* `{ b:_ .. } as Map` fails if object isn’t `instanceof Map` after match.
 
 If you want, I can draft an EBNF for this grammar next and/or sketch a minimal VM instruction set version.
 A “VM instruction set version” means you compile patterns into a compact bytecode and run them on a tiny purpose-built virtual machine (like many regex engines). It’s faster, easier to optimize, and simpler to debug than executing the AST directly.
@@ -389,7 +389,7 @@ Below is a concrete shape for your matcher-VM.
 * `SLICE_BEGIN` / `SLICE_END` — Mark slice start/end around subsequent matches.
 * `ARR_AT idx` — Set `VAL = VAL[idx]` (for `[i]` in vertical paths).
 * `ARR_ANCHORED_END` — For anchored array, require `ARRIDX == len`, else `FAIL`.
-* `ARR_SPREAD` — Implements `...` (equiv. `_ *?`): `SPLIT(skip, use)` to choose empty vs consume.
+* `ARR_SPREAD` — Implements `..` (equiv. `_ *?`): `SPLIT(skip, use)` to choose empty vs consume.
 
 ## Objects (unordered, independent kv)
 

@@ -49,10 +49,10 @@ Can this appear anywhere? `[x >> a* << y]`? What does `>> $x=a* <<` mean - repla
 
 ```
 a*             // greedy (maximal match)
-...            === _*?              // lazy
+..            === _*?              // lazy
 ```
 
-Why is `...` lazy by default but `a*` greedy? This seems like it'll cause confusion. I'd expect `...` to be `_*` (greedy wildcard).
+Why is `..` lazy by default but `a*` greedy? This seems like it'll cause confusion. I'd expect `..` to be `_*` (greedy wildcard).
 
 **7. The `/regex/` literal is underspecified:**
 
@@ -92,10 +92,10 @@ What does "doesn't consume" mean in a structural pattern matcher? In an array `[
 **11. Multiple spreads semantics:**
 
 ```
-// Multiple spreads allowed: [a ... b ... c] matches [a x y b z c]
+// Multiple spreads allowed: [a .. b .. c] matches [a x y b z c]
 ```
 
-How does the matching work? Greedy left-to-right? Does `[... a ... a]` match `[a]` (both `...` match zero, both `a` match same element)? What about `[a ... a]` on `[a]`?
+How does the matching work? Greedy left-to-right? Does `[.. a .. a]` match `[a]` (both `..` match zero, both `a` match same element)? What about `[a .. a]` on `[a]`?
 
 **12. Regex operators don't compose well:**
 You have `/regex/` literals but no way to compose them with your structural operators. Can you write `/a|b/+` to mean "one or more strings matching a or b"? Or do you need `(/a|b/)+`?

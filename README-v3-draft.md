@@ -14,7 +14,7 @@ data = {
        }
 pattern = "{ 
           planets.$name.size: $size
-          aka: [... [$name ... $alias ... | $alias=$name ...] ... ]   // Treat $name itself as a possible alias
+          aka: [.. [$name .. $alias .. | $alias=$name ..] .. ]   // Treat $name itself as a possible alias
        }"
 
 Tendril(pattern).match(data).map((m)=> `Hello, ${m.$size} world ${m.$alias} `)
@@ -54,16 +54,16 @@ Tendril(pattern).match(data).map((m)=> `Hello, ${m.$size} world ${m.$alias} `)
 <b>// using Tendril</b>
 pattern = {
         requests: {
-            $reqId.user.name: [$first ... $last]
+            $reqId.user.name: [$first .. $last]
         }
         responses: [
-            ... 
+            .. 
             {
                 requestId: $reqId            
                 status: ok
                 output: ( $text as string | { type:text content:$text } )
             } 
-            ... 
+            .. 
         ]
     }
 Tendril(pattern).match(data).map((m)=>`${m.$first}: ${m.$text}`)
@@ -188,12 +188,12 @@ pattern1 & pattern2                 // The single object must match both pattern
 ```
 [ a b ]      =~ ["a","b"]
 [ a b ]     !=~ ["a","b","c"]
-[ a b ... ]  =~ ["a","b","c"]       // "..." is the actual syntax
+[ a b .. ]  =~ ["a","b","c"]       // ".." is the actual syntax
 
 { b:_  c:_ }   =~ { b:1, c:2 }      // Every k/v pattern is satisfied, every prop of obj is described
 { b:_  c:_ }  !=~ { b:1 }
 { b:_      }  !=~ { b:1, c:2 }
-{ b:_  ... }   =~ { a:1, c:2, Z:1 }
+{ b:_  .. }   =~ { a:1, c:2, Z:1 }
 { /[ab]/:_  /[ad]/:_ }   =~ { a:1 } // k/v patterns are independent, non-consuming, possibly overlapping.
 { /[ab]/:_  /[ad]/:_ }  !=~ { d:1 }
 ```        
@@ -210,10 +210,10 @@ a              === a*1              // default
 
 a*{2,3}? a*?, a+?, a??              // lazy (non-greedy)
 
-...            === _*?              // lazy wildcard (matches zero or more elements)
+..            === _*?              // lazy wildcard (matches zero or more elements)
 
-// Multiple spreads allowed: [a ... b ... c] matches [a x y b z c]
-// All arrays are anchored; ... is just sugar for _*? and can appear anywhere
+// Multiple spreads allowed: [a .. b .. c] matches [a x y b z c]
+// All arrays are anchored; .. is just sugar for _*? and can appear anywhere
 ```
 
 ## Quantifiers in object/set context
@@ -224,7 +224,7 @@ k:v #2         === k:v #{2,2}
 k:v #?         === k:v #{0,}          // watch out, this is different from arrays
 k:v            === k:v #{1,}          // default (one or more)
 
-...            === _:_ #?             // allows object to have unknown keys
+..            === _:_ #?             // allows object to have unknown keys
 ```
 ## Binding and relational joins
 
@@ -263,7 +263,7 @@ and if you want to bind the repetition, you can use parentheses: `$x=(_+)`.
 { a.b.c:d } =~ {'a': {'b': {'c':'d'}}}
 ```
 
-Formally, `kPat.kvPat` matches a `K`/`V` pair such that `kPat =~ K` and `{ kvPat ... } =~ V`, with right-to-left associativity. No whitespace around the dot.
+Formally, `kPat.kvPat` matches a `K`/`V` pair such that `kPat =~ K` and `{ kvPat .. } =~ V`, with right-to-left associativity. No whitespace around the dot.
 
 ```
 {a[3].c:d} =~   {'a': [el0, el1, el2, {'c':'d'}]}
@@ -312,19 +312,19 @@ Pattern('{
 ```
 
 Repeated ellipses are redundant and inefficient, and the compiler will either give a warning or optimize it away:
-[ ... ... a] === [ ...* a ] === [ ... a ]
+[ .. .. a] === [ ..* a ] === [ .. a ]
 
 // Matches with x=Slice(b a), the identical slice in two different positions
-[$x=(/ab/+) ... $x=(_ _)] =~ [ b a b a other stuff b a]
+[$x=(/ab/+) .. $x=(_ _)] =~ [ b a b a other stuff b a]
 
 // Fails to match:
 // the first $x is constrained to be a slice found at the start of the array, therefore starting with b;
 // the second $x is constrained to be a singleton found at the end of the array, therefore equal to a;
 // so there is no way for the second $x to be the same as the first $x
-[$x=(/ab/+) ... $x] !=~ [ b a b a other stuff b a]
+[$x=(/ab/+) .. $x] !=~ [ b a b a other stuff b a]
 
 `$x=/ab/{1}` at array position 0? => yes => left $x binds 'b'
-...
+..
 `$x=_`       at array position 6? => yes => right $x binds 'b' => CONSISTENT
 (end of array) at array position 7? => no => FAIL
 BACKTRACK
@@ -332,7 +332,7 @@ BACKTRACK
 
 BACKTRACK
 `$x=/ab/{2}` at array position 0? => yes => left $x binds 'b' 'a'
-...
+..
 `$x=_`       at array position 6? => yes => right $x binds 'b' => INCONSISTENT, FAIL
 etc.
 (Actually, that shows lazy matching, not greedy, but outcome is the same)

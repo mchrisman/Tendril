@@ -200,7 +200,7 @@ group('punctuation', () => {
 // Special constructs
 group('special constructs', () => {
   test('lex ellipsis', async () => {
-    const tokens = lex('...');
+    const tokens = lex('..');
     assert.equal(kinds(tokens)[0], T.ELLIPSIS);
   }, { group: 'lexer' });
 

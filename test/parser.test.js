@@ -95,7 +95,7 @@ group('arrays', () => {
   }, { group: 'parser' });
 
   test('parse array with spread', async () => {
-    const ast = parse('[a ...]');
+    const ast = parse('[a ..]');
     assert.equal(ast.type, 'Array');
     assert.equal(ast.elems.length, 2);
     assert.ok(isNode(ast.elems[0], 'String'));
@@ -135,7 +135,7 @@ group('objects', () => {
   }, { group: 'parser' });
 
   test('parse object with spread', async () => {
-    const ast = parse('{ a:b ... }');
+    const ast = parse('{ a:b .. }');
     assert.equal(ast.type, 'Object');
     assert.equal(ast.anchored, false);
     assert.equal(ast.hasSpread, true);
@@ -178,7 +178,7 @@ group('sets', () => {
   }, { group: 'parser' });
 
   test('parse set with spread', async () => {
-    const ast = parse('{{ a ... }}');
+    const ast = parse('{{ a .. }}');
     assert.equal(ast.type, 'Set');
     assert.equal(ast.members.length, 2);
     assert.ok(isNode(ast.members[1], 'Spread'));
@@ -433,19 +433,19 @@ group('replacement', () => {
 // Spread (ellipsis)
 group('spread', () => {
   test('parse spread in array', async () => {
-    const ast = parse('[ a b ... ]');
+    const ast = parse('[ a b .. ]');
     assert.equal(ast.type, 'Array');
     assert.ok(isNode(ast.elems[2], 'Spread'));
   }, { group: 'parser' });
 
   test('parse spread in object', async () => {
-    const ast = parse('{ a:b ... }');
+    const ast = parse('{ a:b .. }');
     assert.equal(ast.type, 'Object');
     assert.equal(ast.hasSpread, true);
   }, { group: 'parser' });
 
   test('parse spread in set', async () => {
-    const ast = parse('{{ a ... }}');
+    const ast = parse('{{ a .. }}');
     assert.equal(ast.type, 'Set');
     assert.ok(isNode(ast.members[1], 'Spread'));
   }, { group: 'parser' });

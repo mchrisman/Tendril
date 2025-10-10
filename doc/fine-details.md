@@ -6,8 +6,8 @@ n.b. Most of these are of the "just do the obvious thing" variety and could be o
 
 ## Reserved words (deduced from spec)
 
-* **Literals:** `true`, `false`, numeric forms (excluding `Infinity` and `NaN`), string literals `"..."`, regex `/.../ims`.
-* **Special tokens:** `_`, `...`, `as`, `Map`, `Set`, class names after `as`.
+* **Literals:** `true`, `false`, numeric forms (excluding `Infinity` and `NaN`), string literals `".."`, regex `/../ims`.
+* **Special tokens:** `_`, `..`, `as`, `Map`, `Set`, class names after `as`.
 * **Operators/symbols:** `[ ] { } {{ }} ( ) : , | & >> << = .* ? + #{ } .
 * **Vars:** `$name` (bindables).
   (Everything else matching `[A-Za-z_]\w*` is a bareword string.)
@@ -34,23 +34,23 @@ n.b. Most of these are of the "just do the obvious thing" variety and could be o
 * JS regex `/u` **does not** do canonical equivalence. **Default:** no normalization.
 * **Option:** `normalize: 'NFC' | 'NFD' | false` in Pattern options; when enabled, normalize **all** strings (input and pattern barewords/strings) before equality/regex.
 
-## Spread operator (`...`)
+## Slice wildcard (`..`)
 
-* **Arrays:** `...` ≡ `_*?` (lazy wildcard). Can appear anywhere and multiple times: `[a ... b ... c]` matches `[a, x, y, b, z, c]`. All arrays are anchored; `...` is just syntactic sugar.
-* **Objects:** `...` ≡ `_:_ #?` (allows unknown keys). Multiple spreads are allowed but redundant; implementations should warn.
-* **Sets:** `...` ≡ `_ *?` (allows extra members). Same semantics as arrays.
+* **Arrays:** `..` ≡ `_*?` (lazy wildcard). Can appear anywhere and multiple times: `[a .. b .. c]` matches `[a, x, y, b, z, c]`. All arrays are anchored; `..` is just syntactic sugar.
+* **Objects:** `..` ≡ `_:_ #?` (allows unknown keys). Multiple slice wildcards are allowed but redundant if adjacent; implementations should warn.
+* **Sets:** `..` ≡ `_ *?` (allows extra members). Same semantics as arrays.
 
 ## Sets and "extras"
 
 * `{{ a b }}` means exactly those two members (size==2).
-* Use `...` sugar in sets too: `{{ a b ... }}` ≡ allow extras (`_ *?`).
-* Quantifier-style set cardinality: `{{ a b }} #?` (if you expose per-set cardinality), but your `...` sugar is sufficient.
+* Use `..` sugar in sets too: `{{ a b .. }}` ≡ allow extras (`_ *?`).
+* Quantifier-style set cardinality: `{{ a b }} #?` (if you expose per-set cardinality), but your `..` sugar is sufficient.
 
 ## Object quantifier composition (final wording)
 
 * Each `k:v #{m,n}` clause counts **independently** over the full set of matching pairs in the object. Matching is **non-consuming**; compute matches, then validate counts. No backtracking to satisfy counts. (Keep this highlighted in docs.)
 
-## Lookahead assertions (`(?=...)` and `(?!...)`)
+## Lookahead assertions (`(?=..)` and `(?!..)`)
 
 * **Syntax:** Lookaheads are syntactically unrestricted - they can appear anywhere in a pattern (top-level, inside alternations, groups, etc.).
 * **Semantics:** Lookaheads test if a pattern matches the current value without consuming it or committing bindings. They are most useful when guarding:
@@ -194,11 +194,11 @@ yes, that is what I meant by coercion: 123 is coerced to "123" and then tested a
 > 
 > Anchoring in arrays/objects —
 > 
-> [a b ...] anchors prefix; [... a b] anchors suffix?
+> [a b ..] anchors prefix; [.. a b] anchors suffix?
 > 
 > 
 > Is there syntax for both-ends anchoring (like regex ^/$)?
-Arrays are always anchored. The `...` is exactly sugar for `_*?` for an unanchored idiom (and could occur anywhere: [ a ... b ... c])
+Arrays are always anchored. The `..` is exactly sugar for `_*?` for an unanchored idiom (and could occur anywhere: [ a .. b .. c])
 > 
 > 🔹 Object & Set Semantics
 > 
@@ -213,9 +213,9 @@ first binds to a:1 (success), then backtracks to b:2 (success), then fails to ba
 
 > 
 > 
-> When {a:_ c:_} matches {a:1, b:2, c:3}, is b ignored or does it cause mismatch unless ... present?
+> When {a:_ c:_} matches {a:1, b:2, c:3}, is b ignored or does it cause mismatch unless .. present?
 > 
-Mismatch unless `...` is present. In an object context, `...` means _:_??.  
+Mismatch unless `..` is present. In an object context, `..` means _:_??.  
 > 
 > 
 > Set matching —
@@ -374,7 +374,7 @@ We need the API to support the obvious set of different types of interactions.
 > 
 > 
 > Reserved words list
-> Which barewords are reserved? (e.g., as, true, false, Infinity, quantifiers like ...?) Define the exact set.
+> Which barewords are reserved? (e.g., as, true, false, Infinity, quantifiers like ..?) Define the exact set.
 You can deduce that from this specification.
 > Regex literal edge cases
 > Your heuristic defers to JS’s compiler—great. Clarify:
@@ -385,12 +385,12 @@ The parser can attempt to locate the edge of the regex there, but that would fai
 > Are named capture groups OK (/(?<x>.)/)? (You said regex is a black box; likely yes.)
 Yes, they're okay. Black box. They are only meaningful within that regex and do not interact with other regexes or with our bound variables.
 
-> Error surface: does a non-compiling /.../flags make the whole pattern a compile error?
+> Error surface: does a non-compiling /../flags make the whole pattern a compile error?
 
 Yes.
 
 > Comments inside patterns
-> Are line (// ...) or block (/* ... */) comments allowed inside pattern strings? If yes, where (e.g., disallowed inside /regex/)?
+> Are line (// ..) or block (/* .. */) comments allowed inside pattern strings? If yes, where (e.g., disallowed inside /regex/)?
 
 They are allowed. Whether they are allowed anywhere or only where white space would be allowed can be left as an implementation decision. They are not allowed inside regexes or quoted strings.Use your judgment on this.
 
@@ -431,15 +431,15 @@ Good question. I don't know. As this is meant to be an idiomatically JS library,
 > Arrays / Sets / Objects
 > 
 > Sets and extra members
-> You said “same as Map/Object.” For Objects, extra props cause mismatch unless ....
+> You said “same as Map/Object.” For Objects, extra props cause mismatch unless ...
 > 
-> Should Sets also require ...-equivalent to allow extras?
+> Should Sets also require ..-equivalent to allow extras?
 
 Correct.
 
-> Is there a set ... sugar (e.g., {{ a b ... }}) or rely on explicit cardinality (_ #?)?
+> Is there a set .. sugar (e.g., {{ a b .. }}) or rely on explicit cardinality (_ #?)?
 
-... Has the same meaning in sets, i.e. _*?
+.. Has the same meaning in sets, i.e. _*?
 
 > 
 > Object quantifier composition
@@ -461,13 +461,13 @@ They can only appear in prescribed positions:   In front of a key pattern or in 
 
 There is no need for that semantic; it's redundant, because that's what key value patterns already mean.
 
-> ... sugar equivalence
+> .. sugar equivalence
 > 
-> Arrays: ... ≡ _ *? (clear).
+> Arrays: .. ≡ _ *? (clear).
 > 
-> Objects: ... ≡ _:_ #? (clear).
+> Objects: .. ≡ _:_ #? (clear).
 > 
-> Sets: define explicit sugar (e.g., ... ≡ _ #?) or document no sugar.
+> Sets: define explicit sugar (e.g., .. ≡ _ #?) or document no sugar.
 > 
 > Binding & Equality
 > 
@@ -478,7 +478,7 @@ The obvious answer.
 
 
 > Empty-slice bindings
-> Can $x=( ... ) bind to an empty slice ([])? If yes, under what patterns (e.g., (_*))?
+> Can $x=( .. ) bind to an empty slice ([])? If yes, under what patterns (e.g., (_*))?
 
 Yes, it can bind to an empty slice:
 

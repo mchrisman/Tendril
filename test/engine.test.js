@@ -336,7 +336,7 @@ group('arrays', () => {
   }, { group: 'engine' });
 
   test('array with spread at end', async () => {
-    const p = compile('[1, 2, ...]');
+    const p = compile('[1, 2, ..]');
     assert.ok(p.matches([1, 2]));
     assert.ok(p.matches([1, 2, 3]));
     assert.ok(p.matches([1, 2, 3, 4, 5]));
@@ -344,21 +344,21 @@ group('arrays', () => {
   }, { group: 'engine' });
 
   test('array with spread at start', async () => {
-    const p = compile('[..., 3, 4]');
+    const p = compile('[.., 3, 4]');
     assert.ok(p.matches([3, 4]));
     assert.ok(p.matches([1, 2, 3, 4]));
     assert.notOk(p.matches([1, 2, 3]));
   }, { group: 'engine' });
 
   test('array with spread in middle', async () => {
-    const p = compile('[1, ..., 5]');
+    const p = compile('[1, .., 5]');
     assert.ok(p.matches([1, 5]));
     assert.ok(p.matches([1, 2, 3, 4, 5]));
     assert.notOk(p.matches([1, 2]));
   }, { group: 'engine' });
 
   test('array with only spread', async () => {
-    const p = compile('[...]');
+    const p = compile('[..]');
     assert.ok(p.matches([]));
     assert.ok(p.matches([1]));
     assert.ok(p.matches([1, 2, 3]));

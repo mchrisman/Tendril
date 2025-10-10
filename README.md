@@ -50,12 +50,12 @@ pattern1 & pattern2                 // The single object must match both pattern
 ```
 [ a b ]      =~ ["a","b"]
 [ a b ]     !=~ ["a","b","c"]
-[ a b ... ]  =~ ["a","b","c"]       // "..." is the actual syntax
+[ a b .. ]  =~ ["a","b","c"]       // ".." is the actual syntax
 
 { b:_  c:_ }   =~ { b:1, c:2 }      // Every k/v pattern is satisfied, every prop of obj is described
 { b:_  c:_ }  !=~ { b:1 }
 { b:_      }  !=~ { b:1, c:2 }
-{ b:_  ... }   =~ { a:1, c:2, Z:1 }
+{ b:_  .. }   =~ { a:1, c:2, Z:1 }
 { /[ab]/:_  /[ad]/:_ }   =~ { a:1 } // k/v patterns are independent, non-consuming, possibly overlapping.
 { /[ab]/:_  /[ad]/:_ }  !=~ { d:1 }
 ```        
@@ -88,10 +88,10 @@ a              === a*1              // default
 
 a*{2,3}? a*?, a+?, a??              // lazy (non-greedy)
 
-...            === _*?              // lazy wildcard (matches zero or more elements)
+..            === _*?              // lazy wildcard (matches zero or more elements)
 
-// Multiple spreads allowed: [a ... b ... c] matches [a x y b z c]
-// All arrays are anchored; ... is just sugar for _*? and can appear anywhere
+// Multiple spreads allowed: [a .. b .. c] matches [a x y b z c]
+// All arrays are anchored; .. is just sugar for _*? and can appear anywhere
 ```
 
 ## Quantifiers in object/set context
@@ -102,10 +102,10 @@ k:v #2         === k:v #{2,2}
 k:v #?         === k:v #{0,}          // watch out, this is different from arrays
 k:v            === k:v #{1,}          // default (one or more)
 
-...            === _:_ #?             // allows object to have unknown keys
+..            === _:_ #?             // allows object to have unknown keys
 
 // Multiple spreads allowed but redundant (validator warns)
-// { ... a:1 ... b:2 } is valid but the second ... is unnecessary
+// { .. a:1 .. b:2 } is valid but the second .. is unnecessary
 ```
 ## Assertions
 ```
@@ -120,7 +120,7 @@ k:v            === k:v #{1,}          // default (one or more)
 { a.b.c:d } =~ {'a': {'b': {'c':'d'}}}
 ```
 
-Formally, `kPat.kvPat` matches a `K`/`V` pair such that `kPat =~ K` and `{ kvPat ... } =~ V`, with right-to-left associativity. No whitespace around the dot.
+Formally, `kPat.kvPat` matches a `K`/`V` pair such that `kPat =~ K` and `{ kvPat .. } =~ V`, with right-to-left associativity. No whitespace around the dot.
 
 ```
 {a[3].c:d} =~   {'a': [el0, el1, el2, {'c':'d'}]}
