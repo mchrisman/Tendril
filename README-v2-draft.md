@@ -134,7 +134,7 @@ p1 & p2                    // conjunction (same value matches both)
 
 ## Binding
 
-Bindings are **Prolog-style**: all occurrences of a symbol must unify.
+Bindings are **Prolog-style**: all occurrences of a symbol must unify.   **Key to remember**: Each occurrence of $x must *first* successfully match and bind *locally*. *Then* they must unify (they must all be structurally identical).
 ```
 $name = pattern            // bind variable if pattern matches
 $name                      // shorthand for $name:_*? (array slice context) or $name:_ (singular context)
@@ -388,21 +388,6 @@ Precedence: `( )` > quantifiers > `.` > space > `&` > `|`.
 
 ---
 
-## Binding and Unification
-
-* `$name = pattern` binds `$name` to the matched value. The pattern must be a singleton pattern, not a slice pattern.
-* Bare `$name` is shorthand for `$name=_`.
-* **Unification is global and Prolog-style**: repeated symbols must agree across branches.
-
-Examples:
-
-```
-[ $x $x=/[ab]/ $y ]      ~= ['a','a','y']
-[ $x $x=/[ab]/ $y ]     !~= ['a','b','y']
-[ $x $x=$y $y ]          ~= ['q','q','q']
-[ $x=($z $y) $y $z ]     ~= ['r','q','q','r']
-```
-
 ---
 
 ## Arrays
@@ -427,6 +412,31 @@ Examples:
 * Arrays are **anchored by default**; `[a b] !~= [a b c]`.
 
 ---
+
+## Binding and Unification
+
+* `$name = pattern` attempts to match the data to the pattern, and if successful, binds `$name` to the matched data. The pattern must be a singleton pattern, not a slice pattern.
+* Bare `$name` is shorthand for `$name=_`.
+* **Unification** If the same symbol occurs more than once, e.g. [ $x=pattern1 $x=pattern2 ]:
+  - First pattern1 is matched. (Abort on failure.) The first $x is set to that matched value.
+  - Then pattern2 is _independently_ matched. (Abort on failure.) The second $x is set to that matched value.
+  - Then the two $x values are strictly (no type coercion) asserted to be structurally equal. (Abort on failure.)
+
+Examples:
+
+```
+[ $x $x=/[ab]/ $y ]      ~= ['a','a','y']
+[ $x $x=/[ab]/ $y ]     !~= ['a','b','y']
+[ $x $x=$y $y ]          ~= ['q','q','q']
+[ $x=($z $y) $y $z ]     ~= ['r','q','q','r']
+
+// Structural equality (deep comparison)
+[ $x $x ] ~= [ [1,2], [1,2] ]         // YES
+
+// Values must still match structurally
+[ $x $x ] !~= [ [1,2], [1,4] ]      // NO (different values)
+[ $x $x ] !~= [ [1,2], [1,2,3] ]    // NO (different shapes)
+```
 
 ## Objects and Object Slices
 
@@ -597,26 +607,193 @@ $x                   === $x=_ or $x=_*?     // depends on position
 **End of Specification**
 
 
-## Summary of Critical Discrepancies
+# Draft CHANGE PROPOSAL TO CLARIFY AND SIMPILIFY TYPE COERCION
 
-| # | Issue | Impact |
-|---|-------|--------|
-| **2** | **Object anchoring default** | 🔴 MAJOR - v1 anchored, v2 unanchored |
-| **7** | **Binding context-dependence** | 🟡 MEDIUM - v2 makes `$x` ambiguous |
-| **8** | **Object anchoring mechanism** | 🔴 MAJOR - v1 has none, v2 uses `(?!=others)` |
-| **11** | **Map syntax** | 🟡 MEDIUM - `as Map` → `as @AsMap` |
-| **12-13** | **Object slice binding & `others`** | 🔴 MAJOR - v2 introduces new features |
-| **14** | **Type guards** | 🟡 MEDIUM - v2 introduces new feature |
-| **16** | **Comments** | 🟢 MINOR - backward compatible addition |
-| **17** | **Regex coercion** | 🟡 MEDIUM - contradictory statements |
-
-The biggest issue is **#2**: Are objects anchored or unanchored by default? The two versions directly contradict each other.
 
 ## Type coercion
 
-No type conversion is done. For primitive matchers only, you can use the coercion operator `~` to coerce the data to the matcher's expected type.
+**this is a specification change**
+
+No coercion of input data is done automatically.
+
+For primitive patterns, you can use the coercion operator `~` to coerce the data to the patterns's expected type. The operator binds more tightly than everything except grouping.
 
 ```
+**String patterns**
+[ "123" ]         !~=  [ 123 ]   
+[ ~"123" ]         ~=  [ 123 ]   
+[ ~"123" ]         ~=  [ 123.0 ]  // String(123.0)==="123"
+
+[ /\d+/ ]         !~=  [ 123 ]
+[ ~/\d+/ ]         ~=  [ 123.0 ]
+
+
+**Number patterns**
+[ 123 ]           !~= [ "123" ]
+[ ~123 ]           ~= [ "123.0" ]  // Number("123.0")===123
+
+**Boolean patterns**
+[ ~true ]         !~= [ 123 ]  // Supports only 0,1,"0","1","true","false","True","False","yes","no","Yes","No"
+[ ~false           ~= [ "False" ]
+
+**Unsupported**
+[ /\d+/ ]         !~=  [ {x:123} ]  // Structures are never coerced to primitives. 
+~[ /\d+/ ]        !~=  [ 123 ]      // `~` is not recursive
+[ null ]                            // Not yet supported in the language
+~( "123" | 456 )                    // Not permitted; '~' may only be used with primitive patterns (except for experimental "structural coercion", see below)
+"as Map", "as Set" etc. // retired
+
+**Bindings**
+
+If you want to bind the uncoerced value
+[ $x=~123 ]        ~= [ "123.0" ]   // yes, $x=="123.0". Logical, obeys existing rules. It means:
+                                    // 1. compare data to 123; fail if no match
+                                    // 2. compare data to previously bound value of $x; fail if no *strict* match
+                                    // 3. bind $x to data
+
+If you want to bind the coerced value
+[ ~$x=~123 ]       ~= [ "123.0" ]   // yes, $x==123. Idiomatic. Must be exactly ~SYMBOL=~PRIMITIVE_PATTERN. It means:
+                                    // 1. compare number(data) to 123; fail if no match
+                                    // 2. compare number(data) to previously bound value of $x; fail if no *strict* match
+                                    // 3. bind $x to number(data)
+
+Unification is strict. **Key to remember**: Each occurrence of $x must *first* successfully match and bind *locally*. *Then* they are compared to each other *strictly* (no coercion).
+
+
+[ $x $x ]         !~= [ 123, "123" ]      // no (unification fails)
+[ $x $x="123" ]   !~= [ 123, 123 ]        // no (match fails, forgot the ~ operator)
+[ $x $x=~123 ]     ~= [ 123, "123" ]      // no, (unification fails)
+[ $x ~$x=~123 ]    ~= [ 123, "123" ]      // yes, $x==123
+[ $x $x=~123 ]     ~= [ "123", "123" ]    // yes, $x=="123"
+[ $x ~$x ]                                // `~$x` does not compile except as part of the idiom ~SYMBOL~PRIMITIVE_PATTERN.
+```
+
+### Object keys and array indices
+
+These strictly match objects, maps, sets, arrays respectively:
+OBJECT_PATTERN          := '{' OBJECT_ASSERTION* '}'
+MAP_PATTERN             := 'Map{' OBJECT_ASSERTION* '}'
+SET_PATTERN             := 'Set{' SINGLETON_PATTERN* '}'
+
+Object key patterns (not Map patterns) containing non-string primitive patterns rewrite them to string patterns at compile time:
+
+```
+{ (q|123):456 } === { ("q""|"123"):456 }  ~= { "123":456 }
+```
+
+- Likweise, .foo and [foo] patterns are rewritten as string patterns and number patterns, respectively.
+ ```
+ { $x:true["2"]:$x } === { $x:"true"[2]:$x } ~= { "true": [0,0,"true"] }
+                                            !~= { "true": [0,0,true] } 
+ ```
+
+### Structural coercion
+
+** I'm dubious about allowing this, but here is a possible way to do it**
+
+`~~pattern` recursively modifies the behavior of all primitive matchers within the pattern. `~~$x=~~pattern` is the corresponding "bind to normalized value" idiom.
+
+```    
+[   $x=~~[ 123 "456" true ] ]    ~= [ [ "123.0", 456, 1 ] ]   // yes, $x == [ "123.0", 456, 1 ]
+[ ~~$x=~~[ 123 "456" true ] ]    ~= [ [ "123.0", 456, 1 ] ]   // yes, $x == [ 123, "456", true ]
+ 
+// Primitive matchers (literals, regexes) are affected; wildcards aren't.
+[ ~~$x=~~[ /\w+/+ ... ] ]    ~= [ [ 123, 456, [], 789 ] ]   // yes, $x == [ "123", "456", [], 789 ]
+
+
+```
+
+Array, Object, Map, and Set patterns:
+
+**this is a specification change**
+
+These strictly match objects, maps, sets, arrays respectively:
+OBJECT_PATTERN          := '{' OBJECT_ASSERTION* '}'
+MAP_PATTERN             := 'Map{' OBJECT_ASSERTION* '}'
+SET_PATTERN             := 'Set{' SINGLETON_PATTERN* '}'
+ARRAY_PATTERN           := '[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTERN)*)? ']'
+
+These coerce the data collection to the indicated type.
+LIKE_OBJECT_PATTERN          := '~{' OBJECT_ASSERTION* '}'
+LIKE_MAP_PATTERN             := '~Map{' OBJECT_ASSERTION* '}'
+LIKE_ARRAY_PATTERN           := '~[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTERN)*)? ']'
+
+Examples:
+~{ 0:a 1:b }            ~= [ 'a' 'b' ]   
+~{ a:b "true":d }       ~= new Map([["a","b"],[true,"d"]]) // Keys are stringified, perforce.
+
+~Map{ 0:a 1:b }            ~= [ 'a' 'b' ]   
+~Map{ a:b true:d }        !~= { 'a':'b', 'true','d' } // Keys are not coerced in Object=>Map!
+~Map{ a:b ~true:d }        ~= { 'a':'b', 'true','d' }
+
+[ a b ]                ~= { "0":"a", "1":"b" }
+[ a b ]                ~= Map{ 0:"a", 0:"b" }
+
+```
+
+
+
+```
+Array, Object, Map, and Set patterns: 
+
+**this is a specification change**
+
+These strictly match objects, maps, sets, arrays respectively:
+OBJECT_PATTERN          := '{' OBJECT_ASSERTION* '}'
+MAP_PATTERN             := 'Map{' OBJECT_ASSERTION* '}'
+SET_PATTERN             := 'Set{' SINGLETON_PATTERN* '}'
+ARRAY_PATTERN           := '[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTERN)*)? ']'
+
+These coerce the data collection to the indicated type.
+LIKE_OBJECT_PATTERN          := '~{' OBJECT_ASSERTION* '}'
+LIKE_MAP_PATTERN             := '~Map{' OBJECT_ASSERTION* '}'
+LIKE_SET_PATTERN             := '~Set{' SINGLETON_PATTERN* '}'
+LIKE_ARRAY_PATTERN           := '~[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTERN)*)? ']'
+
+Examples:
+~{ 0:a 1:b }            ~= [ 'a' 'b' ]   
+~{ a:b "true":d }       ~= new Map([["a","b"],[true,"d"]]) // Keys are stringified, perforce.
+~{ a:true "true":true } ~= new Set(["a", true])  // Keys are stringified and values are boolean `true`.
+
+~Map{ 0:a 1:b }            ~= [ 'a' 'b' ]   
+~Map{ a:b true:d }        !~= { 'a':'b', 'true','d' } // Keys are not coerced in Object=>Map!
+~Map{ a:b ~true:d }        ~= { 'a':'b', 'true','d' } 
+~Map{ a:true true:true }   ~= new Set(["a", true])  // Keys are stringified and values are boolean `true`.
+
+~Set{ 0 1 }            ~= [ 'a' 'b' ]  // We only look at keys, not values   
+~Set{ a true }        !~= { 'a':'b', 'true','d' } // Keys are not coerced in Object=>Set!
+~Set{ a ~true }        ~= { 'a':'b', 'true','d' }
+~Set{ a true }         ~= new Map([['a','x'],[true,'y']]) 
+
+[ a b ]                ~= { "0":"a", "1":"b" }
+[ a b ]                ~= Map{ 0:"a", 0:"b" }
+[ a b ]                ~= Set{ 0, 1 }
+
+
+
+
+
+
+
+Arrays may match an Object or Map pattern with the ~ operator.
+{ 0:a 1:b }        !~= [ a b ]
+~{ 0:a 1:b }        ~= [ a b ]
+~Map{ 0:a 1:b }     ~= [ a b ]
+
+
+~Map{ 
+
+**After**
+
+{ KV
+
+```
+[ 123 ]            !~=  [ "123" ]
+   
+[ "123" ]          ~=  [ 123 ]   
+
+
+
 Tendril(" [ false ] ").matches(false)   // yes
 Tendril(" [ false ] ").matches('false')   // no
 Tendril(" [ ~false ] ").matches('false')   // yes
@@ -624,8 +801,6 @@ Tendril(" [ ~false ] ").matches('false')   // yes
 Tendril(" [ 123 ] ").matches(123)   // yes
 Tendril(" [ 123 ] ").matches('123')   // no
 Tendril(" [ ~123 ] ").matches('123')   // yes
-
-
 
 Tendril("~false       ").matches('false')   // yes, coerces the data to boolean before comparing
 
