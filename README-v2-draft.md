@@ -612,9 +612,21 @@ $x                   === $x=_ or $x=_*?     // depends on position
 
 The biggest issue is **#2**: Are objects anchored or unanchored by default? The two versions directly contradict each other.
 
+## Type coercion
+
+No type conversion is done. For primitive matchers only, you can use the coercion operator `~` to coerce the data to the matcher's expected type.
+
 ```
-Tendril("false        ").matches(false)   // yes
-Tendril("false        ").matches('false')   // no
+Tendril(" [ false ] ").matches(false)   // yes
+Tendril(" [ false ] ").matches('false')   // no
+Tendril(" [ ~false ] ").matches('false')   // yes
+
+Tendril(" [ 123 ] ").matches(123)   // yes
+Tendril(" [ 123 ] ").matches('123')   // no
+Tendril(" [ ~123 ] ").matches('123')   // yes
+
+
+
 Tendril("~false       ").matches('false')   // yes, coerces the data to boolean before comparing
 
 Option 1
