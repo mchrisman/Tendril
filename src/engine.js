@@ -5,7 +5,7 @@
 //  - Vars & Bind/BindEq
 //  - Groups, Alternation (|), Conjunction (&)
 //  - Quantifiers (* + ? {m,n}) on any subpattern
-//  - Arrays (anchored-by-default); ".." lowered to lazy _*? during compilation
+//  - Arrays (anchored-by-default); "..." lowered to lazy _*? during compilation
 //  - Lookaheads (?=p) (?!p) — shadow execution, no binding commits
 //
 // Not yet in this milestone: Objects, Sets, Vertical paths (Dot), Replacement.
@@ -205,7 +205,7 @@ const elemCompilers = {
     compileQuant(n, c, /*inArrayElem=*/true);
   },
 
-  // ".." is lowered in compileArray; element path included for safety
+  // "..." is lowered in compileArray; element path included for safety
   Spread(_n, c) {
     // Fallback: behave like _*? at element position
     const any = {type: "Any", span: _n.span};
