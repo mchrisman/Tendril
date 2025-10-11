@@ -1,7 +1,5 @@
 # Tendril
 
-**Object graphs grow in all directions. Your pattern matching language should too.**
-
 <div style="padding:3em; margin:3em; background-color:pink">Status: alpha</div>
 
 Tendril = structural pattern matching **+** relational logic, in a small, generator-inspired language for **match** and **replace** across JSON-like graphs.
@@ -19,7 +17,9 @@ const pattern = `{
   aka = [.. [$name .. $alias .. | $alias:$name ..] .. ] // $name itself as a possible alias
 }`;
 
-Tendril(pattern).match(data).map(m => `Hello, ${m.$size} world ${m.$alias}`);
+Tendril(pattern)
+  .solutions(data)
+  .project($ => `Hello, ${$.size} world ${$.alias}`);
 
 =>
 [
@@ -63,7 +63,7 @@ Defaults differ across arrays, objects, and sets; don’t assume identical behav
 # Cheat Sheet (10 minute read)
 
 In this document,
-`foo ~= bar` means `Tendril("foo").matches(bar)`,
+`foo ~= bar` means `Tendril("foo").match(bar) !== null`,
 and `===` shows pattern equivalence.
 These notations are **only for illustration** — *not part of the language*.
 
@@ -272,7 +272,7 @@ $x                 === $x:_ (singleton) or $x:_*? (slice)
   `~=` and `===` appear in this documentation as shorthand for illustration only.
   They are **not part of the Tendril language syntax**.
 
-    * `foo ~= bar` means `Tendril("foo").matches(bar)`
+    * `foo ~= bar` means `Tendril("foo").match(bar) !== null`
     * `===` indicates syntactic or semantic equivalence between patterns.
 
 * **Precedence (high → low)**
@@ -523,14 +523,15 @@ Tendril(`{
   projects.$projectId.assigneeId = $userId
   projects.$projectId.name = $projectName
 }`)
-.find(input)
-.each(s => console.log(s.$projectName, s.$userName, s.$userPhone, s.$managerPhone));
+.solutions(input)
+.forEach($ => console.log($.projectName, $.userName, $.userPhone, $.managerPhone));
 ```
 
 **Redact sensitive fields**
 
 ```js
-Tendril("{ (_.)*password = >>value<< }").replaceAll(input, "REDACTED");
+Tendril("{ (_.)*password = $value }")
+  .replaceAll(input, $ => ({ $value: "REDACTED" }));
 ```
 
 **Bind object slices**
@@ -554,33 +555,6 @@ Tendril("{ (_.)*password = >>value<< }").replaceAll(input, "REDACTED");
     * Each assertion → subset of k/v pairs.
 * **Arrays** anchored; `..` relaxes boundaries.
 * **Replacement** uses tracked source spans; replacements are exact.
-
----
-
-## Design Notes
-
-1. **Whitespace and comments** – ignored globally; only array adjacency uses space semantically.
-4. **Object slices** – unify non-exclusive matching with bindable subsets.
-5. **Nested quantifiers** – enable expressive regular patterns.
-6. **Prolog-style unification** – supports relational joins across structures.
-8. **Replacement scope** – precise, avoids ambiguity.
-9. **Set/Map annotations** – clean reuse of object syntax.
-10. **Lookaheads** – regex-familiar
-
----
-
-## Quick Equivalence Cheatsheet
-
-```
-..                  === _*?                 // array lazy slice
-a*{m}                === repeat m times
-a*{m,n}              === m..n repetitions (greedy)
-a*{m,n}?             === m..n repetitions (lazy)
-[ a b ]              !~= [ a b c ]          // arrays anchored
-{ a=_ ..}               ~= { a:1, c:2 } 
-$k = $v              === $k:_ = $v:_        // kv binding sugar
-$x                   === $x:_ or $x:_*?     // depends on position
-```
 
 ---
 

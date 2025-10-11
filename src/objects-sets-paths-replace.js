@@ -139,6 +139,60 @@ function lowerVerticalEverywhere(n) {
   }
 }
 
+/**
+ * Public helper: parse then lower vertical paths everywhere.
+ * @param {string|object} sourceOrAst
+ * @returns {object}
+ */
+export function parseAndLower(sourceOrAst) {
+  const ast = typeof sourceOrAst === "string" ? parseAndValidate(sourceOrAst) : sourceOrAst;
+  return lowerVerticalEverywhere(ast);
+}
+
+/**
+ * Build a Solution object from current context.
+ * @param {Env} env
+ * @param {Map<string, Array<any>>} varOcc
+ * @param {Array<any>} pathStack
+ */
+function makeSolution(env, varOcc, pathStack) {
+  const bindings = Object.fromEntries(env.map.entries());
+  const at = {};
+  for (const [k, arr] of varOcc.entries()) at[k] = arr.slice();
+  const where = pathStack.slice();
+  return { bindings, at, where };
+}
+
+/**
+ * Traverse a structure to yield positional "occurrence" candidates (value, pathStack).
+ * @param {any} val
+ * @param {Array<any>} path
+ * @param {(v:any, path:any[])=>void} cb
+ */
+function traverseAll(val, path, cb) {
+  cb(val, path);
+  if (Array.isArray(val)) {
+    for (let i = 0; i < val.length; i++) {
+      const ref = { kind: "array-slice", ref: val, start: i, end: i + 1 };
+      traverseAll(val[i], path.concat([ref]), cb);
+    }
+    return;
+  }
+  if (isObj(val)) {
+    for (const k of Object.keys(val)) {
+      const ref = { kind: "object-value", ref: val, key: k };
+      traverseAll(val[k], path.concat([ref]), cb);
+    }
+    return;
+  }
+  if (isMap(val)) {
+    for (const [k, v] of val.entries()) {
+      const ref = { kind: "object-value", ref: val, key: k };
+      traverseAll(v, path.concat([ref]), cb);
+    }
+  }
+}
+
 /* ============================== Interpreter core ============================== */
 
 // Shared matching logic for Object and Map patterns (differ only in type check)
@@ -186,12 +240,15 @@ function* matchObjectLike(n, val, ctx, typeCheck) {
     if (keys.length === 0) { return; }
     let okThisKV = false;
     for (const k of keys) {
+      // Push path ref for occurrence tracking
+      ctx.path.push(makeObjectValueRef(val, k));
       for (const _ of matchNode(kv.vPat, getValue(val, k), ctx)) {
         cov.add(k);
         okThisKV = true;
         // Do NOT break; overlapping is allowed, but we only need at least one success
         break;
       }
+      ctx.path.pop();
       if (okThisKV) break;
     }
     if (!okThisKV) return;
@@ -224,11 +281,42 @@ function* matchObjectLike(n, val, ctx, typeCheck) {
 function* matchNode(n, val, ctx) {
   // ctx: { env: Env, path: any[], captures: {arrSlices:[], objKeys:[], objVals:[]}, opts }
   switch (n.type) {
+    /* ---- Variables & Bindings ---- */
+    case "Var": {
+      const ok = ctx.env.bindOrCheck(n.name, val, ctx.opts);
+      if (!ok) return;
+      // Record occurrence ref if we have a concrete currentRef on stack; else generic breadcrumb.
+      recordVarOcc(ctx, n.name);
+      yield ctx.env;
+      return;
+    }
+    case "Bind": {
+      for (const _ of matchNode(n.pat, val, ctx)) {
+        const ok = ctx.env.bindOrCheck(n.name, val, ctx.opts);
+        if (!ok) continue;
+        recordVarOcc(ctx, n.name);
+        yield ctx.env;
+      }
+      return;
+    }
+
     /* ---- Boolean combinators ---- */
     case "Alt": {
-      // left-first
-      yield* matchNode(n.options[0], val, ctx);
-      yield* matchNode(n.options[1], val, ctx);
+      // left-first; snapshot varOcc to handle backtracking
+      // Each option gets a fresh start from current varOcc state
+      const baseSnap = snapshotVarOcc(ctx.varOcc);
+
+      for (const _ of matchNode(n.options[0], val, ctx)) {
+        yield _;
+      }
+      // Rollback any pollution from options[0] before trying options[1]
+      rollbackVarOcc(ctx.varOcc, baseSnap);
+
+      for (const _ of matchNode(n.options[1], val, ctx)) {
+        yield _;
+      }
+      // Rollback to clean state before returning
+      rollbackVarOcc(ctx.varOcc, baseSnap);
       return;
     }
     case "And": {
@@ -377,9 +465,14 @@ function* matchNode(n, val, ctx) {
 
         // Normal element: match single array element
         if (j >= val.length) return;
+        // Push a concrete ref for breadcrumb and var occurrence capture
+        ctx.path.push({ kind: "array-slice", ref: val, start: j, end: j + 1 });
+        const snap = snapshotVarOcc(ctx.varOcc);
         for (const _ of matchNode(el, val[j], ctx)) {
           yield* matchFrom(i + 1, j + 1);
         }
+        rollbackVarOcc(ctx.varOcc, snap);
+        ctx.path.pop();
       }
 
       yield* matchFrom(0, 0);
@@ -430,30 +523,6 @@ function* matchNode(n, val, ctx) {
       return;
     }
 
-    /* ---- Bindings ---- */
-    case "Var": {
-      if (!ctx.env.bindOrCheck(n.name, val)) return;
-      yield ctx.env;
-      return;
-    }
-    case "Bind": {
-      for (const _ of matchNode(n.pat, val, ctx)) {
-        if (!ctx.env.bindOrCheck(n.name, val)) continue;
-        yield ctx.env;
-      }
-      return;
-    }
-    case "BindEq": {
-      // Evaluate both sides to ensure vars exist/are compatible
-      for (const _ of matchNode(n.left, val, ctx)) {
-        for (const __ of matchNode(n.right, val, ctx)) {
-          const a = ctx.env.get(n.left.name), b = ctx.env.get(n.right.name);
-          if (deepEq(a, b)) yield ctx.env;
-        }
-      }
-      return;
-    }
-
     /* ---- Atoms ---- */
     case "Any":      yield ctx.env; return;
     case "Number":   if (atomEqNumber(n.value, val)) yield ctx.env; return;
@@ -489,6 +558,96 @@ function keyMatches(kPat, key, ctx) {
   let ok = false;
   for (const _ of matchNode(kPat, key, ctx)) { ok = true; break; }
   return ok;
+}
+
+/**
+ * Record a variable occurrence for the current location (top of ctx.path),
+ * or a generic value ref if no path info exists.
+ * @param {{varOcc: Map<string, any[]>, path: any[]}} ctx
+ * @param {string} name
+ */
+function recordVarOcc(ctx, name) {
+  let arr = ctx.varOcc.get(name);
+  if (!arr) { arr = []; ctx.varOcc.set(name, arr); }
+  const top = ctx.path[ctx.path.length - 1];
+  if (top) arr.push(top);
+  else arr.push({ kind: "value", ref: undefined, path: [] });
+}
+
+/**
+ * Snapshot varOcc lengths to enable rollback on backtracking.
+ * @param {Map<string, any[]>} varOcc
+ * @returns {Map<string, number>}
+ */
+function snapshotVarOcc(varOcc) {
+  const snapshot = new Map();
+  for (const [name, arr] of varOcc.entries()) {
+    snapshot.set(name, arr.length);
+  }
+  return snapshot;
+}
+
+/**
+ * Rollback varOcc to a previous snapshot.
+ * @param {Map<string, any[]>} varOcc
+ * @param {Map<string, number>} snapshot
+ */
+function rollbackVarOcc(varOcc, snapshot) {
+  // Trim arrays back to snapshot lengths
+  for (const [name, len] of snapshot.entries()) {
+    const arr = varOcc.get(name);
+    if (arr) arr.length = len;
+  }
+  // Remove any new keys that weren't in snapshot
+  for (const name of varOcc.keys()) {
+    if (!snapshot.has(name)) {
+      varOcc.delete(name);
+    }
+  }
+}
+
+/* ============================== Public matching API ============================== */
+
+/**
+ * Generate Solution objects for logical or scan modes.
+ * @param {object} ast
+ * @param {any} input
+ * @param {{envSeed?: Record<string, any>, semOpts?: import('./semantics.js').SemanticsOptions, mode?: "logical"|"scan"}} opts
+ */
+export function* matchAll(ast, input, opts = {}) {
+  const mode = opts.mode || "logical";
+  const semOpts = opts.semOpts || undefined;
+  if (mode === "logical") {
+    const baseCtx = {
+      env: new Env(opts.envSeed || null),
+      opts: semOpts,
+      path: [],
+      varOcc: new Map(),
+      captures: { arrSlices: [], objKeys: [], objVals: [] },
+    };
+    for (const _ of matchNode(ast, input, baseCtx)) {
+      yield makeSolution(baseCtx.env, baseCtx.varOcc, baseCtx.path);
+      // backtracking will naturally roll env; varOcc must be cleared per solution
+      baseCtx.varOcc = new Map();
+    }
+    return;
+  }
+  // scan mode
+  const results = [];
+  traverseAll(input, [], (v, path) => {
+    const baseCtx = {
+      env: new Env(opts.envSeed || null),
+      opts: semOpts,
+      path: path.slice(),
+      varOcc: new Map(),
+      captures: { arrSlices: [], objKeys: [], objVals: [] },
+    };
+    for (const _ of matchNode(ast, v, baseCtx)) {
+      results.push(makeSolution(baseCtx.env, baseCtx.varOcc, baseCtx.path));
+      baseCtx.varOcc = new Map();
+    }
+  });
+  yield* results;
 }
 
 /* ============================== Replacement application ============================== */

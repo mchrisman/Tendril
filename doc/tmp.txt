@@ -1,0 +1,717 @@
+Here are the new files, written with JSDoc and designed to be ADDITIVE (no changes to your existing sources). They provide the fluent API scaffold and wire up matching, projection, uniqueness, and convenience helpers immediately. The edit/replace operations are plumbed with clear TODOs to connect to concrete occurrence references once we expose them from the runtime. This lets you start using the new surface now for searching and projection, and fill in the span/occurrence plumbing next.
+
+––––– File: api.js –––––
+/**
+
+* Fluent Tendril API
+*
+* This layer is intentionally additive and does not modify existing runtime files.
+* It uses the current public Tendril pattern entrypoint for matching and exposes
+* a lazy, composable Solutions pipeline. Replacement/edit methods are stubbed
+* with clear TODOs to wire into concrete occurrence references once the engine
+* exposes them.
+*
+* Design goals:
+* * Do away with >>…<< at the API level.
+* * Provide solution vs. occurrence iteration surfaces.
+* * Allow pre-binding (withEnv) and semantics options (withOptions).
+* * Provide uniqueness over a subset of variables.
+* * Provide friendly transforms: map/extract/project.
+* * Provide convenience helpers: matches, extract, extractAll, replaceAll, uniqueMatches.
+*
+* Notes:
+* * This file assumes an existing public Tendril(pattern) loader function is available
+* from your runtime (as shown in the README examples). We import it as CoreTendril.
+* * Because the current runtime does not yet expose per-variable occurrence references,
+* this version populates Solution.at (spans) and Solution.where (breadcrumb) with
+* best-effort placeholders. The replacement/edit methods throw a clear error for now,
+* so callers won’t silently get partial behavior. Hook points are marked TODO.
+  */
+
+/* eslint-disable no-use-before-define */
+
+/**
+
+* Import the current public pattern entrypoint.
+* The existing examples use: Tendril(pattern).match(data)
+* If your runtime exports differently, update this import accordingly.
+  */
+  // eslint-disable-next-line import/no-default-export
+  import CoreTendril from './objects-sets-paths-replace.js';
+
+/**
+
+* @typedef {Record<string, unknown>} BindingMap
+* @typedef {`$${string}`} Var
+*
+* @typedef {{ kind: "array-slice", ref: any[], start: number, end: number } |
+* ```
+        { kind: "object-value", ref: object|Map<any,any>, key: any } |
+  ```
+* ```
+        { kind: "object-keys",  ref: object|Map<any,any>, keys: any[] } |
+  ```
+* ```
+        { kind: "value",        ref: any, path: Array<string|number> }} OccurrenceRef
+  ```
+*
+* @typedef {Object} Solution
+* @property {BindingMap} bindings  Variable bindings for this logical solution.
+* @property {Record<Var, OccurrenceRef[]>} at  Where each variable occurred (placeholder until engine exposes refs).
+* @property {OccurrenceRef[]} where  Breadcrumb path to this match (placeholder).
+  */
+
+/**
+
+* Tendril – fluent front-end.
+* Construct with a pattern, then call .solutions(input) or .occurrences(input)
+* to obtain a lazy Solutions pipeline you can chain (unique, filter, take, map, extract, project, forEach).
+  */
+  export class Tendril {
+  /**
+
+  * @param {string} pattern
+  * @param {BindingMap=} envSeed
+  * @param {{ unicodeNormalize?: 'NFC'|'NFD' }=} semOpts
+  * @private
+    */
+    constructor(pattern, envSeed = undefined, semOpts = undefined) {
+    /** @private */
+    this._pattern = String(pattern);
+    /** @private */
+    this._envSeed = envSeed ? { ...envSeed } : undefined;
+    /** @private */
+    this._semOpts = semOpts ? { ...semOpts } : undefined;
+    }
+
+/**
+
+* Pre-bind variables for unification (e.g., { $name: "Jupiter" }).
+* @param {BindingMap} bindings
+* @returns {Tendril}
+  */
+  withEnv(bindings) {
+  const merged = { ...(this._envSeed || {}), ...(bindings || {}) };
+  return new Tendril(this._pattern, merged, this._semOpts);
+  }
+
+/**
+
+* Configure string semantics: unicode normalization for equality.
+* @param {{ unicodeNormalize?: 'NFC'|'NFD' }} opts
+* @returns {Tendril}
+  */
+  withOptions(opts) {
+  const merged = { ...(this._semOpts || {}), ...(opts || {}) };
+  return new Tendril(this._pattern, this._envSeed, merged);
+  }
+
+/**
+
+* Iterate logical solutions (unification/backtracking).
+* @param {unknown} input
+* @returns {Solutions}
+  */
+  solutions(input) {
+  return new Solutions(() => this._iterateSolutions(input, /*scan*/ false));
+  }
+
+/**
+
+* Iterate positional occurrences by scanning the entire structure.
+* NOTE: Until the runtime exposes occurrence paths, this falls back to
+* running logical matches at the root (no breadcrumb). Hook is present.
+* @param {unknown} input
+* @returns {Solutions}
+  */
+  occurrences(input) {
+  return new Solutions(() => this._iterateSolutions(input, /*scan*/ true));
+  }
+
+/**
+
+* First logical solution or null.
+* @param {unknown} input
+* @returns {Solution|null}
+  */
+  match(input) {
+  for (const s of this._iterateSolutions(input, false)) return s;
+  return null;
+  }
+
+/**
+
+* All logical solutions as an array.
+* @param {unknown} input
+* @returns {Solution[]}
+  */
+  all(input) {
+  return Array.from(this._iterateSolutions(input, false));
+  }
+
+/**
+
+* @param {unknown} input
+* @param {boolean} scan
+* @returns {Iterable<Solution>}
+* @private
+  */
+  *_iterateSolutions(input, scan) {
+  // Current runtime surface: CoreTendril(pattern).match(input) returns an array-like
+  // of binding maps. If your runtime uses a different function (e.g., .find), adjust here.
+  const matcher = CoreTendril(this._pattern);
+
+```
+// Apply pre-bound env if supported; otherwise, filter results post-hoc.
+```
+
+```
+// We optimistically assume the runtime respects pre-binding via an initial env
+// when provided as an optional arg to .match(); if not, we filter below.
+/** @type {BindingMap[]|unknown} */
+let raw = null;
+
+try {
+  // Prefer a hypothetical API: matcher.match(input, { env: this._envSeed, options: this._semOpts })
+  // If not supported, call .match(input) and post-filter.
+  raw = matcher.match(input, { env: this._envSeed, options: this._semOpts });
+} catch (_e) {
+  // Fallback: call without options.
+  raw = matcher.match(input);
+}
+
+/** @type {BindingMap[]} */
+const rows = Array.isArray(raw) ? /** @type {BindingMap[]} */ (raw) : [];
+
+for (const b of rows) {
+  // If engine didn't enforce pre-binding, enforce here.
+  if (this._envSeed && !envSubsetEquals(this._envSeed, b)) continue;
+
+  /** @type {Record<Var, OccurrenceRef[]>} */
+  const at = {}; // TODO: fill when runtime exposes concrete occurrence refs.
+  /** @type {OccurrenceRef[]} */
+  const where = []; // TODO: fill with breadcrumb path in occurrences().
+
+  // Until scan-mode is backed by a full traversal with breadcrumbs,
+  // we yield the same logical solutions. Hook intentionally present.
+  yield /** @type {Solution} */ ({
+    bindings: b,
+    at,
+    where,
+  });
+
+  // In a future step: if (scan) perform structural traversal and attempt matches at each node,
+  // yielding a Solution per positional hit with a non-empty 'where'.
+}
+```
+
+}
+}
+
+/**
+
+* Lazy, composable sequence of Solution objects. Supports uniqueness filtering
+* by subset of variables, filtering, take(n), projection, and terminal ops.
+  */
+  export class Solutions {
+  /**
+
+  * @param {() => Iterable<Solution>} sourceFactory
+    */
+    constructor(sourceFactory) {
+    /** @private */
+    this._sourceFactory = sourceFactory;
+
+  /** @private @type {null | ((s: Solution) => boolean)[]} */
+  this._filters = null;
+
+  /** @private @type {null | { vars: Var[], key?: (b: BindingMap) => string }} */
+  this._unique = null;
+
+  /** @private @type {number|null} */
+  this._take = null;
+  }
+
+/**
+
+* Keep only unique combinations of specified variables.
+* @param {...Var} vars
+* @returns {Solutions}
+  */
+  unique(...vars) {
+  const out = this._clone();
+  out._unique = { vars };
+  return out;
+  }
+
+/**
+
+* Overload: unique(vars, { key })
+* @param {Var[]|Var} vars
+* @param {{ key?: (b: BindingMap) => string }=} opts
+* @returns {Solutions}
+  */
+  uniqueWith(vars, opts) {
+  const vs = Array.isArray(vars) ? vars : [/** @type {Var} */ (vars)];
+  const out = this._clone();
+  out._unique = { vars: vs, key: opts && opts.key };
+  return out;
+  }
+
+/**
+
+* Standard filter.
+* @param {(sol: Solution) => boolean} pred
+* @returns {Solutions}
+  */
+  filter(pred) {
+  const out = this._clone();
+  (out._filters || (out._filters = [])).push(pred);
+  return out;
+  }
+
+/**
+
+* Limit the number of yielded solutions.
+* @param {number} n
+* @returns {Solutions}
+  */
+  take(n) {
+  const out = this._clone();
+  out._take = (typeof n === 'number' && n >= 0) ? Math.floor(n) : 0;
+  return out;
+  }
+
+/**
+
+* Transform bindings lazily; returns an Iterable<T>.
+* @template T
+* @param {(bindings: BindingMap) => T} f
+* @returns {Iterable<T>}
+  */
+  map(f) {
+  const self = this;
+  return (function* () {
+  let i = 0;
+  for (const sol of self) {
+  if (self._take != null && i >= self._take) break;
+  yield f(sol.bindings);
+  i++;
+  }
+  })();
+  }
+
+/**
+
+* Eagerly extract projected values into an array.
+* @template T
+* @param {(bindings: BindingMap) => T} f
+* @returns {T[]}
+  */
+  extract(f) {
+  const out = [];
+  let i = 0;
+  for (const sol of this) {
+  if (this._take != null && i >= this._take) break;
+  out.push(f(sol.bindings));
+  i++;
+  }
+  return out;
+  }
+
+/**
+
+* Alias for extract.
+* @template T
+* @param {(bindings: BindingMap) => T} f
+* @returns {T[]}
+  */
+  project(f) {
+  return this.extract(f);
+  }
+
+/**
+
+* Side-effect loop over full solutions.
+* @param {(sol: Solution) => void} f
+* @returns {void}
+  */
+  forEach(f) {
+  let i = 0;
+  for (const sol of this) {
+  if (this._take != null && i >= this._take) break;
+  f(sol);
+  i++;
+  }
+  }
+
+/**
+
+* Replace by symbol (all occurrences of each variable).
+* NOTE: Requires engine-provided occurrence references; throws until wired.
+* @param {(bindings: BindingMap) => Partial<Record<Var, unknown>>} _f
+* @returns {unknown}
+  */
+  replace(_f) {
+  throw new Error(
+  'Tendril.Solutions.replace: occurrence references not yet exposed by the runtime. ' +
+  'Wire engine spans/refs and scheduler, then apply non-overlapping edits left→right.'
+  );
+  }
+
+/**
+
+* Replace by reference (exact occurrences).
+* NOTE: Requires engine-provided occurrence references; throws until wired.
+* @param {(sol: Solution) => Array<{ ref: OccurrenceRef, to: unknown }>} _f
+* @returns {unknown}
+  */
+  edit(_f) {
+  throw new Error(
+  'Tendril.Solutions.edit: occurrence references not yet exposed by the runtime. ' +
+  'Wire engine spans/refs and scheduler, then apply non-overlapping edits left→right.'
+  );
+  }
+
+/**
+
+* Collect solutions eagerly.
+* @returns {Solution[]}
+  */
+  toArray() {
+  return Array.from(this);
+  }
+
+/**
+
+* First solution or null.
+* @returns {Solution|null}
+  */
+  first() {
+  for (const s of this) return s;
+  return null;
+  }
+
+/**
+
+* Count solutions (consumes the iterator).
+* @returns {number}
+  */
+  count() {
+  let n = 0;
+  for (const _ of this) n++;
+  return n;
+  }
+
+/**
+
+* Iterator implementation applying filters, uniqueness, and take().
+* @returns {Iterator<Solution>}
+  */
+  [Symbol.iterator]() {
+  const src = this._sourceFactory();
+  const filters = this._filters ? this._filters.slice() : null;
+  const uniq = this._unique ? { ...this._unique } : null;
+  const take = this._take;
+
+```
+/** @type {Set<string>|null} */
+```
+
+```
+const seen = uniq ? new Set() : null;
+let yielded = 0;
+
+const it = (function* () {
+  loop:
+  for (const sol of src) {
+    // filters
+    if (filters) {
+      for (const pred of filters) {
+        if (!pred(sol)) continue loop;
+      }
+    }
+    // unique by subset
+    if (uniq && seen) {
+      const proj = pickVars(sol.bindings, uniq.vars);
+      const k = uniq.key ? uniq.key(proj) : stableKey(proj);
+      if (seen.has(k)) continue;
+      seen.add(k);
+    }
+    yield sol;
+    yielded++;
+    if (take != null && yielded >= take) break;
+  }
+})();
+
+return it;
+```
+
+}
+
+/**
+
+* @returns {Solutions}
+* @private
+  */
+  _clone() {
+  const cp = new Solutions(this._sourceFactory);
+  if (this._filters) cp._filters = this._filters.slice();
+  if (this._unique) cp._unique = { ...this._unique };
+  cp._take = this._take;
+  return cp;
+  }
+  }
+
+/**
+
+* Public convenience: does pattern match at least once?
+* @param {string} pattern
+* @param {unknown} input
+* @returns {boolean}
+  */
+  export function matches(pattern, input) {
+  const t = new Tendril(pattern);
+  return t.match(input) !== null;
+  }
+
+/**
+
+* Public convenience: bindings from first logical match.
+* @param {string} pattern
+* @param {unknown} input
+* @returns {BindingMap|null}
+  */
+  export function extract(pattern, input) {
+  const t = new Tendril(pattern);
+  const s = t.match(input);
+  return s ? s.bindings : null;
+  }
+
+/**
+
+* Public convenience: bindings from all logical matches.
+* @param {string} pattern
+* @param {unknown} input
+* @returns {BindingMap[]}
+  */
+  export function extractAll(pattern, input) {
+  const t = new Tendril(pattern);
+  return t.solutions(input).extract(b => b);
+  }
+
+/**
+
+* Public convenience: general rewrite using a builder.
+* NOTE: Throws until occurrence references are wired (see Solutions.replace).
+* @template T
+* @param {string} pattern
+* @param {(bindings: BindingMap) => T} builder
+* @param {unknown} input
+* @returns {unknown}
+  */
+  export function replaceAll(pattern, builder, input) {
+  const t = new Tendril(pattern);
+  // Intended idiom (once wired):
+  // return t.occurrences(input).replace(b => ({ $out: builder(b) }));
+  throw new Error(
+  'replaceAll: occurrence references not yet exposed by the runtime. ' +
+  'Use Tendril(...).occurrences(...).replace once spans are available.'
+  );
+  }
+
+/**
+
+* Public convenience: unique projected matches for a subset of variables.
+* @param {string} pattern
+* @param {unknown} input
+* @param {...Var} vars
+* @returns {BindingMap[]}
+  */
+  export function uniqueMatches(pattern, input, ...vars) {
+  const t = new Tendril(pattern);
+  return t.solutions(input).unique(...vars).extract(b => pickVars(b, vars));
+  }
+
+/* ============================ Helpers ============================ */
+
+/**
+
+* Check that every kv in seed exists in b with strict ===.
+* (For deep unification, the engine already enforced; this is a guard for
+* runtimes that ignore pre-bound env in .match.)
+* @param {BindingMap} seed
+* @param {BindingMap} b
+* @returns {boolean}
+  */
+  function envSubsetEquals(seed, b) {
+  for (const k of Object.keys(seed)) {
+  if (!(k in b)) return false;
+  if (b[k] !== seed[k]) return false;
+  }
+  return true;
+  }
+
+/**
+
+* Pick only the requested variables from a binding map.
+* @param {BindingMap} b
+* @param {Var[]} vars
+* @returns {BindingMap}
+  */
+  function pickVars(b, vars) {
+  /** @type {BindingMap} */
+  const out = {};
+  for (const v of vars) if (v in b) out[v] = b[v];
+  return out;
+  }
+
+/**
+
+* Stable structural key for uniqueness aligned with deep structural equality.
+* This is a simplified canonicalizer sufficient for bindings composed of JSON
+* primitives/arrays/plain objects/Sets/Maps.
+* @param {unknown} v
+* @returns {string}
+  */
+  function stableKey(v) {
+  const seen = new WeakMap();
+  const enc = (x) => {
+  if (x === null) return 'null';
+  const t = typeof x;
+  if (t === 'number') return `num:${Object.is(x, -0) ? '-0' : String(x)}`;
+  if (t === 'string') return `str:${x}`;
+  if (t === 'boolean') return `bool:${x}`;
+  if (t === 'undefined') return 'undef';
+  if (t === 'symbol') return `sym:${String(x)}`;
+  if (t === 'function') return `fun:${String(x)}`;
+
+  if (seen.has(x)) return `@${seen.get(x)}`;
+  const id = seen.size + 1;
+  seen.set(x, id);
+
+  // Array
+  if (Array.isArray(x)) {
+  return `arr#${id}[${x.map(enc).join(',')}]`;
+  }
+
+  // Set
+  if (x instanceof Set) {
+  const items = Array.from(x).map(enc).sort();
+  return `set#${id}{${items.join(',')}}`;
+  }
+
+  // Map
+  if (x instanceof Map) {
+  const entries = Array.from(x.entries()).map(([k, v]) => [enc(k), enc(v)]);
+  entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return `map#${id}{${entries.map(([k, v]) => `${k}:${v}`).join(',')}}`;
+  }
+
+  // Plain object
+  if (typeof x === 'object') {
+  const keys = Object.keys(x).sort();
+  const body = keys.map(k => `${enc(k)}:${enc(x[k])}`).join(',');
+  return `obj#${id}{${body}}`;
+  }
+
+  // Fallback
+  return `val#${id}:${String(x)}`;
+  };
+  return enc(v);
+  }
+
+/* ============================ Default export ============================ */
+
+/**
+
+* Preserve the ergonomic callsite: Tendril(pattern)
+* @param {string} pattern
+* @returns {Tendril}
+  */
+  export default function FluentTendril(pattern) {
+  return new Tendril(pattern);
+  }
+
+––––– File: edits.js (placeholder wiring for future engine spans) –––––
+/**
+
+* Edit scheduling/apply helpers (placeholder).
+*
+* Once the runtime exposes concrete occurrence references for variables, wire
+* Solutions.replace and Solutions.edit to call into these helpers to schedule
+* non-overlapping left→right edits and apply them immutably.
+  */
+
+/**
+
+* @typedef {{ kind: "array-slice", ref: any[], start: number, end: number } |
+* ```
+        { kind: "object-value", ref: object|Map<any,any>, key: any } |
+  ```
+* ```
+        { kind: "object-keys",  ref: object|Map<any,any>, keys: any[] } |
+  ```
+* ```
+        { kind: "value",        ref: any, path: Array<string|number> }} OccurrenceRef
+  ```
+
+*/
+
+/**
+
+* @typedef {{ ref: OccurrenceRef, to: unknown }} Edit
+  */
+
+/**
+
+* Compute a deterministic, non-overlapping plan from a list of edits.
+* Left→right is defined as container-stable order: arrays by index, objects by
+* stable key order, generic paths by path-lexicographic order.
+*
+* @param {Edit[]} edits
+* @returns {Edit[]}
+  */
+  export function scheduleEdits(edits) {
+  // TODO: Replace with the engine’s existing scheduler if/when exported.
+  // For now, sort deterministically and trust the caller to avoid overlaps.
+  return edits.slice().sort(compareEdits);
+  }
+
+/**
+
+* Apply a set of planned edits to a root value immutably.
+* @param {unknown} root
+* @param {Edit[]} plan
+* @returns {unknown}
+  */
+  export function applyEdits(root, plan) {
+  // TODO: Implement copy-on-write application per occurrence kind
+  // (array-slice, object-value, object-keys, value path). For now, signal
+  // that engine wiring is required.
+  throw new Error('applyEdits: not implemented until engine exposes occurrence editing primitives.');
+  }
+
+/**
+
+* @param {Edit} a
+* @param {Edit} b
+  */
+  function compareEdits(a, b) {
+  const ka = editKey(a), kb = editKey(b);
+  return ka < kb ? -1 : ka > kb ? 1 : 0;
+  }
+
+/**
+
+* @param {Edit} e
+* @returns {string}
+  */
+  function editKey(e) {
+  const r = e.ref;
+  if (r.kind === 'array-slice') return `arr:${Object.identityHash ? Object.identityHash(r.ref) : ''}:${r.start}:${r.end}`;
+  if (r.kind === 'object-value') return `obj:${Object.identityHash ? Object.identityHash(r.ref) : ''}:${String(r.key)}`;
+  if (r.kind === 'object-keys')  return `keys:${Object.identityHash ? Object.identityHash(r.ref) : ''}:${r.keys.map(String).join('|')}`;
+  if (r.kind === 'value')        return `val:${r.path.map(String).join('.')}`;
+  return 'z';
+  }

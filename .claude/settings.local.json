@@ -4,7 +4,9 @@
       "Bash(chmod:*)",
       "Bash(node test:*)",
       "Bash(node:*)",
-      "Bash(npm test:*)"
+      "Bash(npm test:*)",
+      "Bash(cat:*)",
+      "Bash(npm run:*)"
     ],
     "deny": [],
     "ask": []

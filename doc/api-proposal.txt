@@ -1,0 +1,400 @@
+Tendril – Fluent API (class-level specification)
+
+Overview
+This API exposes a fluent, lazy workhorse for matching and rewriting JSON-like graphs using the Tendril pattern language. It removes user-authored >>…<< markers entirely; edits are expressed in terms of bound variables (symbols) and precise occurrence references captured during matching. Logical “solutions” (variable bindings via unification) are distinct from positional “occurrences” (hits while scanning through a structure), and the API makes this difference explicit. Internally, variable binding/unification is trail-based and deep-structural, consistent with Env and deepEq; arrays/objects remain anchored per the language spec.
+
+Primary classes
+
+1. Tendril
+2. Solutions (a lazy, composable sequence of Solution objects)
+
+Core concepts
+• Solution.bindings: Record of variable → value for a single logical solution (Prolog-style). Repeated variables must match locally, then unify globally via deep structural equality.
+• Solution.at: For each variable, zero or more OccurrenceRef entries describing where that variable matched (e.g., array slice, object value, object keys). These mirror the engine’s replacement references.
+• Solution.where: A breadcrumb (list of OccurrenceRef segments) describing where the overall match was found; used notably by occurrences() which scans through the entire structure. Arrays are anchored by default; objects are anchored unless explicitly allowed with spread.
+• OccurrenceRef: One of
+
+* { kind: "array-slice"; ref: any[]; start: number; end: number }
+* { kind: "object-value"; ref: object|Map; key: string|number|any }
+* { kind: "object-keys"; ref: object|Map; keys: (string|number|any)[] }
+* { kind: "value"; ref: any; path: (string|number)[] }  // generic breadcrumb when no direct ref exists
+
+Public API – Tendril
+constructor(pattern: string)
+Create a matcher for a single pattern string. Precedence and anchoring are as documented by the parser; lookaheads, quantifiers, vertical paths, sets, and maps match the language reference.
+
+withEnv(bindings: Record<string, unknown>): Tendril
+Return a new Tendril bound to an initial environment of variables (e.g., { $name: "Jupiter" }). Pre-bound names participate in unification like any other symbol.
+
+withOptions(opts: { unicodeNormalize?: 'NFC'|'NFD' }): Tendril
+Return a new Tendril with semantics options (e.g., Unicode normalization) applied to string comparisons and unification.
+
+solutions(input: unknown): Solutions
+Produce a lazy sequence of logical solutions. Each item is a Solution with bindings, at, where. Logical search/backtracking respects array/object anchoring and quantifier semantics.
+
+occurrences(input: unknown): Solutions
+Produce a lazy sequence of positional matches by scanning the entire structure (conceptually conjoining a lazy wildcard breadcrumb). Each item is a Solution; where carries the positional path of the occurrence. Useful for edits “at all occurrences,” like redaction.
+
+match(input: unknown): Solution | null
+First logical solution (or null if none).
+
+all(input: unknown): Solution[]
+Collect all logical solutions into an array.
+
+Public API – Solutions (lazy/composable)
+Solutions implements Iterable<Solution> and offers in-pipeline combinators prior to terminal operations.
+
+unique(...vars: Var[]): Solutions
+unique(vars: Var[], opts?: { key?: (b: Record<string, unknown>) => string }): Solutions
+Deduplicate by structural identity of the selected variables only. By default, uses a stable structural key consistent with deepEq (order-insensitive for Sets/Maps, pairwise for Maps). Provide key to override. Enables “only care about B and C” iteration.
+
+filter(pred: (sol: Solution) => boolean): Solutions
+Keep only solutions matching the predicate.
+
+take(n: number): Solutions
+Limit the sequence to the first n solutions.
+
+map<T>(f: (bindings: Record<string, unknown>) => T): Iterable<T>
+Transform each solution’s bindings; returns a standard iterator of T. Designed for simple projections like s.$a + s.$b.
+
+extract<T>(f: (bindings: Record<string, unknown>) => T): T[]
+project<T>(f: (bindings: Record<string, unknown>) => T): T[]
+Convenience collectors that apply a projection to each solution’s bindings and return an array.
+
+forEach(f: (sol: Solution) => void): void
+Side effects over full solutions (bindings + at + where).
+
+replace(f: (bindings: Record<string, unknown>) => Partial<Record<Var, unknown>>): unknown
+Return a transformed copy of input by applying symbol-wide edits for each solution. The function returns a map from variables to new values; all occurrence refs recorded in Solution.at for those variables are replaced. Edits are applied using a non-overlapping, left-to-right scheduler over captured slices/values/keys, matching existing replacement behavior. Rewrites are immutable (produce new structures).
+
+edit(f: (sol: Solution) => Array<{ ref: OccurrenceRef; to: unknown }>): unknown
+Return a transformed copy of input by applying the exact list of edits returned for each solution. Each edit targets a specific OccurrenceRef and supplies the replacement value. Scheduling is non-overlapping, left-to-right. Prefer edit() when you need to affect only particular occurrences of a variable.
+
+toArray(): Solution[]
+Collect solutions eagerly.
+
+first(): Solution | null
+First solution or null.
+
+count(): number
+Count solutions (consumes the iterator).
+
+Behavioral guarantees and semantics
+• Unification and variable reuse
+Symbols bind once per solution. Repeated occurrences must first match locally and then unify via deep structural equality (Env.bindOrCheck with deepEq). This includes arrays, plain objects, Sets (order-insensitive), and Maps (pairwise equality of entries).
+
+• Anchoring and spread
+Arrays are anchored by default; a lazy slice (“..” sugar) relaxes that boundary. Objects/Maps are anchored by default; “..” allows extra keys. Counts on kv assertions are post-checks. Vertical path keys are lowered to nested patterns before matching.
+
+• Occurrence capture
+During matching, occurrence references are recorded whenever a variable bind happens at an addressable location (array element/slice, object value, object keys). When a direct address is not available, a generic breadcrumb path is recorded. These references are reused by replace()/edit().
+
+• Edits
+Edits are applied on the captured references with non-overlapping, left-to-right scheduling. Symbol-wide replace applies the same new value to every captured occurrence of that symbol for each solution. Fine-grained edit applies exactly the user-provided list. Output is immutable.
+
+• Engine selection
+The implementation may delegate to the compiled VM for the M3 subset or to the full backtracking interpreter for objects, sets, vertical paths, lookaheads, and replacements; selection is transparent to callers. Semantics are identical across both paths.
+
+Convenience functions
+matches(pattern: string, input: unknown): boolean
+True if there exists at least one logical solution.
+
+extract(pattern: string, input: unknown): Record<string, unknown> | null
+Bindings from the first logical solution (or null).
+
+extractAll(pattern: string, input: unknown): Record<string, unknown>[]
+Bindings from all logical solutions.
+
+replaceAll<T>(pattern: string, builder: (bindings: Record<string, unknown>) => T, input: unknown): unknown
+Pattern → template rewrite. Equivalent to occurrences(pattern).replace(b => ({ $out: builder(b) })) when the pattern uses a distinguished target symbol (e.g., $out) to identify the rewrite location; or wrap the pattern to bind the intended target symbol.
+
+uniqueMatches(pattern: string, input: unknown, ...vars: Var[]): Record<string, unknown>[]
+All unique solutions projected to the specified variables, deduplicated using the same structural identity as unique().
+
+Notes
+• Parser/lexer behavior (precedence: () > quantifiers > . > adjacency > & > |; whitespace/comment handling; no-WS-around “.” rule) is unchanged. Validation still enforces quantifier bounds and other structural invariants.
+• The public API no longer relies on author-authored >>…<< markers. Internally, the replacement machinery remains available and is driven by captured occurrence references.
+
+---------------------
+
+Implementation notes
+
+Implementation Guide for the Fluent Tendril API
+
+Scope
+This document explains how to implement the new fluent API (Tendril and Solutions) on top of the existing lexer, parser, validator, VM compiler, and M4 interpreter. It reuses current unification (Env), deep structural equality, and replacement infrastructure. Arrays and objects remain anchored; spread and counts preserve current semantics. References in brackets point to the relevant files/functions.
+
+High-level architecture
+
+1. Keep syntax: lexer → parser → validator unchanged. The parser already encodes precedence and the validator normalizes/guards quantifiers and structure [lexer.js, parser.js, ast-validate.js].
+2. Maintain the current dual runtime:
+   a) M3 compiler + VM for the subset (atoms, vars, groups, |, &, quantifiers, arrays, lookaheads).
+   b) M4 backtracking interpreter for objects, sets, vertical paths, and replacement. A feature predicate already exists (needsAdvanced) and the interpreter already lowers vertical keys and performs replacement-capable matching [objects-sets-paths-replace.js].
+3. Add a thin “API layer” (new file api.js) that:
+   a) Parses + validates once per Tendril instance.
+   b) Picks M3 or M4 execution path transparently.
+   c) Streams Solution objects (bindings, at, where).
+   d) Implements the Solutions pipeline (unique, filter, take, map, extract/project, forEach, replace, edit).
+4. Preserve internal replacement scheduling semantics: edits are non-overlapping and applied left-to-right, returning a new structure [objects-sets-paths-replace.js].
+
+Data types to introduce
+OccurrenceRef
+{ kind: "array-slice"; ref: any[]; start: number; end: number }
+{ kind: "object-value"; ref: object|Map; key: string|number|any }
+{ kind: "object-keys"; ref: object|Map; keys: (string|number|any)[] }
+{ kind: "value"; ref: any; path: (string|number)[] }
+
+Solution (what the API yields)
+bindings: Record<string, unknown>
+at: Record<`$${string}`, OccurrenceRef[]>
+where: OccurrenceRef[]
+
+Construction primitives exist today for the first three ref kinds: makeArraySlice, makeObjectValueRef, makeObjectKeysSlice [semantics.js].
+
+Step-by-step implementation plan
+
+A) api.js (new)
+
+1. Constructor and preparation
+
+   * Accept pattern: string.
+   * On construction (or first use), call parseAndValidate(pattern) to get a validated AST [syntax.js].
+   * Store AST and compiled “plan”:
+     • If needsAdvanced(AST) is true, mark path=M4; else path=M3 [objects-sets-paths-replace.js].
+   * Keep optional envSeed (Record<string, unknown>) and semOpts (unicodeNormalize).
+
+2. withEnv and withOptions
+
+   * Return shallow-cloned Tendril with envSeed merged and semOpts set. Do not mutate the original instance. Reuse semOpts shape from Semantics (unicodeNormalize) [semantics.js].
+
+3. Execution entrypoints: solutions(input) and occurrences(input)
+
+   * Both return a Solutions object that holds:
+     • a generator factory (closure) producing Solution items,
+     • envSeed and semOpts,
+     • a “mode”: logical (solutions) vs scan (occurrences).
+
+   Logical mode (solutions):
+
+   * For M3: compile AST with engine.Compiler and drive runVM to produce Env bindings. The VM already supports variables and arrays; assertions are supported; objects/sets are not in M3 (the compiler rejects them) [engine.js].
+   * For M4: call the interpreter generator on AST and input to produce Env bindings, using existing matching for arrays/objects/sets/vertical paths (the interpreter already lowers vertical keys and enforces anchoring) [objects-sets-paths-replace.js].
+
+   Scan mode (occurrences):
+
+   * Implement by scanning every subvalue of the input and attempting a logical match at each position. This mirrors the “breadcrumb” trick used for redaction in the README; it’s equivalent to conjoining a lazy wildcard slice to force full traversal. Keep object/array anchoring semantics intact by matching the pattern at the candidate subvalue rather than rewriting the pattern itself [README.md semantics].
+   * Maintain a path stack during traversal to build Solution.where (see “Breadcrumb collection” below).
+
+B) Producing Solution objects
+
+1. Bindings
+
+   * Both VM and interpreter already bind variables into Env (trail-based). Create Solution.bindings from env.map at each successful yield [semantics.js: Env].
+
+2. Occurrence capture per variable (Solution.at)
+
+   * Goal: whenever a variable binds at an addressable location, also record an OccurrenceRef for that variable.
+   * M4 interpreter:
+     • Today it already captures occurrences for replacement nodes (ReplaceSlice, ReplaceKey, ReplaceVal) by pushing array-slice or object-value/keys refs [objects-sets-paths-replace.js]. Reuse the same helpers to capture variable occurrences at the points where variables are matched.
+     • Add capture hooks in matchNode for:
+
+     * Array element matches where the subpattern contains a Var or Bind. After a successful element match for a bound variable, push makeArraySlice(arr, index, index+1) into at.$var.
+     * Object kv matches: when kPat/vPat contains a Var or Bind that binds, push makeObjectValueRef(obj, key) for value bindings, and makeObjectKeysSlice(obj, [key]) when the key pattern binds a symbol that refers to keys [semantics.js helpers].
+     * For nested/bare matches not attached to a concrete container (e.g., a Group or Assert on a primitive value), record {kind:"value", ref: currentValue, path: currentBreadcrumb}.
+       • Important: Only record an OccurrenceRef after the bind is known to have succeeded locally and unified globally (Env.bindOrCheck returned true). Unification and deep equality are unchanged [semantics.js: Env.bindOrCheck, deepEq].
+   * M3 VM:
+     • Minimal capture: when OP.VAR_CHECK_OR_BIND succeeds, emit a generic {kind:"value", ref: current value, path: breadcrumb} because M3 lacks object/set support [engine.js opcodes and var ops].
+     • If inside an array element (arrStack in VM), you can create a single-element slice (start=i, end=i+1) to give array precision; engine already tracks ENTER_ARR / ELEM_BEGIN / ELEM_END and maintains an arrStack for indices [engine.js].
+
+3. Breadcrumb collection (Solution.where)
+
+   * For both engines, maintain a light “path stack” during traversal:
+     • Arrays: push {kind:"array-slice", ref: arr, start=i, end=i+1} when descending to an element; pop on backtrack/return.
+     • Objects/Maps: push {kind:"object-value", ref: objOrMap, key:k} when descending to a value; pop accordingly.
+     • When matching at the root, where may be empty.
+   * In occurrences() mode, create the Solution.where from the current path stack at the position where the pattern was attempted.
+
+C) Solutions class (new)
+
+1. Representation
+
+   * Store a generator factory: () => Iterable<Solution>.
+   * Store a pipeline of transforms to apply lazily:
+     • filters: (sol) => boolean list
+     • projectorMap: optional (b) => T, only used by map
+     • uniqueSpec: vars?: string[], keyFn?: (b) => string
+     • takeN: number | null
+   * Implement [Symbol.iterator]() that materializes a composed generator:
+     • Enumerate base solutions (logical or scan).
+     • Apply filters in order.
+     • Apply uniqueness (see below).
+     • Enforce take(n) early termination.
+
+2. unique
+
+   * Support signatures:
+     • unique(...vars: Var[])
+     • unique(vars: Var[], opts?: { key?: (b) => string })
+   * Default key: compute a stable structural key consistent with deepEq so equality of Sets is order-insensitive and Maps compare pairwise by entries. This aligns uniqueness with unification semantics [semantics.js: deepEq].
+   * Implementation approach:
+     • For each solution, build a projection P from bindings picking only the requested vars.
+     • If opts.key provided, use it; else canonicalize P into a stable JSON-ish key:
+
+     * For arrays: map over canonicalized children.
+     * For sets: sort canonicalized element keys.
+     * For maps: sort canonicalized entry pairs by canonicalized key, then include canonicalized values.
+     * For plain objects: sort keys.
+       • Keep a Set of keys; yield only the first time a key appears.
+
+3. filter, take
+
+   * Chainable, pure; each returns a new Solutions that wraps the same base generator with an extended pipeline.
+
+4. map and extract/project
+
+   * map returns Iterable<T> by applying f to Solution.bindings during iteration; do not materialize a full array.
+   * extract and project are eager helpers: iterate and push f(bindings) to an array.
+
+5. forEach
+
+   * Terminal: iterate and run side effects.
+
+6. toArray, first, count
+
+   * Standard terminals:
+     • toArray: materialize Solution[].
+     • first: return the first item (or null).
+     • count: iterate and count; early-exit if takeN is set.
+
+7. replace
+
+   * Terminal. For each yielded solution:
+     • Call user callback f(bindings) → Partial<Record<Var, unknown>>.
+     • For each [var → newValue] pair, gather all OccurrenceRef in solution.at[var]. Create an edit record per ref with target replacement value.
+   * Collect all edits across all solutions, sort by a global left-to-right order (see next), drop overlaps, and apply to produce a new structure.
+   * Ordering and overlap resolution:
+     • Reuse the M4 scheduler’s “non-overlapping, left-to-right” strategy used for replacement nodes; it already applies edits deterministically and immutably [objects-sets-paths-replace.js].
+     • If needed, expose a small internal helper from M4: scheduleEdits(edits[]) → canonical ordered, non-overlapping plan.
+   * Applying edits:
+     • For array-slice: splice copy-on-write for the exact [start,end) window.
+     • For object-value: replace value at key; for Map, set(key, newValue).
+     • For object-keys: replace matched keys (if your semantics allow key rename; if not, restrict to allowed operations).
+     • For generic value path: follow path and replace leaf (copy-on-write).
+     • Ensure immutability: cloneShallow when touching containers [semantics.js: clone helpers; if not present, add].
+
+8. edit
+
+   * Terminal. For each solution:
+     • Call user callback to produce a list of explicit {ref, to}.
+     • Merge across solutions and schedule/apply exactly like replace.
+
+D) Engine integration details
+
+M4 interpreter changes (objects-sets-paths-replace.js)
+
+1. needsAdvanced and lowering of vertical keys are already implemented; keep that logic [needsAdvanced, lowerVerticalEverywhere].
+2. Variable occurrence capture:
+
+   * In matchNode, add handling so when a Var or Bind succeeds at a concrete location, you push an OccurrenceRef in the current “solution builder” state. The interpreter already pushes captures for ReplaceKey/ReplaceVal/ReplaceSlice; follow the same pattern and utilities [makeArraySlice, makeObjectValueRef, makeObjectKeysSlice] to construct refs [semantics.js].
+3. Breadcrumb path:
+
+   * Introduce a small stack in the interpreter’s execution context (ctx.path). When descending:
+     • Arrays: push {kind:"array-slice", ref: arr, start:index, end:index+1}; pop on return.
+     • Objects: push {kind:"object-value", ref: obj, key:k}; pop on return.
+   * When yielding a solution, copy ctx.path into Solution.where.
+4. Unification remains unchanged: Env.bindOrCheck, deepEq for structural equality; the interpreter already uses an Env and backtracking generators [semantics.js Env, objects-sets-paths-replace.js].
+
+M3 VM changes (engine.js)
+
+1. Retain current opcodes and array stack. The VM tracks arrays via ENTER_ARR, ELEM_BEGIN/ELEM_END, and has a choice stack and env [engine.js].
+2. When OP.VAR_CHECK_OR_BIND succeeds, record a generic OccurrenceRef:
+
+   * If inside an array element frame (arrStack not empty), you can construct a single-element slice ref for better precision.
+   * Otherwise create {kind:"value", ref: current val, path: breadcrumb} where breadcrumb is tracked similarly to the interpreter (you may need a minimal wrapper that runs the VM and maintains a read-only breadcrumb stack keyed off array ops and object descent; for M3 objects do not exist, so arrays and groups suffice).
+3. Do not change matching behavior; only enrich the yielded solution with at and where.
+
+E) Reuse and expose scheduling utilities
+The M4 layer already performs non-overlapping left-to-right replacement for <<>> constructs. Lift this scheduler into a small module (e.g., edits.js), with functions:
+scheduleEdits(edits: Array<{ref, to}>): Array<PlannedEdit>
+applyEdits(root, plan): newRoot
+Then call this from Solutions.replace and Solutions.edit. This keeps replacement semantics identical to existing behavior [objects-sets-paths-replace.js].
+
+F) Convenience functions (top-level)
+Implement in api.js as pure helpers that delegate to the fluent API:
+matches(pattern, input): Boolean
+return Tendril(pattern).solutions(input).first() !== null
+extract(pattern, input): bindings | null
+const s = Tendril(pattern).solutions(input).first(); return s?.bindings ?? null
+extractAll(pattern, input): bindings[]
+return Tendril(pattern).solutions(input).map(b => b).toArray()
+replaceAll(pattern, builder, input): unknown
+return Tendril(pattern).occurrences(input).replace(b => ({ $out: builder(b) }))
+Note: $out is an idiom; callers can use any symbol as the intended target bound in the pattern.
+uniqueMatches(pattern, input, ...vars): bindings[]
+return Tendril(pattern).solutions(input).unique(vars).extract(b => b)
+
+G) Semantics and invariants to preserve
+
+1. Arrays anchored by default; lazy slice (“..”) relaxes the boundary. Objects/Maps anchored unless “..” is present. Counts are checked post-match. Vertical keys are lowered into nested anchored objects before matching. Keep these untouched [README, parser lowering, interpreter].
+2. Assertions (?=, ?!) are supported; in M4, ensure lookaheads run in a shadow Env and do not commit bindings (already implemented) [engine.js has assert ops; interpreter mirrors with a shadow Env].
+3. Unification: Prolog-style. First occurrence binds; subsequent occurrences must match locally then unify via deepEq [semantics.js].
+
+H) Error handling and stability
+
+1. Surface syntax errors unchanged: PatternSyntaxError with position info from lexer spans [lexer.js, syntax.js].
+2. Replacement API:
+
+   * If provided refs overlap or are inconsistent (e.g., duplicate writes), fail early with an explanatory error message from the scheduler.
+   * If a user attempts to replace keys in a context your scheduler doesn’t support, throw a clear error.
+3. Solutions terminal operations must be safe to call multiple times; document that they consume the iterator. Provide .toArray() for reuse.
+
+I) Performance considerations
+
+1. Avoid deep copying: use clone-on-write per edited container and reuse original subtrees when possible [semantics.js helpers if available].
+2. Short-circuit uniqueness early: maintain the seen Set before running downstream transforms.
+3. In occurrences mode, prefer a pre-order traversal that prunes branches which cannot match based on simple guards (e.g., primitive-vs-container shape checks gleaned from top-level AST).
+4. Keep generator frames light; never accumulate Env trails across yielded solutions—let backtracking unwind them naturally (this is how both VM and interpreter are already structured) [semantics.js Env, engine VM choice stack].
+
+J) Tests to add
+
+1. Parsing/validation smoke tests still pass for existing patterns (no author-authored >> << in new public samples).
+2. Unification
+
+   * Repeated var occurrences unify across arrays, objects, sets, maps.
+   * Unicode normalization option affects only string equality.
+3. Occurrence capture
+
+   * at.$x includes array-slice for array positions, object-value for kv positions, and generic value refs for bare primitives.
+   * where reflects correct breadcrumb in occurrences mode.
+4. Replace/edit
+
+   * Replace symbol-wide across multiple occurrences for each solution; confirm non-overlapping left-to-right scheduling.
+   * Edit with overlapping refs fails cleanly.
+   * Immutability: original input unchanged; structural sharing preserved where possible.
+5. Unique
+
+   * unique('$B','$C') dedupes combinations per deepEq semantics for sets/maps/objects.
+6. Engine parity
+
+   * Patterns supported by M3 behave identically across solutions and occurrences; M4-only features behave identically to current interpreter results.
+
+K) Backward compatibility and migration
+
+1. Keep existing exports: parse, lex, validateAST, parseAndValidate, PatternSyntaxError [syntax.js].
+2. Optionally keep “Pattern” entrypoint that proxies to the new Tendril for backwards-compat calls, or deprecate with a warning.
+3. Internally leave support for >> << in the grammar if tests depend on it; the new public API does not require authors to use it. Replacement at API level is purely symbol/ref driven [objects-sets-paths-replace.js].
+
+Summary
+This implementation keeps the language and engines intact while layering a small, composable API that:
+• Streams Solution objects with bindings, precise occurrence refs, and breadcrumbs.
+• Cleanly separates logical solutions from positional occurrences.
+• Provides deterministic, immutable rewrites without author-authored markers.
+• Offers simple convenience functions for the most common tasks.
+
+The bulk of the work is limited to:
+• A thin api.js wrapper implementing Tendril and Solutions.
+• Small capture/breadcrumb hooks in the M4 interpreter (and minimal hooks in the M3 runner).
+• Lifting the replacement scheduler into a reusable helper and calling it from replace/edit.
+
+All other behavior leverages existing, well-tested components: parser/lexer/validator, VM/interpreter selection, Env/unification, deepEq, and replacement reference constructors.
+
+

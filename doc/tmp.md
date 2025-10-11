@@ -37,3 +37,29 @@ which only shows:
 OBJECT_PATTERN := '{' OBJECT_ASSERTION* '}'
 
 No quantifier syntax on assertions in the grammar.
+
+
+
+```
+
+const t = new m.Tendril('[\$x:(_ _), \$y?]').debug();
+const input = [['a','a','b'], ['c','c','d']];
+const sols = Array.from(t.occurrences(input));
+
+Occurrences:         0  1  2  
+------------------------------- 
+input
+input[0]                   x  
+input[0][0]='a'      x        
+input[0][1]='a'      ↓      
+input[0][2]='b'      y        
+input[1]                   ↓  
+input[1][0]='c'         x     
+input[1][1]='c'         ↓     
+input[1][2]='d'         y     
+ 
+
+
+
+
+```
