@@ -1,0 +1,35 @@
+{
+  "name": "tendril",
+  "version": "0.1.0",
+  "description": "Structural pattern matching + relational logic for JSON-like graphs",
+  "type": "module",
+  "main": "./dist/tendril.cjs",
+  "module": "./dist/tendril.esm.js",
+  "exports": {
+    ".": {
+      "import": "./dist/tendril.esm.js",
+      "require": "./dist/tendril.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "node build.js",
+    "test": "node test/api.test.cjs"
+  },
+  "keywords": [
+    "pattern-matching",
+    "structural-matching",
+    "relational",
+    "query",
+    "json",
+    "graph"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.19.0"
+  }
+}

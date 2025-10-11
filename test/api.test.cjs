@@ -4,7 +4,7 @@
  * Run with: node test/api.test.js
  */
 
-const { test, group, assert, run, setSourceFile } = require('./framework.js');
+const { test, group, assert, run, setSourceFile } = require('./framework.cjs');
 
 setSourceFile('api.test.js');
 
