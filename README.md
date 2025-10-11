@@ -41,19 +41,19 @@ Defaults differ across arrays, objects, and sets; don’t assume identical behav
 
 ```
 // Basic equivalences
-{ foo = bar }                    !~= { "foo": "bar", "baz": "buzz" }   // objects are anchored by default
-[ a b c .. ]                      ~= [ "a", "b", "c", "d", "e" ]       // slice wildcard (lazy), not a spread
+{ foo = bar }                    !~= { "foo": "bar", "baz": "buzz" } 
+[ a b c .. ]                      ~= [ "a", "b", "c", "d", "e" ] 
 
 // Object with constraints
 {
   data.users[3].name = "John Smith"    // object?.data?.users?.[3]?.name == "John Smith"
-  _ = /permission/                     // AND all property values match /permission/
+  _ = /permission/                     // AND all property values of object match /permission/
 }
 
 // Array quantifiers
 [ a? b+ c* ]                       // optional a; one-or-more b; zero-or-more c
 
-// Repeated slice reuse
+// Repeated symbols form assertions
 [ $X:( _ _ ) .. $X ]              // first two items equal the last two
 
 ```
@@ -62,20 +62,17 @@ Defaults differ across arrays, objects, and sets; don’t assume identical behav
 
 # Cheat Sheet (10 minute read)
 
-In this document,
-`foo ~= bar` means `Tendril("foo").match(bar) !== null`,
-and `===` shows pattern equivalence.
-These notations are **only for illustration** — *not part of the language*.
+In this document, `foo ~= bar` means `Tendril("foo").matches(bar)`, and `===` shows pattern equivalence. These notations are **only for illustration** — *not part of the API*.
 
 ---
 
 ## Atoms
 
 ```
-123                        // number literal
-true, false                // boolean literal
-"a", bareword, /regex/     // string literal or regex (regex uses JS engine)
-_                          // any single object or primitive
+123                        // Pattern that matches a number literal
+true, false                // Pattern that matches a boolean literal
+"a", bareword, /regex/     // ... string literal or regex (regex uses JS engine)
+_                          // Pattern matching any single object or primitive
 ```
 
 ---
@@ -83,21 +80,18 @@ _                          // any single object or primitive
 ## Sequences and Containers
 
 ```
-a b c                      // three patterns in sequence (array context)
-[ a b c ]                  // one pattern matching an array
-a ( b c )*2   === a b c b c
-a [ b c ]*2   === a [b c] [b c]
+a b c                      // *Three* patterns in sequence (only allowed in an array context)
+[ a b c ]                  // *One* pattern: an Array with three items
 
-a=b c=d e=f                // three key/value assertions (object context)
-{ a=b c=d e=f }            // one pattern matching an object
-{ a=b c=d e=f } as Map     // pattern matching a Map (does not match regular Object)
+[ a ( b c )*2 ]  === [a b c b c ]      // ( ) indicates mere grouping (not a substructure)
+[ a [ b c ]*2 ]  === [a [b c] [b c] ]  // [ ] indicates an Array
 
-a b c                      // set members (set context)
+a=b c=d e=f                // *Three* unordered key/value assertions
+                           // (only allowed in an object/map context)
+{ a=b c=d e=f }            // *One* pattern: an object with three assertions
+{ a=b c=d e=f } as Map     // One pattern matching a Map (does not match regular Object)
+
 {{ a b c }}                // pattern matching a Set
-
->> a b c <<                // slice marked for replacement
->> k << = v                // replace key
-k = >> v <<                // replace value
 ```
 
 **Precedence (high → low)**:
@@ -132,14 +126,13 @@ p1 & p2                    // conjunction (same value matches both)
 
 ## Binding
 
-Bindings are **Prolog-style**: all occurrences of a symbol must unify.   **Key to remember**: Each occurrence of $x must *first* successfully match and bind *locally*. *Then* they must unify (they must all be structurally identical).
-
+Bindings are Prolog-style. Patterns may be labeled with symbols. The patterns must match the data. **In addition**, if two patterns have the same label, they must match the same (or structurally equivalent) data. This is called **Unification**. The data value is bound to that symbol.
 ```
 $name : pattern            // bind variable if pattern matches
-$name                      // shorthand for $name:_ 
+$name                      // shorthand for `$name:_` (Careful! Not `$name:_*`)
 
-[ $x $x:/[ab] $y ]   ~= ['a','a','y']
-[ $x $x:/[ab] $y ]  !~= ['a','b','y']
+[ $x $x:/[ab]/ $y ]   ~= ['a','a','y']
+[ $x $x:/[ab]/ $y ]  !~= ['a','b','y']
 [ $x $x:$y $y ]      ~= ['q','q','q']
 [ $x:($z $y) $y $z ] ~= ['r','q','q','r']
 
@@ -161,25 +154,22 @@ a            === a*1
 a*{2,3}?     // lazy
 ..          === _*?            // lazy wildcard slice
 
-// Multiple ellipses allowed
+// Multiple ellipses allowed. '..' is sugar for '_*?'.
 [a .. b .. c]  ~=  [a x y b z c]
 ```
-
-Arrays are always anchored; `..` (or `_ *?`) relaxes that boundary.
 
 ---
 
 ## Quantifiers — Objects and Sets
 
+Each object assertion matches a **slice** of key/value pairs, possibly overlapping, no backtracking.
 ```
 {{ pat1=_  $happy:(pat2=_) }}     // bind subset slice
 {{ a=_  b=_  $rest:.. }}      // bind residual slice
 ```
 
-* Each object assertion matches a **slice** of key/value pairs.
-
 ---
-Quantifiers on KV assertions don't work the same as they do in arrays. There is no backtracking. They match against all the KVs, and then count the number of matches.
+Quantifiers on KV assertions don't work the same as they do in arrays.. They match against all the KVs, and then count the number of matches (no backtracking)
 
 ```
 k=v #{2,4}   === object has 2–4 keys matching k
@@ -204,59 +194,16 @@ k=v          === k=v #{1,}      // default: one or more
 
 ---
 
-## Vertical / Path Patterns
+## Path Patterns a.k.a Breadcrumbs
 
 ```
 { a.b.c=d }   ~= { a:{ b:{ c:'d' } } }
 
 { a[3].c=d }  ~= { a:[_,_,_,{ c:'d' }] }
 
+// Quantifiers work on breadcrumb pieces
 { ((a.b.)*3)c=d }
-   ~= { a:{ b:{ a:{ b:{ a:{ b:{ c:'d' }}}}}}}
-```
-
-Right-to-left associative.
-Array quantifiers apply to the *path prefix* (`a.b.` portion).
-
----
-
----
-
-## Replacement
-
-```
->> pattern <<          // singleton replacement target
-[ x >> y* << z ]       // replace array slice
->> k << = v            // replace key
-k = >> v <<            // replace value
-```
-
-Not valid around an entire `k:v` pair or a multi-step path.
-
----
-
-## Lookahead Recap
-
-```
-(?=p) q      // succeed if p matches
-(?!p) q      // succeed if p does not match
-[ (?=a b) a b .. ]
-[ (?!a b) .. ]
-```
-
----
-
-## Cheat-Sheet Summary
-
-```
-..                === _*?            // lazy array wildcard
-a*{m,n}            === repeat m–n times (greedy)
-a*{m,n}?           === same, lazy
-[ a b ]            !~= [ a b c ]      // arrays anchored
-{ a=_ .. }             ~= { a:1, c:2 }  
-{ a=_ }            === anchored object
-$k = $v            === $k:_ = $v:_    // kv binding sugar
-$x                 === $x:_ (singleton) or $x:_*? (slice)
+   ~= { a={ b={ a={ b={ a={ b={ c='d' }}}}}}}
 ```
 
 # Language Reference (Technical)
