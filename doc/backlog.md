@@ -30,7 +30,7 @@ This isn't wrong, but it's cognitively heavy. Users need to remember context to 
 **4. Bareword ambiguity:**
 
 ```
-bareword                            // coerce to string
+bareword                            // string literal
 ```
 
 Does `{ class: "MyClass" }` match `{ class=MyClass }`? What about `{ myVar= value }` - is `value` a bareword string or an undefined variable reference (should it be `$value`)?
@@ -57,7 +57,7 @@ Why is `..` lazy by default but `a*` greedy? This seems like it'll cause confusi
 **7. The `/regex/` literal is underspecified:**
 
 ```
-/regex/                             // coerce to string
+/regex/                             // regex pattern (matches strings only)
 ```
 
 - Does it support flags? `/regex/i`?
@@ -134,3 +134,144 @@ Explain the symbol or the slice versus unit thing better. Everything is a slice.
 
 $x defaults to $x:_+ in arrays, $x:_ in key paths
 
+# Draft CHANGE PROPOSAL TO CLARIFY AND SIMPILIFY TYPE COERCION
+
+## Type coercion
+
+**this is a specification change**
+
+No coercion of input data is done automatically.
+
+For primitive patterns, you can use the coercion operator `~` to coerce the data to the patterns's expected type. The operator binds more tightly than everything except grouping.
+
+```
+**String patterns**
+[ "123" ]         !~=  [ 123 ]   
+[ ~"123" ]         ~=  [ 123 ]   
+[ ~"123" ]         ~=  [ 123.0 ]  // String(123.0)==="123"
+
+[ /\d+/ ]         !~=  [ 123 ]
+[ ~/\d+/ ]         ~=  [ 123.0 ]
+
+
+**Number patterns**
+[ 123 ]           !~= [ "123" ]
+[ ~123 ]           ~= [ "123.0" ]  // Number("123.0")===123
+
+**Boolean patterns**
+[ ~true ]         !~= [ 123 ]  // Supports only 0,1,"0","1","true","false","True","False","yes","no","Yes","No"
+[ ~false           ~= [ "False" ]
+
+**Unsupported**
+[ /\d+/ ]         !~=  [ {x:123} ]  // Structures are never coerced to primitives. 
+~[ /\d+/ ]        !~=  [ 123 ]      // `~` is not recursive
+[ null ]                            // Not yet supported in the language
+~( "123" | 456 )                    // Not permitted; '~' may only be used with primitive patterns (except for experimental "structural coercion", see below)
+"as Map", "as Set" etc. // retired
+
+**Bindings**
+
+If you want to bind the uncoerced value
+[ $x:~123 ]        ~= [ "123.0" ]   // yes, $x=="123.0". Logical, obeys existing rules. It means:
+                                    // 1. compare data to 123; fail if no match
+                                    // 2. compare data to previously bound value of $x; fail if no *strict* match
+                                    // 3. bind $x to data
+
+If you want to bind the coerced value
+[ ~$x:~123 ]       ~= [ "123.0" ]   // yes, $x==123. Idiomatic. Must be exactly ~SYMBOL:~PRIMITIVE_PATTERN. It means:
+                                    // 1. compare number(data) to 123; fail if no match
+                                    // 2. compare number(data) to previously bound value of $x; fail if no *strict* match
+                                    // 3. bind $x to number(data)
+
+Unification is strict. **Key to remember**: Each occurrence of $x must *first* successfully match and bind *locally*. *Then* they are compared to each other *strictly* (no coercion).
+
+
+[ $x $x ]         !~= [ 123, "123" ]      // no (unification fails)
+[ $x $x:"123" ]   !~= [ 123, 123 ]        // no (match fails, forgot the ~ operator)
+[ $x $x:~123 ]     ~= [ 123, "123" ]      // no, (unification fails)
+[ $x ~$x:~123 ]    ~= [ 123, "123" ]      // yes, $x==123
+[ $x $x:~123 ]     ~= [ "123", "123" ]    // yes, $x=="123"
+[ $x ~$x ]                                // `~$x` does not compile except as part of the idiom ~SYMBOL:~PRIMITIVE_PATTERN.
+```
+
+### Object keys and array indices
+
+These strictly match objects, maps, sets, arrays respectively:
+OBJECT_PATTERN          := '{' OBJECT_ASSERTION* '}'
+MAP_PATTERN             := 'Map{' OBJECT_ASSERTION* '}'
+SET_PATTERN             := 'Set{' SINGLETON_PATTERN* '}'
+
+Object key patterns (not Map patterns) containing non-string primitive patterns rewrite them to string patterns at compile time:
+
+```
+{ (q|123)=456 } === { ("q""|"123")=456 }  ~= { "123":456 }
+```
+
+- Likweise, .foo and [foo] patterns are rewritten as string patterns and number patterns, respectively.
+
+ ```
+ { $x:"true"["2"]=$x } === { $x:"true"[2]=$x } ~= { "true": [0,0,"true"] }
+                                            !~= { "true": [0,0,true] }
+ ```
+
+### Structural coercion
+
+** I'm dubious about allowing this, but here is a possible way to do it**
+
+`~~pattern` recursively modifies the behavior of all primitive matchers within the pattern. `~~$x:~~pattern` is the corresponding "bind to normalized value" idiom.
+
+```
+[   $x:~~[ 123 "456" true ] ]    ~= [ [ "123.0", 456, 1 ] ]   // yes, $x == [ "123.0", 456, 1 ]
+[ ~~$x:~~[ 123 "456" true ] ]    ~= [ [ "123.0", 456, 1 ] ]   // yes, $x == [ 123, "456", true ]
+
+// Primitive matchers (literals, regexes) are affected; wildcards aren't.
+[ ~~$x:~~[ /\w+/+ .. ] ]    ~= [ [ 123, 456, [], 789 ] ]   // yes, $x == [ "123", "456", [], 789 ]
+
+
+```
+
+```
+
+(1) workhorse fluent api
+pattern = tendril(patternString)
+matcher = pattern.matcher(input, flags).with(bindings)
+matcher.match(...) => iterator of MatchInfo                  
+       ...
+
+(2) conveniences
+tendril.replaceAll(input, patternString, (bindings)=>structure)
+tendril.find(input,patternString)
+```
+
+
+```
+
+Now, suppose we do not feel beholden to regex-like traditions. Which of the following will be more ergonomic and useful?
+
+Plan A:
+Introduce traditional lazy / greedy / possessive operators. 
+
+Plan B:
+Introduce these operators (for use within array-slice contexts):
+( left > right )     // Split the slice before the first occurrance of `right` (no backtracking),
+                     // and match `left` to the left side, `right` to the right side.
+( left >> right )    // Similarly, split the slice before the last occurrance of `right` (no backtracking)
+( left < right )     // Similarly, split the slice after the last occurrance of `left` (no backtracking)
+( left << right )    // Similarly, split the slice after the first occurrance of `left` (no backtracking)
+
+Examples:
+
+( '"' $x:(_*) > '"' .. ) ~=  ('"' b '"' c '"' d '"' )   // $x == ( b )  
+
+( .. BEGIN << $x:(_*) >> END .. ) ~=  ( a BEGIN b BEGIN c END d END e )   // $x == ( b BEGIN c END d )  
+
+              
+   
+
+
+
+
+
+
+
+```

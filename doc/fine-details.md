@@ -12,22 +12,23 @@ n.b. Most of these are of the "just do the obvious thing" variety and could be o
 * **Vars:** `$name` (bindables).
   (Everything else matching `[A-Za-z_]\w*` is a bareword string.)
 
-## Types & coercion (idiomatic JS recommendations)
+## Types & matching (strict equality)
 
 **Value types supported**: `null`, `boolean`, `number`, `bigint`, `string`, `Array`, plain `Object`, `Map`, `Set`, user classes (matched structurally like Object unless `as Class` is used).
 
-**Recommended matching/coercion rules**
+**Matching rules**
 
-* **Numbers:** compare numerically for atomic equality using finite numbers only (`NaN` and `Infinity` do not match numeric atoms); when matched by regex or coerced to string, use `String(value)` (so `NaN` → `"NaN"`, `Infinity` → `"Infinity"`).
-* **Booleans:** strict coercion - pattern `true` matches boolean `true` or string `"true"` only; pattern `false` matches boolean `false` or string `"false"` only. All other values (numbers, arrays, objects) are rejected. Use `_` (wildcard) for truthy/falsy matching.
-* **BigInt:** only equals the **same BigInt**; no implicit cross-equality with Number. When coerced to string (e.g., regex), use `value.toString()`.
-* **null / undefined:** match only `_` or explicit `null`/`undefined` atoms if you choose to include them as atoms; avoid auto-coercion to `"null"`/`"undefined"` unless a regex forces stringification.
-* **Date / Function / Symbol:** **do not match** except via `_`; if coerced by regex, convert with `String(value)` (Symbol → throws in JS; safer to **reject** Symbols at compile-time or fail match).
-* **User classes:** as Objects by default; if pattern uses `as Class`, require `value instanceof Class`.
+* **Numbers:** compare using strict equality (===) for finite numbers only; `NaN` and `Infinity` do not match numeric patterns; regex patterns match strings only.
+* **Booleans:** strict equality - pattern `true` matches boolean `true` only; pattern `false` matches boolean `false` only.
+* **Strings:** strict equality for string matching; regex patterns match strings only.
+* **BigInt:** strict equality - only matches the same BigInt value; no cross-type equality with Number.
+* **null / undefined:** match only `_` or explicit `null`/`undefined` atoms if you choose to include them as atoms.
+* **Date / Function / Symbol:** do not match except via `_` wildcard.
+* **User classes:** matched as Objects by default; if pattern uses `as Class`, require `value instanceof Class`.
 * **Objects vs Maps:**
 
     * Object keys are strings; regex keys test on the string key.
-    * Map keys can be any value; regex on keys tests `String(key)`.
+    * Map keys can be any value; regex on keys tests against the key itself.
 
 ## Unicode normalization
 
@@ -87,10 +88,10 @@ For **Set** replacement: `set.delete(old); set.add(new)` (idempotent).
 * Objects and Maps behave the same; Map key can be any value.
 * Sets: treat as `Map<value,true>`; `kPat.vPat` on a Set binds `vPat` against `true` (or require `vPat=_`), which is a bit odd; **recommend**: allow only key-pattern testing in Sets (`{{ kPat }}`), not `k:v` access style. For `{a.b[2].c:d}`, stepping into a Set → **fail** unless you only test membership.
 
-## Numeric index coercion
+## Numeric index handling
 
 * `a[$n]` asserts `$n` numeric and uses it as array index.
-* `a.$n` coerces `$n` to string and uses it as an object key (e.g., property `"3"`).
+* `a.$n` converts `$n` to string and uses it as an object key (e.g., property `"3"`).
 * If value is array and you write `a.$n`, treat it as property key (`"0"`, `"1"`, …), not index semantics.
 
 ## Backtracking/pruning/termination
@@ -173,7 +174,7 @@ yes
 > 
 > Barewords vs strings —
 > 
-> Is bareword coerced to string, or could it match symbols/identifiers?
+> Is bareword treated as a string, or could it match symbols/identifiers?
 >
 Barewords of the form ([a-zA-Z_]\w*) are always string literals unless they could be parsed in context as one of our few reserved words. No symbols are ever matched except those defined in our grammar. The bindable variables must start with $.
 > 
@@ -181,12 +182,12 @@ Barewords of the form ([a-zA-Z_]\w*) are always string literals unless they coul
 > Are "foo" and foo always equivalent?
 > 
 yes
-> 
+>
 > Regex literals —
-> 
-> Do /regex/ patterns match stringified versions of non-strings (e.g., numbers → "123")?
-> 
-yes, that is what I meant by coercion: 123 is coerced to "123" and then tested against the regex.
+>
+> Do /regex/ patterns match non-strings (e.g., numbers)?
+>
+No, regex patterns only match strings. Numbers, booleans, and other non-string types will not match regex patterns.
 > 
 > 
 > Are flags (/re/i) supported?
@@ -333,9 +334,9 @@ We should have separate apis for those actions.
 
 it fails
 
-> Are numeric indices (a[3]) zero-based, and do they coerce strings to arrays?
+> Are numeric indices (a[3]) zero-based, and what about strings?
 
-zero-based. they do not coerce strings to arrays.  `a[$n]` and `a.$n`  are synonymous except that the first form also asserts that n is a number.
+zero-based. Strings are not treated as arrays.  `a[$n]` and `a.$n`  are synonymous except that the first form also asserts that n is a number.
 
 > Quantified vertical chains —
 > 
@@ -400,9 +401,9 @@ They are allowed. Whether they are allowed anywhere or only where white space wo
 > Suggested: . binds tighter than adjacency and &, looser than quantifiers; same precedence as array/object indexing.
 Sounds good.
 > 
-> 
-> Types & Coercion
-> 
+>
+> Types & Matching
+>
 > Value domain
 > Exact runtime types supported? (JSON primitives + Array + Object + Map + Set + user classes?)
 
@@ -411,16 +412,16 @@ Yes, that's right.
 > Behavior for null, undefined, NaN, Infinity, BigInt, Date, Symbol (likely rejected), Function?
 >
 What do you recommend? What would be the most idiomatic JavaScript approach?
-> 
+>
 > Key domain for objects vs maps
 
-> Objects: keys are strings (symbols ignored?). Regex-key matching coerces to string?
+> Objects: keys are strings (symbols ignored?). Regex-key matching tests string keys?
 Yes.
 
-> 
-> Maps: keys may be non-strings—can /regex/ match non-string keys via coercion?
+>
+> Maps: keys may be non-strings—can /regex/ match non-string keys?
 
-Yes.
+Regex patterns only match strings, so non-string Map keys would not match regex patterns.
 
 > 
 > Unicode normalization
@@ -517,10 +518,10 @@ set.add(value)
 Behavior is the same as for objects, except that the key need not be a string. Treat sets as if they were Map<?,true>
 
 
-> Numeric index coercion
-> a[$n] asserts numeric—how about a.$n when $n is numeric? Is it coerced to string property name or mismatch unless object has numeric-named key?
+> Numeric index handling
+> a[$n] asserts numeric—how about a.$n when $n is numeric? Is it converted to string property name or mismatch unless object has numeric-named key?
 
-Do the expected thing. Idiomatic JavaScript usually demands coercion in order to make things work.
+Do the expected thing. Idiomatic JavaScript usually converts numeric keys to strings for object property access.
 > 
 > 
 > Engine Semantics

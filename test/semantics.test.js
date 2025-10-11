@@ -49,83 +49,43 @@ group('type guards', () => {
   }, { group: 'semantics' });
 });
 
-// Coercions
-group('coercions', () => {
-  test('coerceNumber - valid numbers', async () => {
-    assert.deepEqual(sem.coerceNumber(123), { ok: true, value: 123 });
-    assert.deepEqual(sem.coerceNumber('456'), { ok: true, value: 456 });
-    assert.deepEqual(sem.coerceNumber('3.14'), { ok: true, value: 3.14 });
-  }, { group: 'semantics' });
-
-  test('coerceNumber - invalid numbers', async () => {
-    const result1 = sem.coerceNumber('abc');
-    assert.equal(result1.ok, false);
-
-    const result2 = sem.coerceNumber(NaN);
-    assert.equal(result2.ok, false);
-
-    const result3 = sem.coerceNumber(Infinity);
-    assert.equal(result3.ok, false);
-  }, { group: 'semantics' });
-
-  test('coerceBoolean - true/false', async () => {
-    assert.deepEqual(sem.coerceBoolean(true), { ok: true, value: true });
-    assert.deepEqual(sem.coerceBoolean(false), { ok: true, value: false });
-    assert.deepEqual(sem.coerceBoolean('true'), { ok: true, value: true });
-    assert.deepEqual(sem.coerceBoolean('false'), { ok: true, value: false });
-  }, { group: 'semantics' });
-
-  test('coerceBoolean - rejects non-boolean values', async () => {
-    assert.deepEqual(sem.coerceBoolean(1), { ok: false, value: false });
-    assert.deepEqual(sem.coerceBoolean(0), { ok: false, value: false });
-    assert.deepEqual(sem.coerceBoolean(''), { ok: false, value: false });
-    assert.deepEqual(sem.coerceBoolean('abc'), { ok: false, value: false });
-    assert.deepEqual(sem.coerceBoolean([]), { ok: false, value: false });
-    assert.deepEqual(sem.coerceBoolean({}), { ok: false, value: false });
-  }, { group: 'semantics' });
-
-  test('coerceString - basic', async () => {
-    assert.deepEqual(sem.coerceString('hello'), { ok: true, value: 'hello' });
-    assert.deepEqual(sem.coerceString(123), { ok: true, value: '123' });
-    assert.deepEqual(sem.coerceString(true), { ok: true, value: 'true' });
-  }, { group: 'semantics' });
-});
-
-// Atom equality
+// Atom equality (strict, no coercion)
 group('atom equality', () => {
   test('atomEqNumber - matching', async () => {
     assert.ok(sem.atomEqNumber(42, 42));
-    assert.ok(sem.atomEqNumber(42, '42'));
-    assert.ok(sem.atomEqNumber(3.14, '3.14'));
+    assert.ok(sem.atomEqNumber(3.14, 3.14));
+    assert.ok(sem.atomEqNumber(0, 0));
   }, { group: 'semantics' });
 
   test('atomEqNumber - non-matching', async () => {
     assert.notOk(sem.atomEqNumber(42, 43));
-    assert.notOk(sem.atomEqNumber(42, 'abc'));
+    assert.notOk(sem.atomEqNumber(42, '42')); // no coercion
     assert.notOk(sem.atomEqNumber(42, NaN));
+    assert.notOk(sem.atomEqNumber(42, 'abc'));
   }, { group: 'semantics' });
 
   test('atomEqBoolean - matching', async () => {
     assert.ok(sem.atomEqBoolean(true, true));
-    assert.ok(sem.atomEqBoolean(true, 'true'));
     assert.ok(sem.atomEqBoolean(false, false));
-    assert.ok(sem.atomEqBoolean(false, 'false'));
   }, { group: 'semantics' });
 
   test('atomEqBoolean - non-matching', async () => {
     assert.notOk(sem.atomEqBoolean(true, false));
-    assert.notOk(sem.atomEqBoolean(true, 'false'));
+    assert.notOk(sem.atomEqBoolean(true, 'true')); // no coercion
+    assert.notOk(sem.atomEqBoolean(false, 'false')); // no coercion
+    assert.notOk(sem.atomEqBoolean(true, 1));
   }, { group: 'semantics' });
 
   test('atomEqString - matching', async () => {
     assert.ok(sem.atomEqString('hello', 'hello'));
-    assert.ok(sem.atomEqString('42', 42));
-    assert.ok(sem.atomEqString('true', true));
+    assert.ok(sem.atomEqString('42', '42'));
+    assert.ok(sem.atomEqString('', ''));
   }, { group: 'semantics' });
 
   test('atomEqString - non-matching', async () => {
     assert.notOk(sem.atomEqString('hello', 'world'));
-    assert.notOk(sem.atomEqString('42', 43));
+    assert.notOk(sem.atomEqString('42', 42)); // no coercion
+    assert.notOk(sem.atomEqString('true', true)); // no coercion
   }, { group: 'semantics' });
 });
 

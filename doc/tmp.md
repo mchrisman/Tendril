@@ -32,9 +32,6 @@ a=b c=d e=f                         // 3 key/value patterns present simultaneous
 a b c                               // 3 Set members (only appears within Sets)
 {{ a b c }}                         // 1 pattern (matching a Set)
 
->> a b c <<                         // Designate a slice to be replaced
->> k << = v                         // Designate a key to be replaced
-k = >> v <<                         // Designate a value to be replaced
 ```
    
 Precedence high to low:  Parentheses (grouping), quantifiers, . (key descent), space (adjacency), `&`, `|`
@@ -86,9 +83,7 @@ a+             === a*{1,}           // one or more
 a?             === a*{0,1}
 a              === a*1              // default
 
-a*{2,3}? a*?, a+?, a??              // lazy (non-greedy)
-
-..            === _*?              // lazy wildcard (matches zero or more elements)
+..            === _*              // matches zero or more elements
 
 // Multiple spreads allowed: [a .. b .. c] matches [a x y b z c]
 // All arrays are anchored; .. is just sugar for _*? and can appear anywhere
@@ -149,10 +144,6 @@ Pattern('{
   .each((scope)=> {console.log( scope.$projectName, scope.$userName, scope.$userPhone, scope.$managerPhone)})
 ```
 
-**Example 2:**
-```javascript
-Pattern("{ (_.)*password= >>value<< }").replaceAll(input, 'REDACTED')
-```
    
 # Implementation
 

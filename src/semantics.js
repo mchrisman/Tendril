@@ -1,6 +1,6 @@
 // semantics.js
-// Pure helpers for matching semantics: coercions, equality, env (bindings with trail),
-// slice/coverage utilities, and safe regex matching.
+// Pure helpers for matching semantics: strict equality, env (bindings with trail),
+// slice/coverage utilities, and regex matching.
 // No parser/compiler/VM logic lives here.
 
 /** @typedef {{unicodeNormalize?: false|'NFC'|'NFD'}} SemanticsOptions */
@@ -24,64 +24,31 @@ function normStr(s, opts) {
   return String(s).normalize(opts.unicodeNormalize);
 }
 
-/* ============================== Coercions & atom equality ============================== */
+/* ============================== Atom equality (strict, no coercion) ============================== */
 
-/**
- * Coerce to number with JS semantics. Returns {ok, value}.
- * Rejects NaN/Infinity for matching numeric atoms.
- */
-export function coerceNumber(x) {
-  const n = Number(x);
-  return Number.isFinite(n) ? { ok: true, value: n } : { ok: false, value: NaN };
-}
-
-/**
- * Coerce to boolean - strict mode.
- * Only accepts boolean primitives and string literals "true"/"false".
- * Rejects all other values (numbers, arrays, objects, etc.).
- * Use _ (wildcard) if you need to match any truthy/falsy value.
- */
-export function coerceBoolean(x) {
-  if (typeof x === "boolean") return { ok: true, value: x };
-  if (typeof x === "string") {
-    if (x === "true") return { ok: true, value: true };
-    if (x === "false") return { ok: true, value: false };
-  }
-  // Reject all other values
-  return { ok: false, value: false };
-}
-
-/** Coerce to string (String(x)) then optional Unicode normalization. */
-export function coerceString(x, opts = defaultSemOpts) {
-  return { ok: true, value: normStr(String(x), opts) };
-}
-
-/** Full-string regex match after string coercion + normalization. */
+/** Full-string regex match (strings only, no coercion). */
 export function regexFull(reBody, reFlags, value, opts = defaultSemOpts) {
-  const { value: s } = coerceString(value, opts);
-  // Ensure ^..$ semantics even if caller passed a body without anchors.
-  // We avoid double-anchoring by not adding ^/$; instead we test with lastIndex=0 and ^$ in source:
-  // For simplicity and perf, rebuild a RegExp and anchor explicitly.
+  if (typeof value !== 'string') return false;
+  const s = opts?.unicodeNormalize ? value.normalize(opts.unicodeNormalize) : value;
   const anchored = new RegExp(`^(?:${reBody})$`, reFlags);
   return anchored.test(s);
 }
 
-/** Compare 'expected' numeric atom against any value using numeric coercion. */
+/** Compare expected number against actual value (strict type and value check). */
 export function atomEqNumber(expectedNumber, actual) {
-  const c = coerceNumber(actual);
-  return c.ok && c.value === expectedNumber;
+  return typeof actual === 'number' && actual === expectedNumber;
 }
 
-/** Compare 'expected' boolean atom against any value with boolean coercion. */
+/** Compare expected boolean against actual value (strict type and value check). */
 export function atomEqBoolean(expectedBool, actual) {
-  const c = coerceBoolean(actual);
-  return c.ok && c.value === expectedBool;
+  return typeof actual === 'boolean' && actual === expectedBool;
 }
 
-/** Compare 'expected' string/ bareword atom against any value using string coercion (with normalization). */
+/** Compare expected string against actual value (strict type check, optional normalization). */
 export function atomEqString(expectedString, actual, opts = defaultSemOpts) {
+  if (typeof actual !== 'string') return false;
   const a = normStr(expectedString, opts);
-  const { value: b } = coerceString(actual, opts);
+  const b = opts?.unicodeNormalize ? actual.normalize(opts.unicodeNormalize) : actual;
   return a === b;
 }
 
@@ -369,9 +336,6 @@ export function cloneShallow(value) {
 
 export const Semantics = Object.freeze({
   defaultSemOpts,
-  coerceNumber,
-  coerceBoolean,
-  coerceString,
   regexFull,
   atomEqNumber,
   atomEqBoolean,

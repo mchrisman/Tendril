@@ -149,9 +149,9 @@ const redacted = redactPasswords(data);
 ## Atoms
 
 ```
-123,                                   // coerce to number
-true, false                            // coerce to bool
-"a", bareword, /regex/,                // coerce to string
+123,                                   // number literal
+true, false                            // boolean literal
+"a", bareword, /regex/,                // string literal or regex
 _                                      // any single object or primitive
 ```
    

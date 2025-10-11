@@ -17,7 +17,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
 * **Input value model**
 
   * Tagged runtime values: `Num`, `Bool`, `Str`, `Arr(list)`, `Obj(map)`, `Set(set)`.
-  * **Coercions**: implement helpers `coerceToNumber/Bool/String`, `regexFullMatch(str)`. Make these explicit and deterministic.
+  * **Matching**: implement helpers for strict equality checking, `regexFullMatch(str)` for regex patterns against strings only.
 
 # Matcher architecture
 
@@ -56,7 +56,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
   * `bind(var, value)`:
 
     * If unbound → set.
-    * If bound → require deep-equality (after coercion rules where applicable).
+    * If bound → require deep-equality using strict equality rules.
     * Record old state on `trail` for rollback.
   * Slice binding stores **range/keys** not copied values:
 
@@ -79,10 +79,10 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
 
 # Semantics by construct
 
-## Atoms / coercion
+## Atoms / strict matching
 
-* Number/bool/string atoms succeed if `coerceEq(input, atom)` (define exact rules once; use them consistently).
-* Regex: `regexFullMatch(coerceToString(input))` (or substring if that’s your spec).
+* Number/bool/string atoms succeed if input strictly equals the atom (===).
+* Regex: `regexFullMatch(input)` only if input is a string.
 
 ## Arrays
 
@@ -121,7 +121,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
 
   * Build edges where member pattern matches element.
   * Existence check: all member patterns must be matchable. (Hungarian/DFS is fine; sets small in practice.)
-  * Coercion equality applies as defined.
+  * Strict equality applies.
 
 ## Bindings & scope
 
@@ -371,11 +371,10 @@ Below is a concrete shape for your matcher-VM.
 * `IS_NUM/IS_BOOL/IS_STR/IS_ARR/IS_OBJ/IS_SET` — Type guards on `VAL` else `FAIL`.
 * `AS_INSTANCE typeId` — `instanceof`/`isa` guard for `as`.
 
-## Coercion & equality
+## Equality
 
-* `COERCE_NUM/BOOL/STR` — Convert a copy of `VAL` (or top of TMP) per your rules.
-* `EQ_CONST c` — Compare `VAL` (after required coercion) with constant `c`, else `FAIL`.
-* `REGEX_FULL reId` — Full-match `VAL` coerced to string against compiled `reId`.
+* `EQ_CONST c` — Compare `VAL` with constant `c` using strict equality (===), else `FAIL`.
+* `REGEX_FULL reId` — Full-match `VAL` (must be string) against compiled `reId`.
 
 ## Bindings
 
