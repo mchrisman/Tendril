@@ -354,10 +354,18 @@ SET_PATTERN             := '{{' (SINGLETON_PATTERN (WS SINGLETON_PATTERN)*)? '}}
 OBJECT_ASSERTION        := KV_ASSERTION
                          | PATH_ASSERTION
                          | INDEXED_PATH_ASSERTION
+                         | '..'                               // spread (allow extra keys)
 
-KV_ASSERTION            := SINGLETON_PATTERN '=' SINGLETON_PATTERN
+KV_ASSERTION            := SINGLETON_PATTERN '=' SINGLETON_PATTERN OBJECT_COUNT?
 PATH_ASSERTION          := SINGLETON_PATTERN '.' OBJECT_ASSERTION
 INDEXED_PATH_ASSERTION  := '[' SINGLETON_PATTERN ']' OBJECT_ASSERTION
+
+OBJECT_COUNT            := '#' ( '?' | '{' INTEGER (',' INTEGER?)? '}' )
+                         // #?           → #{0,}   (optional, zero or more)
+                         // #{m}         → #{m,m}  (exactly m)
+                         // #{m,n}                 (m to n occurrences)
+                         // #{m,}        → #{m,∞}  (m or more, unbounded)
+                         // (default: no count means #{1,}, one or more)
 
 // Note: 'as Set' on { } is a parse error
 // Note: 'as' on {{ }} is a parse error
