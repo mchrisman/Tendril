@@ -41,7 +41,7 @@ Defaults differ across arrays, objects, and sets; don’t assume identical behav
 
 ```
 // Basic equivalences
-{ foo = bar }                       ~= { "foo": "bar", "baz": "buzz" }   // objects are unanchored by default
+{ foo = bar }                    !~= { "foo": "bar", "baz": "buzz" }   // objects are anchored by default
 [ a b c .. ]                      ~= [ "a", "b", "c", "d", "e" ]       // slice wildcard (lazy), not a spread
 
 // Object with constraints
@@ -90,7 +90,7 @@ a [ b c ]*2   === a [b c] [b c]
 
 a=b c=d e=f                // three key/value assertions (object context)
 { a=b c=d e=f }            // one pattern matching an object
-{ a=b c=d e=f } as Map     // object treated as map
+{ a=b c=d e=f } as Map     // pattern matching a Map (does not match regular Object)
 
 a b c                      // set members (set context)
 {{ a b c }}                // pattern matching a Set
@@ -172,13 +172,11 @@ Arrays are always anchored; `..` (or `_ *?`) relaxes that boundary.
 ## Quantifiers — Objects and Sets
 
 ```
-{ pat1=_  $happy:(pat2=_) }     // bind subset slice
-{ a=_  b=_  $rest:.. }      // bind residual slice
+{{ pat1=_  $happy:(pat2=_) }}     // bind subset slice
+{{ a=_  b=_  $rest:.. }}      // bind residual slice
 ```
 
 * Each object assertion matches a **slice** of key/value pairs.
-* `others` is a **keyword** valid only inside object matchers;
-  it denotes the remaining (unmatched) properties.
 
 ---
 Quantifiers on KV assertions don't work the same as they do in arrays. There is no backtracking. They match against all the KVs, and then count the number of matches.
@@ -222,13 +220,6 @@ Array quantifiers apply to the *path prefix* (`a.b.` portion).
 
 ---
 
-## Sets and Maps
-
-```
-{ a=_ b=_ } as Set          // treat keys as set elements
-{ k=v  k2=v2 } as Map       // treat as map
-```
-
 ---
 
 ## Replacement
@@ -262,8 +253,8 @@ Not valid around an entire `k:v` pair or a multi-step path.
 a*{m,n}            === repeat m–n times (greedy)
 a*{m,n}?           === same, lazy
 [ a b ]            !~= [ a b c ]      // arrays anchored
-{ a=_ }             ~= { a:1, c:2 }   // objects unanchored
-{ a=_ (?!=others) }=== anchored object
+{ a=_ .. }             ~= { a:1, c:2 }  
+{ a=_ }            === anchored object
 $k = $v            === $k:_ = $v:_    // kv binding sugar
 $x                 === $x:_ (singleton) or $x:_*? (slice)
 ```
@@ -311,13 +302,13 @@ SYMBOL                  // $[A-Za-z_][A-Za-z0-9_]* (logic variable)
 * Booleans match boolean primitives using strict equality.
 * Strings: quoted or bare (unless keyword), match string primitives using strict equality.
 * Regex: matches strings via JS engine.
-* **Type guards** via `as`:
+* **Disambiguation** via `as`:
 
   ```
-  pattern as Map|Set|classname
+  { k=v } as Map              // creates Map pattern (matches Maps only)
   ```
 
-  Runtime type constraint for Maps, Sets, and user-defined classes.
+  Grammar-level feature to distinguish Map patterns from Object patterns. Use `{{ }}` for Sets.
 
 ---
 
@@ -329,13 +320,13 @@ ROOT_PATTERN            := SINGLETON_PATTERN
 SINGLETON_PATTERN       := LITERAL
                          | ARRAY_PATTERN
                          | OBJECT_PATTERN
-                         | SET_OR_MAP_PATTERN
+                         | MAP_PATTERN
+                         | SET_PATTERN
                          | '(' SINGLETON_PATTERN ')'
                          | LOOKAHEAD_SINGLETON
                          | '_'
                          | SYMBOL (':' SINGLETON_PATTERN)?
                          | '>>' SINGLETON_PATTERN '<<'
-                         | SINGLETON_PATTERN 'as' TYPE_NAME
 
 LOOKAHEAD_SINGLETON     := '(?=' SINGLETON_PATTERN ')' SINGLETON_PATTERN
                          | '(?!' SINGLETON_PATTERN ')' SINGLETON_PATTERN
@@ -357,19 +348,19 @@ LOOKAHEAD_ARRAY_SLICE   := '(?=' ARRAY_SLICE_PATTERN ')' ARRAY_SLICE_PATTERN
 ARRAY_QUANT             := '?' | '??' | '+' | '+?' | '*' ('{' (INTEGER (',' INTEGER)?)? '}')?
 
 OBJECT_PATTERN          := '{' OBJECT_ASSERTION* '}'
+MAP_PATTERN             := '{' OBJECT_ASSERTION* '}' 'as' 'Map'
+SET_PATTERN             := '{{' (SINGLETON_PATTERN (WS SINGLETON_PATTERN)*)? '}}'
 
 OBJECT_ASSERTION        := KV_ASSERTION
                          | PATH_ASSERTION
                          | INDEXED_PATH_ASSERTION
-                         | NEGATIVE_SLICE_ASSERTION
 
 KV_ASSERTION            := SINGLETON_PATTERN '=' SINGLETON_PATTERN
 PATH_ASSERTION          := SINGLETON_PATTERN '.' OBJECT_ASSERTION
 INDEXED_PATH_ASSERTION  := '[' SINGLETON_PATTERN ']' OBJECT_ASSERTION
-NEGATIVE_SLICE_ASSERTION:= '(?!=others)'
 
-SET_OR_MAP_PATTERN      := OBJECT_PATTERN 'as' 'Set'
-                         | OBJECT_PATTERN 'as' 'Map'
+// Note: 'as Set' on { } is a parse error
+// Note: 'as' on {{ }} is a parse error
 ```
 
 ---
@@ -453,14 +444,9 @@ Example:
 
 ```
 { pat1=_  $happy:(pat2=_) }       // bind subset slice to $happy
-{ a=_  b=_  $rest:others }        // bind residual slice
+{ a=_  b=_  $rest:.. }        // bind residual slice
 ```
 
-### Anchoring objects
-
-```
-{ a=1 b=2 (?!=others) }           // anchored object, no extras
-```
 
 ### Vertical/path assertions
 
@@ -470,18 +456,20 @@ Example:
 { ((a.b.)*3)c=d }      ~= { a:{ b:{ a:{ b:{ a:{ b:{ c:"d" }}}}}}}
 ```
 
-Objects are **unanchored by default**; `{a=b} ~= {a:b, c=d}`.
+Objects are **anchored by default**; `{a=b} !~= {a:b, c=d}`.
 
 ---
 
 ## Sets and Maps
 
 ```
-{ a=_ b=_ } as Set         // treat keys as set elements
-{ k=v  k2=v2 } as Map      // treat as map
+{{ a b c }}                // Set pattern (double braces) - matches Sets ONLY
+{ k=v  k2=v2 } as Map      // Map pattern - matches Maps ONLY (not plain objects)
+{ k=v  k2=v2 }             // Object pattern - matches plain objects ONLY (not Maps)
+// Note: '{ } as Set' is a syntax error - use {{ }} for sets
 ```
 
-These use the object form but enforce set/map semantics internally.
+These use similar syntax but create distinct AST nodes with different matching semantics.
 
 ---
 
@@ -499,7 +487,6 @@ Array-slice lookaheads:
 [ (?! a b ) .. ]
 ```
 
-Objects use the dedicated negation `(?!=others)` for anchoring.
 
 ---
 
@@ -540,17 +527,11 @@ Tendril(`{
 Tendril("{ (_.)*password = >>value<< }").replaceAll(input, "REDACTED");
 ```
 
-**Anchored object**
-
-```
-{ a=1 b=2 (?!=others) } ~= { a:1, b:2 }
-{ a=1 b=2 (?!=others) } !~= { a:1, b:2, c:3 }
-```
 
 **Bind object slices**
 
 ```
-{ /user.*/=_  $contacts:(/contact.*/=_)  $rest:others }
+{ /user.*/=_  $contacts:(/contact.*/=_)  $rest:.. }
 ```
 
 ---
@@ -561,13 +542,11 @@ Tendril("{ (_.)*password = >>value<< }").replaceAll(input, "REDACTED");
 
     * **Scope** for variable bindings.
     * **Unification** enforcing global consistency.
-    * **Type guards** enforced at runtime.
+    * **Type distinction** via distinct AST nodes (Object, Map, Set).
     * **Lookaheads** asserting without consuming.
 * **Objects**:
 
     * Each assertion → subset of k/v pairs.
-    * `others` = residual (unmatched) properties.
-    * `(?!=others)` ensures residual is empty.
 * **Arrays** anchored; `..` relaxes boundaries.
 * **Replacement** uses tracked source spans; replacements are exact.
 
@@ -576,15 +555,12 @@ Tendril("{ (_.)*password = >>value<< }").replaceAll(input, "REDACTED");
 ## Design Notes
 
 1. **Whitespace and comments** – ignored globally; only array adjacency uses space semantically.
-2. **Arrays anchored, objects not** – reflects natural data variability.
-3. **Anchoring via residual negation** – `(?!=others)` is explicit, compositional, and readable.
 4. **Object slices** – unify non-exclusive matching with bindable subsets.
 5. **Nested quantifiers** – enable expressive regular patterns.
 6. **Prolog-style unification** – supports relational joins across structures.
-7. **Type guards** – enforce Map, Set, and class constraints at runtime.
 8. **Replacement scope** – precise, avoids ambiguity.
 9. **Set/Map annotations** – clean reuse of object syntax.
-10. **Lookaheads** – regex-familiar; `others` negation fills object gap.
+10. **Lookaheads** – regex-familiar
 
 ---
 
@@ -596,8 +572,7 @@ a*{m}                === repeat m times
 a*{m,n}              === m..n repetitions (greedy)
 a*{m,n}?             === m..n repetitions (lazy)
 [ a b ]              !~= [ a b c ]          // arrays anchored
-{ a=_ }               ~= { a:1, c:2 }       // objects unanchored
-{ a=_ (?!=others) }  === anchored object
+{ a=_ ..}               ~= { a:1, c:2 } 
 $k = $v              === $k:_ = $v:_        // kv binding sugar
 $x                   === $x:_ or $x:_*?     // depends on position
 ```
@@ -605,3 +580,4 @@ $x                   === $x:_ or $x:_*?     // depends on position
 ---
 
 **End of Specification**
+

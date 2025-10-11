@@ -69,7 +69,8 @@ function visit(n, ctx, meta) {
       break;
 
     case "Object":
-      out = validateObject(n, ctx, meta);
+    case "Map":
+      out = validateObjectLike(n, ctx, meta);
       break;
 
     case "ReplaceSlice":
@@ -150,7 +151,7 @@ function checkQuant(q) {
   }
 }
 
-function validateObject(n, ctx, meta) {
+function validateObjectLike(n, ctx, meta) {
   const kvs = [];
   for (const kv of n.kvs) {
     if (kv.type === "ReplaceKey" || kv.type === "ReplaceVal") {

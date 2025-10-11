@@ -141,11 +141,12 @@ group('objects', () => {
     assert.equal(ast.hasSpread, true);
   }, { group: 'parser' });
 
-  test('parse object with type guard', async () => {
+  test('parse Map (as Map creates Map node)', async () => {
     const ast = parse('{a=b} as Map');
-    assert.equal(ast.type, 'Object');
-    assert.ok(ast.typeGuard);
-    assert.equal(ast.typeGuard.name, 'Map');
+    assert.equal(ast.type, 'Map');
+    assert.equal(ast.kvs.length, 1);
+    assert.ok(isNode(ast.kvs[0].kPat, 'String'));
+    assert.ok(isNode(ast.kvs[0].vPat, 'String'));
   }, { group: 'parser' });
 
   test('parse object with count quantifier', async () => {

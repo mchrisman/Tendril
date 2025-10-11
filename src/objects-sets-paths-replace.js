@@ -40,6 +40,7 @@ function needsAdvanced(n) {
   if (!n || typeof n !== "object") return false;
   switch (n.type) {
     case "Object":
+    case "Map":
     case "Set":
     case "Dot":
     case "IndexedPath":
@@ -60,9 +61,10 @@ function needsAdvanced(n) {
   }
 }
 
-// Lower vertical key paths inside Object kvs: k1.k2.k3 : v  ⇒  k1 : { k2.k3 : v } (anchored)
-// Also handles indexed paths: a[$x].c : v  ⇒  a : { $x : { c : v } } (anchored)
-function lowerVerticalInObject(obj) {
+// Lower vertical key paths inside Object/Map kvs: k1.k2.k3 = v  ⇒  k1 = { k2.k3 = v } (anchored)
+// Also handles indexed paths: a[$x].c = v  ⇒  a = { $x = { c = v } } (anchored)
+function lowerVerticalInObjectLike(obj) {
+  const nodeType = obj.type; // Preserve whether it's "Object" or "Map"
   const lowerDot = (kPat, vPat) => {
     // kPat is a Dot-chain or IndexedPath; split leftmost and rest
     const peel = (k) => {
@@ -72,8 +74,8 @@ function lowerVerticalInObject(obj) {
     };
     const [left, rest] = peel(kPat);
     if (!rest) return { kPat: left, vPat };
-    // Build nested object on right: { rest : vPat } (anchored), then recurse
-    const innerKV = { type: "Object", span: vPat.span ?? kPat.span, anchored: true, hasSpread: false, typeGuard: null,
+    // Build nested object on right: { rest = vPat } (anchored), preserve type
+    const innerKV = { type: nodeType, span: vPat.span ?? kPat.span, anchored: true, hasSpread: false,
       kvs: [ { kPat: rest, vPat, count: null } ] };
     return lowerDot(left, innerKV);
   };
@@ -101,12 +103,13 @@ function lowerVerticalInObject(obj) {
   return { ...obj, kvs };
 }
 
-// Transform AST: apply vertical lowering to all nested Objects.
+// Transform AST: apply vertical lowering to all nested Objects and Maps.
 function lowerVerticalEverywhere(n) {
   if (!n || typeof n !== "object") return n;
   switch (n.type) {
-    case "Object": {
-      const loweredSelf = lowerVerticalInObject(n);
+    case "Object":
+    case "Map": {
+      const loweredSelf = lowerVerticalInObjectLike(n);
       return { ...loweredSelf, kvs: loweredSelf.kvs.map(kv => {
         if (kv.type === "ReplaceKey" || kv.type === "ReplaceVal") {
           return {
@@ -137,6 +140,86 @@ function lowerVerticalEverywhere(n) {
 }
 
 /* ============================== Interpreter core ============================== */
+
+// Shared matching logic for Object and Map patterns (differ only in type check)
+function* matchObjectLike(n, val, ctx, typeCheck) {
+  if (!typeCheck(val)) return;
+  const cov = new Coverage(val);
+
+  // First pass: evaluate all explicit kv patterns (non-consuming, independent).
+  for (const kv of n.kvs) {
+    if (kv.type === "ReplaceKey") {
+      // Mark all keys whose kPat matches; value must match vPat too.
+      const keys = enumerateKeys(val, k => keyMatches(kv.kPat, k, ctx));
+      if (keys.length === 0) { return; }
+      let any = false;
+      for (const k of keys) {
+        for (const _ of matchNode(kv.vPat, getValue(val, k), ctx)) {
+          cov.add(k);
+          ctx.captures.objKeys.push(makeObjectKeysSlice(val, [k]));
+          yield ctx.env;
+          ctx.captures.objKeys.pop();
+          any = true;
+        }
+      }
+      if (!any) return;
+      continue;
+    }
+    if (kv.type === "ReplaceVal") {
+      const keys = enumerateKeys(val, k => keyMatches(kv.kPat, k, ctx));
+      if (keys.length === 0) { return; }
+      let any = false;
+      for (const k of keys) {
+        for (const _ of matchNode(kv.vPat, getValue(val, k), ctx)) {
+          cov.add(k);
+          ctx.captures.objVals.push(makeObjectValueRef(val, k));
+          yield ctx.env;
+          ctx.captures.objVals.pop();
+          any = true;
+        }
+      }
+      if (!any) return;
+      continue;
+    }
+
+    const keys = enumerateKeys(val, k => keyMatches(kv.kPat, k, ctx));
+    if (keys.length === 0) { return; }
+    let okThisKV = false;
+    for (const k of keys) {
+      for (const _ of matchNode(kv.vPat, getValue(val, k), ctx)) {
+        cov.add(k);
+        okThisKV = true;
+        // Do NOT break; overlapping is allowed, but we only need at least one success
+        break;
+      }
+      if (okThisKV) break;
+    }
+    if (!okThisKV) return;
+  }
+
+  // Counts (post-check, non-consuming)
+  for (const kv of n.kvs) {
+    if (kv.count) {
+      const keys = enumerateKeys(val, k => keyMatches(kv.kPat, k, ctx));
+      let cnt = 0;
+      for (const k of keys) {
+        let vok = false;
+        for (const _ of matchNode(kv.vPat, getValue(val, k), { ...ctx, env: ctx.env.cloneRO() })) {
+          vok = true; break;
+        }
+        if (vok) cnt++;
+      }
+      if (!(cnt >= kv.count.min && (kv.count.max === Infinity || cnt <= kv.count.max))) return;
+    }
+  }
+
+  // Anchoring
+  if (n.anchored && !n.hasSpread) {
+    if (!cov.isFull()) return;
+  }
+
+  yield ctx.env;
+}
 
 function* matchNode(n, val, ctx) {
   // ctx: { env: Env, path: any[], captures: {arrSlices:[], objKeys:[], objVals:[]}, opts }
@@ -305,81 +388,13 @@ function* matchNode(n, val, ctx) {
 
     /* ---- Objects (unordered, overlapping kv; counts post-check) ---- */
     case "Object": {
-      if (!(isObj(val) || isMap(val))) return;
-      const cov = new Coverage(val);
-      // First pass: evaluate all explicit kv patterns (non-consuming, independent).
-      for (const kv of n.kvs) {
-        if (kv.type === "ReplaceKey") {
-          // Mark all keys whose kPat matches; value must match vPat too.
-          const keys = enumerateKeys(val, k => keyMatches(kv.kPat, k, ctx));
-          if (keys.length === 0) { return; }
-          let any = false;
-          for (const k of keys) {
-            for (const _ of matchNode(kv.vPat, getValue(val, k), ctx)) {
-              cov.add(k);
-              ctx.captures.objKeys.push(makeObjectKeysSlice(val, [k]));
-              yield ctx.env;
-              ctx.captures.objKeys.pop();
-              any = true;
-            }
-          }
-          if (!any) return;
-          continue;
-        }
-        if (kv.type === "ReplaceVal") {
-          const keys = enumerateKeys(val, k => keyMatches(kv.kPat, k, ctx));
-          if (keys.length === 0) { return; }
-          let any = false;
-          for (const k of keys) {
-            for (const _ of matchNode(kv.vPat, getValue(val, k), ctx)) {
-              cov.add(k);
-              ctx.captures.objVals.push(makeObjectValueRef(val, k));
-              yield ctx.env;
-              ctx.captures.objVals.pop();
-              any = true;
-            }
-          }
-          if (!any) return;
-          continue;
-        }
+      yield* matchObjectLike(n, val, ctx, isObj);
+      return;
+    }
 
-        const keys = enumerateKeys(val, k => keyMatches(kv.kPat, k, ctx));
-        if (keys.length === 0) { return; }
-        let okThisKV = false;
-        for (const k of keys) {
-          for (const _ of matchNode(kv.vPat, getValue(val, k), ctx)) {
-            cov.add(k);
-            okThisKV = true;
-            // Do NOT break; overlapping is allowed, but we only need at least one success
-            break;
-          }
-          if (okThisKV) break;
-        }
-        if (!okThisKV) return;
-      }
-
-      // Counts (post-check, non-consuming)
-      for (const kv of n.kvs) {
-        if (kv.count) {
-          const keys = enumerateKeys(val, k => keyMatches(kv.kPat, k, ctx));
-          let cnt = 0;
-          for (const k of keys) {
-            let vok = false;
-            for (const _ of matchNode(kv.vPat, getValue(val, k), { ...ctx, env: ctx.env.cloneRO() })) {
-              vok = true; break;
-            }
-            if (vok) cnt++;
-          }
-          if (!(cnt >= kv.count.min && (kv.count.max === Infinity || cnt <= kv.count.max))) return;
-        }
-      }
-
-      // Anchoring
-      if (n.anchored && !n.hasSpread) {
-        if (!cov.isFull()) return;
-      }
-
-      yield ctx.env;
+    /* ---- Maps (same semantics as Object, but for Map instances) ---- */
+    case "Map": {
+      yield* matchObjectLike(n, val, ctx, isMap);
       return;
     }
 

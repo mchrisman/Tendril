@@ -351,6 +351,13 @@ class Parser {
     }
     this.eat(T.RBRACE);
     const end = this.eat(T.RBRACE).span.end; // }} closes a set
+
+    // Reject 'as' on set patterns
+    if (this.at(T.AS)) {
+      const asTok = this.cur();
+      throw this.err("'as' is not allowed on {{ }} set patterns", asTok.span.start);
+    }
+
     return node("Set", {start, end}, {members});
   }
 
@@ -410,7 +417,6 @@ class Parser {
   parseObject() {
     const start = this.eat(T.LBRACE).span.start;
     const kvs = [];
-    let typeGuard = null;
     let hasSpread = false;
     let spreadCount = 0;
 
@@ -432,13 +438,20 @@ class Parser {
     }
     const end = this.eat(T.RBRACE).span.end;
 
+    // Handle 'as Map' to create Map node; reject 'as Set'
     if (this.at(T.AS)) {
-      const asTok = this.eat(T.AS);
+      this.eat(T.AS);
       const ident = this.eat(T.BARE);
-      typeGuard = {name: ident.value, span: {start: asTok.span.start, end: ident.span.end}};
+      if (ident.value === "Map") {
+        return node("Map", {start, end}, {kvs, anchored: !hasSpread, hasSpread, spreadCount});
+      } else if (ident.value === "Set") {
+        throw this.err("'as Set' is not allowed on { } patterns; use {{ }} for sets", ident.span.start);
+      } else {
+        throw this.err(`Unknown type guard '${ident.value}'; only 'Map' is supported`, ident.span.start);
+      }
     }
 
-    return node("Object", {start, end}, {kvs, anchored: !hasSpread, hasSpread, spreadCount, typeGuard});
+    return node("Object", {start, end}, {kvs, anchored: !hasSpread, hasSpread, spreadCount});
   }
 
   parseReplacement() {
