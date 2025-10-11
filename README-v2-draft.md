@@ -1,4 +1,3 @@
-
 # Tendril
 
 **Object graphs grow in all directions. Your pattern matching language should too.**
@@ -11,8 +10,8 @@ Tendril = structural pattern matching **+** relational logic, in a small, genera
 
 ```js
 const data = {
-  planets: { Jupiter: {size:"big"}, Earth: {size:"small"}, Ceres: {size:"tiny"} },
-  aka: [["Jupiter","Jove","Zeus"],["Earth","Terra"],["Ceres","Demeter"]]
+  planets: {Jupiter: {size: "big"}, Earth: {size: "small"}, Ceres: {size: "tiny"}},
+  aka: [["Jupiter", "Jove", "Zeus"], ["Earth", "Terra"], ["Ceres", "Demeter"]]
 };
 
 const pattern = `{
@@ -22,7 +21,8 @@ const pattern = `{
 
 Tendril(pattern).match(data).map(m => `Hello, ${m.$size} world ${m.$alias}`);
 
-=> [
+=>
+[
   "Hello, big world Jupiter",
   "Hello, big world Jove",
   "Hello, big world Zeus",
@@ -61,7 +61,6 @@ Defaults differ across arrays, objects, and sets; don’t assume identical behav
 ---
 
 # Cheat Sheet (10 minute read)
-
 
 In this document,
 `foo ~= bar` means `Tendril("foo").matches(bar)`,
@@ -129,12 +128,12 @@ p1 & p2                    // conjunction (same value matches both)
 { b=_  $s:(..) }   ~= { a:1, c:2, Z:1 }  // Extracting the set of KV pairs that were not constrained by any of the assertions:  $s = { 'c':2, 'Z':1 }
 ```
 
-
 ---
 
 ## Binding
 
 Bindings are **Prolog-style**: all occurrences of a symbol must unify.   **Key to remember**: Each occurrence of $x must *first* successfully match and bind *locally*. *Then* they must unify (they must all be structurally identical).
+
 ```
 $name : pattern            // bind variable if pattern matches
 $name                      // shorthand for $name:_*? (array slice context) or $name:_ (singular context)
@@ -147,7 +146,6 @@ $name                      // shorthand for $name:_*? (array slice context) or $
 $key = $val              // binds any key/value pair
 $key:k = $val:v          // binds only when key = k and value = v
 ```
-
 
 ---
 
@@ -184,6 +182,7 @@ Arrays are always anchored; `..` (or `_ *?`) relaxes that boundary.
 
 ---
 Quantifiers on KV assertions don't work the same as they do in arrays. There is no backtracking. They match against all the KVs, and then count the number of matches.
+
 ```
 k=v #{2,4}   === object has 2–4 keys matching k
 k=v #2       === k=v #{2,2}
@@ -419,9 +418,9 @@ Precedence: `( )` > quantifiers > `.` > space > `&` > `|`.
 * `$name : pattern` attempts to match the data to the pattern, and if successful, binds `$name` to the matched data. The pattern must be a singleton pattern, not a slice pattern.
 * Bare `$name` is shorthand for `$name:_`.
 * **Unification** If the same symbol occurs more than once, e.g. [ $x:pattern1 $x:pattern2 ]:
-  - First pattern1 is matched. (Abort on failure.) The first $x is set to that matched value.
-  - Then pattern2 is _independently_ matched. (Abort on failure.) The second $x is set to that matched value.
-  - Then the two $x values are asserted to be structurally equal using strict equality. (Abort on failure.)
+    - First pattern1 is matched. (Abort on failure.) The first $x is set to that matched value.
+    - Then pattern2 is _independently_ matched. (Abort on failure.) The second $x is set to that matched value.
+    - Then the two $x values are asserted to be structurally equal using strict equality. (Abort on failure.)
 
 Examples:
 
