@@ -99,14 +99,14 @@ group('variables and binding', () => {
   }, { group: 'engine' });
 
   test('variable binding with pattern', async () => {
-    const p = compile('$x=123');
+    const p = compile('$x:123');
     const results = [...p.find(123)];
     assert.equal(results.length, 1);
     assert.equal(results[0].scope.x, 123);
   }, { group: 'engine' });
 
   test('variable binding fails on mismatch', async () => {
-    const p = compile('$x=123');
+    const p = compile('$x:123');
     assert.notOk(p.matches(456));
   }, { group: 'engine' });
 
@@ -117,7 +117,7 @@ group('variables and binding', () => {
   }, { group: 'engine' });
 
   test('variable equality constraint', async () => {
-    const p = compile('$x=$y');
+    const p = compile('$x:$y');
     const results = [...p.find(42)];
     assert.equal(results.length, 1);
     assert.equal(results[0].scope.x, 42);
@@ -151,7 +151,7 @@ group('alternation', () => {
   }, { group: 'engine' });
 
   test('alternation multiple solutions', async () => {
-    const p = compile('$x=1 | $x=2');
+    const p = compile('$x:1 | $x:2');
     const results = [...p.find(1)];
     assert.equal(results.length, 1);
     assert.equal(results[0].scope.x, 1);
@@ -256,8 +256,8 @@ group('quantifiers', () => {
   }, { group: 'engine' });
 
   test('lazy quantifier - prefers fewer matches', async () => {
-    // With precedence: $x=1*? means ($x=1)*?, lazy prefers 0 reps
-    const p = compile('[$x=1*? $y=1*]');
+    // With precedence: $x:1*? means ($x:1)*?, lazy prefers 0 reps
+    const p = compile('[$x:1*? $y:1*]');
     const results = [...p.find([1, 1, 1])];
     assert.ok(results.length > 0);
 
@@ -272,8 +272,8 @@ group('quantifiers', () => {
   }, { group: 'engine' });
 
   test('greedy quantifier - prefers more matches', async () => {
-    // With precedence: $x=1* means ($x=1)*, greedy prefers max reps
-    const p = compile('[$x=1* $y=1*]');
+    // With precedence: $x:1* means ($x:1)*, greedy prefers max reps
+    const p = compile('[$x:1* $y:1*]');
     const results = [...p.find([1, 1, 1])];
     assert.ok(results.length > 0);
 
@@ -447,7 +447,7 @@ group('complex patterns', () => {
   }, { group: 'engine' });
 
   test('multiple solutions with backtracking', async () => {
-    const p = compile('($x=1 | $x=2) & _');
+    const p = compile('($x:1 | $x:2) & _');
     const results = [...p.find(1)];
     assert.equal(results.length, 1);
     assert.equal(results[0].scope.x, 1);
@@ -504,7 +504,7 @@ group('pattern API', () => {
 // M4 features (now supported via objects-sets-paths-replace.js)
 group('M4 features', () => {
   test('object pattern works', async () => {
-    const p = compile('{ a: 1 }');
+    const p = compile('{ a = 1 }');
     assert.ok(p.matches({ a: 1 }));
     assert.notOk(p.matches({ a: 2 }));
   }, { group: 'engine' });
@@ -516,7 +516,7 @@ group('M4 features', () => {
   }, { group: 'engine' });
 
   test('dot path works', async () => {
-    const p = compile('{ a.b.c: 1 }');
+    const p = compile('{ a.b.c = 1 }');
     assert.ok(p.matches({ a: { b: { c: 1 } } }));
     assert.notOk(p.matches({ a: { b: { c: 2 } } }));
   }, { group: 'engine' });
@@ -527,8 +527,8 @@ group('M4 features', () => {
   }, { group: 'engine' });
 
   test('key-value binding', async () => {
-    // Objects are anchored by default, so { $k:$v } only matches objects with exactly one key
-    const p = compile('{ $k:$v }');
+    // Objects are anchored by default, so { $k=$v } only matches objects with exactly one key
+    const p = compile('{ $k=$v }');
     const results = [...p.find({ foo: 'bar' })];
     assert.equal(results.length, 1, 'expected exactly one result');
     assert.equal(results[0].scope.k, 'foo', '$k should bind to "foo"');
@@ -537,7 +537,7 @@ group('M4 features', () => {
 
   test('variables in indexed paths (not yet implemented)', async () => {
     // TODO: Indexed path syntax [$c] not yet implemented in parser
-    const p = compile('{ a.$b[$c].d:e }');
+    const p = compile('{ a.$b[$c].d=e }');
     const input = {
       a: {
         foo: {

@@ -5,11 +5,11 @@ Looking through the spec, here are some things that jump out:
 **1. Object quantifiers default is surprising:**
 
 ```
-k:v            === k:v #{1,}          // default (one or more)
-k:v #?         === k:v #{0,}
+k=v            === k=v #{1,}          // default (one or more)
+k=v #?         === k=v #{0,}
 ```
 
-This is inconsistent with arrays where `a` matches exactly one. Why does `k:v` mean "one or more keys matching this pattern"? I'd expect it to mean "exactly one key" by default. The current design means you can't easily express "exactly one key named 'id'" without `k:v #{1,1}`.
+This is inconsistent with arrays where `a` matches exactly one. Why does `k=v` mean "one or more keys matching this pattern"? I'd expect it to mean "exactly one key" by default. The current design means you can't easily express "exactly one key named 'id'" without `k=v #{1,1}`.
 
 **2. Set quantifiers are unspecified:**
 
@@ -22,7 +22,7 @@ Do Sets support quantifiers? `{{ a* }}` - does that mean anything? What about `{
 **3. Space (adjacency) meaning varies by context:**
 
 - In arrays: `a b c` = sequence
-- In objects: `a:b c:d` = simultaneous patterns
+- In objects: `a=b c=d` = simultaneous patterns
 - In sets: `a b c` = members
 
 This isn't wrong, but it's cognitively heavy. Users need to remember context to parse.
@@ -33,7 +33,7 @@ This isn't wrong, but it's cognitively heavy. Users need to remember context to 
 bareword                            // coerce to string
 ```
 
-Does `{ class: "MyClass" }` match `{ class:MyClass }`? What about `{ myVar: value }` - is `value` a bareword string or an undefined variable reference (should it be `$value`)?
+Does `{ class: "MyClass" }` match `{ class=MyClass }`? What about `{ myVar= value }` - is `value` a bareword string or an undefined variable reference (should it be `$value`)?
 
 **5. Slice replacement scope unclear:**
 
@@ -41,7 +41,7 @@ Does `{ class: "MyClass" }` match `{ class:MyClass }`? What about `{ myVar: valu
 >> a b c <<                         // Designate a slice to be replaced
 ```
 
-Can this appear anywhere? `[x >> a* << y]`? What does `>> $x=a* <<` mean - replace each binding or the whole sequence?
+Can this appear anywhere? `[x >> a* << y]`? What does `>> $x:a* <<` mean - replace each binding or the whole sequence?
 
 ## Probable Design Issues
 
@@ -61,8 +61,8 @@ Why is `..` lazy by default but `a*` greedy? This seems like it'll cause confusi
 ```
 
 - Does it support flags? `/regex/i`?
-- Can it be used as a key pattern? `{ /^user_/:_ }`?
-- What about in bindings? `$x=/[ab]/` works in your examples, but does `$x=/regex/` bind to the string or to the regex match?
+- Can it be used as a key pattern? `{ /^user_/=_ }`?
+- What about in bindings? `$x:/[ab]/` works in your examples, but does `$x:/regex/` bind to the string or to the regex match?
 
 **8. Vertical pattern whitespace rule:**
 
@@ -119,20 +119,18 @@ You have `/regex/` literals but no way to compose them with your structural oper
 - Explicit alternation + quantifier examples
   . Clarifications to Add to Spec
 
-allow [ a.b.c ] meaning [ {a.b.c ..} ]
+allow [ a.b.c ] meaning [ {a.b.c= ..} ]
 
 -------
 
-Allow whitespace around . in vertical patterns: { a.b.c : d } is fine
-Clarify that regex bindings ($x~/pattern/) bind the matched string, not regex internals
-Better explain "lookahead" semantics without using "consume". 
+Allow whitespace around . in vertical patterns: { a.b.c= d } is fine
+Clarify that regex bindings ($x:/pattern/) bind the matched string, not regex internals
+Better explain "lookahead" semantics without using "consume".
 Call them symbols, not variables.
-Add examples showing ($x~pattern)* vs $x~(pattern*) distinction with actual match/no-match cases
+Add examples showing ($x:pattern)* vs $x:(pattern*) distinction with actual match/no-match cases
 
 Explain the symbol or the slice versus unit thing better. Everything is a slice.
 ---
 
 $x defaults to $x:_+ in arrays, $x:_ in key paths
-
-$x= -- change to $x~
 

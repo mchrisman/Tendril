@@ -12,9 +12,9 @@ data = {
           "planets": { "Jupiter": {"size":"big"}, "Earth": {"size":"small"}, "Ceres": {"size":"tiny"} },
           "aka": [["Jupiter","Jove","Zeus"],["Earth","Terra"],["Ceres","Demeter"]] 
        }
-pattern = "{ 
-          planets.$name.size: $size
-          aka: [.. [$name .. $alias .. | $alias=$name ..] .. ]   // Treat $name itself as a possible alias
+pattern = "{
+          planets.$name.size= $size
+          aka= [.. [$name .. $alias .. | $alias:$name ..] .. ]   // Treat $name itself as a possible alias
        }"
 
 Tendril(pattern).match(data).map((m)=> `Hello, ${m.$size} world ${m.$alias} `)
@@ -53,17 +53,17 @@ Tendril(pattern).match(data).map((m)=> `Hello, ${m.$size} world ${m.$alias} `)
 </pre></td></tr><tr><td><pre>
 <b>// using Tendril</b>
 pattern = {
-        requests: {
-            $reqId.user.name: [$first .. $last]
+        requests= {
+            $reqId.user.name= [$first .. $last]
         }
-        responses: [
-            .. 
+        responses= [
+            ..
             {
-                requestId: $reqId            
-                status: ok
-                output: ( $text as string | { type:text content:$text } )
-            } 
-            .. 
+                requestId= $reqId
+                status= ok
+                output= ( $text as string | { type=text content=$text } )
+            }
+            ..
         ]
     }
 Tendril(pattern).match(data).map((m)=>`${m.$first}: ${m.$text}`)
@@ -108,7 +108,7 @@ Tendril(pattern).match(data).map((m)=>`${m.$first}: ${m.$text}`)
 <table>
 <tr><th>Tendril</th><th>Plain JavaScript</th><th>Lodash</th></tr>
 <tr><td><pre>
-Tendril("{ (_.)*password: $target }").replaceAll(input, "$target", 'REDACTED')
+Tendril("{ (_.)*password= $target }").replaceAll(input, "$target", 'REDACTED')
 </pre></td><td><pre>
 function redactPasswords(obj) {
   if (typeof obj !== 'object' || obj === null) {
@@ -163,16 +163,16 @@ a b c                               // 3 patterns in a consecutive sequence (onl
 a ( b c )*2   === a b c b c         // Repeating a group.
 a [ b c ]*2   === a [b c] [b c]     // Repeating an array.
 
-a:b c:d e:f                         // 3 key/value patterns present simultaneously (only appears within objects)
-{ a:b c:d e:f }                     // 1 pattern (matching an object)
-{ a:b c:d e:f } as Map              // or as SomeClass
+a=b c=d e=f                         // 3 key/value patterns present simultaneously (only appears within objects)
+{ a=b c=d e=f }                     // 1 pattern (matching an object)
+{ a=b c=d e=f } as Map              // or as SomeClass
 
 a b c                               // 3 Set members (only appears within Sets)
 {{ a b c }}                         // 1 pattern (matching a Set)
 
 >> a b c <<                         // Designate a slice to be replaced
->> k << : v                         // Designate a key to be replaced
-k : >> v <<                         // Designate a value to be replaced
+>> k << = v                         // Designate a key to be replaced
+k = >> v <<                         // Designate a value to be replaced
 ```
    
 Precedence high to low:  Parentheses (grouping), quantifiers, . (key descent), space (adjacency), `&`, `|`
@@ -190,12 +190,12 @@ pattern1 & pattern2                 // The single object must match both pattern
 [ a b ]     !=~ ["a","b","c"]
 [ a b .. ]  =~ ["a","b","c"]       // ".." is the actual syntax
 
-{ b:_  c:_ }   =~ { b:1, c:2 }      // Every k/v pattern is satisfied, every prop of obj is described
-{ b:_  c:_ }  !=~ { b:1 }
-{ b:_      }  !=~ { b:1, c:2 }
-{ b:_  .. }   =~ { a:1, c:2, Z:1 }
-{ /[ab]/:_  /[ad]/:_ }   =~ { a:1 } // k/v patterns are independent, non-consuming, possibly overlapping.
-{ /[ab]/:_  /[ad]/:_ }  !=~ { d:1 }
+{ b=_  c=_ }   =~ { b:1, c:2 }      // Every k/v pattern is satisfied, every prop of obj is described
+{ b=_  c=_ }  !=~ { b:1 }
+{ b=_      }  !=~ { b:1, c:2 }
+{ b=_  .. }   =~ { a:1, c:2, Z:1 }
+{ /[ab]/=_  /[ad]/=_ }   =~ { a:1 } // k/v patterns are independent, non-consuming, possibly overlapping.
+{ /[ab]/=_  /[ad]/=_ }  !=~ { d:1 }
 ```        
 
 ## Quantifiers in array context
@@ -219,38 +219,38 @@ a*{2,3}? a*?, a+?, a??              // lazy (non-greedy)
 ## Quantifiers in object/set context
 
 ```
-k:v #{2,4}     === The object being matched had exactly two to four keys (not more) matching the K pattern.
-k:v #2         === k:v #{2,2}
-k:v #?         === k:v #{0,}          // watch out, this is different from arrays
-k:v            === k:v #{1,}          // default (one or more)
+k=v #{2,4}     === The object being matched had exactly two to four keys (not more) matching the K pattern.
+k=v #2         === k=v #{2,2}
+k=v #?         === k=v #{0,}          // watch out, this is different from arrays
+k=v            === k=v #{1,}          // default (one or more)
 
-..            === _:_ #?             // allows object to have unknown keys
+..            === _=_ #?             // allows object to have unknown keys
 ```
 ## Binding and relational joins
 
 ```
-$name=pattern                           // If the pattern matches, binds the symbol.
+$name:pattern                           // If the pattern matches, binds the symbol.
 $name          === $name:_
 
-[ $x $x=/[ab] $y ]   =~  ['a','a','y']  // Values must be consistent in global scope.
-[ $x $x=/[ab] $y ]  !=~  ['a','b','y']
-[ $x $x=$y $y ]      =~  ['q','q','q']
-[ $x=($z $y) $y $z ] =~  ['r','q','q','r']
+[ $x $x:/[ab] $y ]   =~  ['a','a','y']  // Values must be consistent in global scope.
+[ $x $x:/[ab] $y ]  !=~  ['a','b','y']
+[ $x $x:$y $y ]      =~  ['q','q','q']
+[ $x:($z $y) $y $z ] =~  ['r','q','q','r']
 
-$key: $val           // binds to any key/value
-$key=k: $val=v       // binds to keys/values matching the k,v patterns
+$key= $val           // binds to any key/value
+$key:k= $val:v       // binds to keys/values matching the k,v patterns
 ``` 
    
-Symbol binding has higher precedence than quantifiers: `$x=_+` means `($x=_)+`,
-and if you want to bind the repetition, you can use parentheses: `$x=(_+)`. 
+Symbol binding has higher precedence than quantifiers: `$x:_+` means `($x:_)+`,
+and if you want to bind the repetition, you can use parentheses: `$x:(_+)`.
 ```
-   [$x=/ab/+] =~ [ a a ]    // x=a
-   [$x=/ab/+] =~ [ b b b ]  // x=b
-   [$x=/ab/+] !=~ [ a b ]    // x must be consistent; it can't be 'a' on the first repetition and 'b' on the second.
+   [$x:/ab/+] =~ [ a a ]    // x=a
+   [$x:/ab/+] =~ [ b b b ]  // x=b
+   [$x:/ab/+] !=~ [ a b ]    // x must be consistent; it can't be 'a' on the first repetition and 'b' on the second.
    [ _+ ]     =~ [ a b ]    // but the anonymous wildcard can be.
-   
-   [$x=(/ab/+)] =~ [ b a b a ]    // x=Slice(b a)
-   
+
+   [$x:(/ab/+)] =~ [ b a b a ]    // x=Slice(b a)
+
 ```
 ## Assertions
 ```
@@ -260,19 +260,19 @@ and if you want to bind the repetition, you can use parentheses: `$x=(_+)`.
 ``` 
 ## Vertical patterns
 ```
-{ a.b.c:d } =~ {'a': {'b': {'c':'d'}}}
+{ a.b.c=d } =~ {'a': {'b': {'c':'d'}}}
 ```
 
 Formally, `kPat.kvPat` matches a `K`/`V` pair such that `kPat =~ K` and `{ kvPat .. } =~ V`, with right-to-left associativity. No whitespace around the dot.
 
 ```
-{a[3].c:d} =~   {'a': [el0, el1, el2, {'c':'d'}]}
+{a[3].c=d} =~   {'a': [el0, el1, el2, {'c':'d'}]}
 ```
 
 Array quantifiers can be used on the `"kPat."` part of the construct:
 
 ```
-{ ((a.b.)*3)c:d } =~ {'a': {'b': {'a': {'b': {'a': {'b': {'c':'d'}}}}}}}
+{ ((a.b.)*3)c=d } =~ {'a': {'b': {'a': {'b': {'a': {'b': {'c':'d'}}}}}}}
 ```
 
 
@@ -282,7 +282,7 @@ Array quantifiers can be used on the `"kPat."` part of the construct:
 
 Compiles to immutable Matcher generator subclasses in the style typical of RegEx implementations, with backtracking,
 scope (symbol binding) tracking, source map for debugging, pruning of branches when bound symbol constraints
-are encountered. API supports iterating over all matches (giving the symbol bindings), optional pre-initialized symbols, symbols that bind to slices, e.g. `Pattern("_ $x=( _ _ )")`. Symbol binding works as expected within repetitions/alternations. 
+are encountered. API supports iterating over all matches (giving the symbol bindings), optional pre-initialized symbols, symbols that bind to slices, e.g. `Pattern("_ $x:( _ _ )")`. Symbol binding works as expected within repetitions/alternations. 
 
 ---
 
@@ -300,11 +300,11 @@ are encountered. API supports iterating over all matches (giving the symbol bind
 **Example 1:**
 ```javascript
 Pattern('{
-      users.$userId.contact: [$userName _ _ $userPhone]
-      users.$userId.managerId: $managerId
-      users.$managerId.phone: $managerPhone
-      projects.$projectId.assigneeId: $userId
-      projects.$projectId.name: $projectName
+      users.$userId.contact= [$userName _ _ $userPhone]
+      users.$userId.managerId= $managerId
+      users.$managerId.phone= $managerPhone
+      projects.$projectId.assigneeId= $userId
+      projects.$projectId.name= $projectName
 
   }')
   .find(input)
@@ -315,25 +315,25 @@ Repeated ellipses are redundant and inefficient, and the compiler will either gi
 [ .. .. a] === [ ..* a ] === [ .. a ]
 
 // Matches with x=Slice(b a), the identical slice in two different positions
-[$x=(/ab/+) .. $x=(_ _)] =~ [ b a b a other stuff b a]
+[$x:(/ab/+) .. $x:(_ _)] =~ [ b a b a other stuff b a]
 
 // Fails to match:
 // the first $x is constrained to be a slice found at the start of the array, therefore starting with b;
 // the second $x is constrained to be a singleton found at the end of the array, therefore equal to a;
 // so there is no way for the second $x to be the same as the first $x
-[$x=(/ab/+) .. $x] !=~ [ b a b a other stuff b a]
+[$x:(/ab/+) .. $x] !=~ [ b a b a other stuff b a]
 
-`$x=/ab/{1}` at array position 0? => yes => left $x binds 'b'
+`$x:/ab/{1}` at array position 0? => yes => left $x binds 'b'
 ..
-`$x=_`       at array position 6? => yes => right $x binds 'b' => CONSISTENT
+`$x:_`       at array position 6? => yes => right $x binds 'b' => CONSISTENT
 (end of array) at array position 7? => no => FAIL
 BACKTRACK
-`$x=_`       at array position 7? => yes => right $x binds 'A' => INCONSISTENT, FAIL
+`$x:_`       at array position 7? => yes => right $x binds 'A' => INCONSISTENT, FAIL
 
 BACKTRACK
-`$x=/ab/{2}` at array position 0? => yes => left $x binds 'b' 'a'
+`$x:/ab/{2}` at array position 0? => yes => left $x binds 'b' 'a'
 ..
-`$x=_`       at array position 6? => yes => right $x binds 'b' => INCONSISTENT, FAIL
+`$x:_`       at array position 6? => yes => right $x binds 'b' => INCONSISTENT, FAIL
 etc.
 (Actually, that shows lazy matching, not greedy, but outcome is the same)
 

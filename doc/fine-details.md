@@ -8,7 +8,7 @@ n.b. Most of these are of the "just do the obvious thing" variety and could be o
 
 * **Literals:** `true`, `false`, numeric forms (excluding `Infinity` and `NaN`), string literals `".."`, regex `/../ims`.
 * **Special tokens:** `_`, `..`, `as`, `Map`, `Set`, class names after `as`.
-* **Operators/symbols:** `[ ] { } {{ }} ( ) : , | & >> << = .* ? + #{ } .
+* **Operators/symbols:** `[ ] { } {{ }} ( ) = , | & >> << : .* ? + #{ } .
 * **Vars:** `$name` (bindables).
   (Everything else matching `[A-Za-z_]\w*` is a bareword string.)
 
@@ -207,15 +207,15 @@ Arrays are always anchored. The `..` is exactly sugar for `_*?` for an unanchore
 > Object kv-patterns are “non-consuming”; but if multiple keys match the same regex, how are conflicts resolved?
 There is no conflict; they are treated as alternations.  
    
-   { /[ab]/:_ } =~ { a:1 b:2 c:3 }
+   { /[ab]/=_ } =~ { a:1 b:2 c:3 }
 
 first binds to a:1 (success), then backtracks to b:2 (success), then fails to backtrack to c:3.
 
 > 
 > 
-> When {a:_ c:_} matches {a:1, b:2, c:3}, is b ignored or does it cause mismatch unless .. present?
-> 
-Mismatch unless `..` is present. In an object context, `..` means _:_??.  
+> When {a=_ c=_} matches {a:1, b:2, c:3}, is b ignored or does it cause mismatch unless .. present?
+>
+Mismatch unless `..` is present. In an object context, `..` means _=_??.  
 > 
 > 
 > Set matching —
@@ -262,14 +262,14 @@ inclusive
 
 Global to the pattern (i.e. doesn't matter *where* in the pattern they are), but local to an alternation branch.
 
-> 
-> If [ $x=a | $x=b ], is $x unified after alternation?
+>
+> If [ $x:a | $x:b ], is $x unified after alternation?
 >
 
-     [[ $x=a | $x=b ] $x ] =~ [[a] a]
-     [[ $x=a | $x=b ] $x ] =~ [[b] b]
-     [[ $x=a | $x=b ] $x ] !=~ [[a] b]
-     [[ $x=a | $x=b ] $x ] !=~ [[b] a]
+     [[ $x:a | $x:b ] $x ] =~ [[a] a]
+     [[ $x:a | $x:b ] $x ] =~ [[b] b]
+     [[ $x:a | $x:b ] $x ] !=~ [[a] b]
+     [[ $x:a | $x:b ] $x ] !=~ [[b] a]
 
 Does that answer your question?
 
@@ -287,13 +287,13 @@ Regexes have their own internal bindings and backreferences. Those are local to 
 
 > Slice bindings —
 > 
-> Pattern("_ $x=( _ _ )") — what is $x bound to exactly (tuple? list of two matches?)
-> 
+> Pattern("_ $x:( _ _ )") — what is $x bound to exactly (tuple? list of two matches?)
+>
 $x would be bound to an array slice --- a sequence of adjacent units. That example would fail (ideally compile-time) not compile because the pattern must describe a single unit, not a slice.  But to try to answer your question.
 
-     [_ $x=(_ _) foo $x] =~ [a b b foo b b]
-     [_ $x=(_ _) foo $x] !=~ [a b b foo [b b]]
-     [_ $x=(_ _) foo [$x]] =~ [a b b foo [b b]]
+     [_ $x:(_ _) foo $x] =~ [a b b foo b b]
+     [_ $x:(_ _) foo $x] !=~ [a b b foo [b b]]
+     [_ $x:(_ _) foo [$x]] =~ [a b b foo [b b]]
 
 
 > 
@@ -329,7 +329,7 @@ We should have separate apis for those actions.
 > 
 > Chained field access —
 > 
-> {a.b.c:d} — if b or a is missing, does that fail or skip?
+> {a.b.c=d} — if b or a is missing, does that fail or skip?
 
 it fails
 
@@ -339,7 +339,7 @@ zero-based. they do not coerce strings to arrays.  `a[$n]` and `a.$n`  are synon
 
 > Quantified vertical chains —
 > 
-> ((a.b.)*3)c:d — what happens if intermediate nodes aren’t objects?
+> ((a.b.)*3)c=d — what happens if intermediate nodes aren't objects?
 > 
 Match fails
 > 
@@ -454,7 +454,7 @@ The counts are per key value pattern and are completely independent from one ano
 
 They can only appear in prescribed positions:   In front of a key pattern or in front of a value pattern. And they must match a unit, not a slice.
 
-    { (?=/.*a.*/)/(..)*/: _ }   //  Match keys of even length that contain an 'a'
+    { (?=/.*a.*/)/(..)*/= _ }   //  Match keys of even length that contain an 'a'
 
 
 > For objects, do they mean “there exists a match of pattern within this same object” without consuming anything?
@@ -478,16 +478,16 @@ The obvious answer.
 
 
 > Empty-slice bindings
-> Can $x=( .. ) bind to an empty slice ([])? If yes, under what patterns (e.g., (_*))?
+> Can $x:( .. ) bind to an empty slice ([])? If yes, under what patterns (e.g., (_*))?
 
 Yes, it can bind to an empty slice:
 
-    `[$x=(_*) $y] =~ [a b c]` finds matches { $x:Slice(), $y:'a'}, { $x:Slice('a'), $y:'b'}, { $x:Slice(a b), $y:'c'}.
+    `[$x:(_*) $y] =~ [a b c]` finds matches { $x:Slice(), $y:'a'}, { $x:Slice('a'), $y:'b'}, { $x:Slice(a b), $y:'c'}.
 
 ( We need to have a structure to represent the bound value of $x when it's a slice and not an array. )
 
 > Pre-initialized variables
-> API shape for seeding bindings (e.g., Pattern(p).find(input, { $x: 42 })) and failure behavior if the seed conflicts.
+> API shape for seeding bindings (e.g., Pattern(p).find(input, { $x= 42 })) and failure behavior if the seed conflicts.
 
 Just as with any prior binding, a subsequent binding must match or the branch fails. The exact API shape is up to you.
 
@@ -505,14 +505,14 @@ Explain this question.
 
  
 > Replace in Maps/Sets
-> Semantics of >>k<<:v and k:>>v<< for Map/Set containers (e.g., replacing a Set member).
+> Semantics of >>k<<=v and k=>>v<< for Map/Set containers (e.g., replacing a Set member).
 
 set.add(value)
 
 > Vertical Patterns
 > 
 > Mixed containers in a chain
-> {a.b[2].c:d} works; what about stepping into Sets ([idx] undefined) or Maps (key not string)? Define allowed transitions and errors.
+> {a.b[2].c=d} works; what about stepping into Sets ([idx] undefined) or Maps (key not string)? Define allowed transitions and errors.
 
 Behavior is the same as for objects, except that the key need not be a string. Treat sets as if they were Map<?,true>
 

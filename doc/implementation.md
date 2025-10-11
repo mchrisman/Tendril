@@ -98,7 +98,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
 
 ## Objects (unordered, non-consuming kv checks)
 
-* Each kv-pattern `kPat:vPat` is evaluated **against the whole object**:
+* Each kv-pattern `kPat=vPat` is evaluated **against the whole object**:
 
   * `keysMatching = { k | kPat =~ k }`.
   * Success if **∃k ∈ keysMatching** s.t. `vPat =~ obj[k]` (bindings/constraints apply).
@@ -109,11 +109,11 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
   * Implement by marking `coveredKeys.add(keyId)` when any kv-pattern matches that key; at end, check `coveredKeys.size == obj.size`.
 * **Counting `#`**:
 
-  * `k:v #{m,n}` means: **count** `{ k in keys | kPat =~ k && vPat =~ obj[k] } ∈ [m,n]`. Count is by keys, not matches; overlapping regexes do **not** double-count one key.
+  * `k=v #{m,n}` means: **count** `{ k in keys | kPat =~ k && vPat =~ obj[k] } ∈ [m,n]`. Count is by keys, not matches; overlapping regexes do **not** double-count one key.
 * Slice replacements:
 
-  * `>> k << : v` marks matching **keys** (by reference) for replacement.
-  * `k : >> v <<` marks **values** (by reference) for replacement.
+  * `>> k << = v` marks matching **keys** (by reference) for replacement.
+  * `k = >> v <<` marks **values** (by reference) for replacement.
 
 ## Sets
 
@@ -125,18 +125,18 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
 
 ## Bindings & scope
 
-* `$x=pat` runs `pat`, then binds `$x` to the matched **value or slice**.
+* `$x:pat` runs `pat`, then binds `$x` to the matched **value or slice**.
 * `$x` alone is shorthand `$x:_`.
 * **Branch-local**: In alternations/quantifiers, bindings are tentative; only committed along the successful path (trail handles this).
 * **Lookaheads** don’t commit bindings.
 * Pre-initialized variables: seed `env` before running; `bind` checks consistency.
 
-## Vertical paths: `{ a.b.c : vPat }`
+## Vertical paths: `{ a.b.c = vPat }`
 
 * Compile right-to-left:
 
   * `step("c")` → check key/index exists; recurse into value.
-  * Quantifiers allowed on **segments**: `((a.b.)*3)c:d`.
+  * Quantifiers allowed on **segments**: `((a.b.)*3)c=d`.
   * Arrays: `a[3]` zero-based; compile to index-step.
 * For `..` inside path quantifiers, support as repeating wildcard **segment** only if you add it to the grammar; otherwise omit.
 
@@ -307,36 +307,36 @@ def bind(name, m):
    * `[ a b .. ] =~ ["a","b","c"]`
 3. Objects anchoring & spread:
 
-   * `{ b:_ c:_ } =~ {b:1,c:2}`
-   * `{ b:_ c:_ } !=~ {b:1}`
-   * `{ b:_ } !=~ {b:1,c:2}`
-   * `{ b:_ .. } =~ {a:1,c:2,Z:1}`
+   * `{ b=_ c=_ } =~ {b:1,c:2}`
+   * `{ b=_ c=_ } !=~ {b:1}`
+   * `{ b=_ } !=~ {b:1,c:2}`
+   * `{ b=_ .. } =~ {a:1,c:2,Z:1}`
 4. Overlapping kv:
 
-   * `{ /[ab]/:_  /[ad]/:_ } =~ { a:1 }`
-   * `{ /[ab]/:_  /[ad]/:_ } !=~ { d:1 }`
+   * `{ /[ab]/=_  /[ad]/=_ } =~ { a:1 }`
+   * `{ /[ab]/=_  /[ad]/=_ } !=~ { d:1 }`
 5. Bindings:
 
-   * `[ $x $x=/[ab] $y ] =~  ["a","a","y"]`
-   * `[ $x $x=/[ab] $y ] !=~ ["a","b","y"]`
-   * `[ $x $x=$y $y ] =~ ["q","q","q"]`
+   * `[ $x $x:/[ab] $y ] =~  ["a","a","y"]`
+   * `[ $x $x:/[ab] $y ] !=~ ["a","b","y"]`
+   * `[ $x $x:$y $y ] =~ ["q","q","q"]`
 6. Vertical:
 
-   * `{ a.b.c:d } =~ {'a': {'b': {'c':'d'}}}`
-   * `{a[3].c:d} =~ {'a': [e0,e1,e2, {'c':'d'}]}`
+   * `{ a.b.c=d } =~ {'a': {'b': {'c':'d'}}}`
+   * `{a[3].c=d} =~ {'a': [e0,e1,e2, {'c':'d'}]}`
 7. Quantifiers:
 
    * `a*{2,3}` equals `a a | a a a`
    * Lazy variants pick smallest first.
 8. Counting:
 
-   * `{ /a/:_ #2 }` true on `{a:1,aa:2}`, false on `{a:1}`.
+   * `{ /a/=_ #2 }` true on `{a:1,aa:2}`, false on `{a:1}`.
 9. Replacement:
 
-   * `Pattern("{ (_.)*password: >>value<< }").replaceAll(obj, "REDACTED")` changes both `user.password` and `admin.password` once each.
+   * `Pattern("{ (_.)*password= >>value<< }").replaceAll(obj, "REDACTED")` changes both `user.password` and `admin.password` once each.
 10. Type guard:
 
-* `{ b:_ .. } as Map` fails if object isn’t `instanceof Map` after match.
+* `{ b=_ .. } as Map` fails if object isn't `instanceof Map` after match.
 
 If you want, I can draft an EBNF for this grammar next and/or sketch a minimal VM instruction set version.
 A “VM instruction set version” means you compile patterns into a compact bytecode and run them on a tiny purpose-built virtual machine (like many regex engines). It’s faster, easier to optimize, and simpler to debug than executing the AST directly.
@@ -441,7 +441,7 @@ Below is a concrete shape for your matcher-VM.
 * **Program**: `op | arg1 | arg2 …` (fixed-width or varint).
 * **Addresses**: absolute indices into program.
 
-# Example: compile `[ $x $x=/[ab] $y ]`
+# Example: compile `[ $x $x:/[ab] $y ]`
 
 Pseudocode bytecode:
 
@@ -465,7 +465,7 @@ Pseudocode bytecode:
 
 # Example: anchored object with overlap and count
 
-Pattern: `{ /[ab]/:_  /[ad]/:_  /a/:_ #2 }`
+Pattern: `{ /[ab]/=_  /[ad]/=_  /a/=_ #2 }`
 
 Sketch:
 
@@ -483,7 +483,7 @@ Notes: `MATCH_VAL` updates `COVER` for anchoring but counting uses **distinct ke
 
 # Replacement slices
 
-Pattern: `{ (_.)*password: >>value<< }`
+Pattern: `{ (_.)*password= >>value<< }`
 
 ```
 0: ENTER_OBJ

@@ -356,16 +356,16 @@ class Parser {
 
   parseKV_NormalOrReplacement() {
     // Handles:
-    //   >> k << : v      → ReplaceKey
-    //   k : >> v <<      → ReplaceVal
-    //   k : v            → normal KV (possibly with #count)
+    //   >> k << = v      → ReplaceKey
+    //   k = >> v <<      → ReplaceVal
+    //   k = v            → normal KV (possibly with #count)
     if (this.at(T.REPL_L)) {
       const start = this.eat(T.REPL_L).span.start;
       this._inObjectKey = true;
       const kPat = this.parseOrNoAdj();       // ⟵ no adjacency in object key
       this._inObjectKey = false;
       this.eat(T.REPL_R);
-      this.eat(T.COLON);
+      this.eat(T.EQ);
       const vPat = this.parseOrNoAdj();       // ⟵ no adjacency in object value
       const span = {start, end: vPat.span.end};
       return {kind: "ReplaceKey", node: node("ReplaceKey", span, {kPat, vPat})};
@@ -374,7 +374,7 @@ class Parser {
     this._inObjectKey = true;
     const kPat = this.parseOrNoAdj();         // ⟵ no adjacency in object key
     this._inObjectKey = false;
-    this.eat(T.COLON);
+    this.eat(T.EQ);
 
     if (this.at(T.REPL_L)) {
       const start = kPat.span.start;
@@ -469,21 +469,21 @@ class Parser {
     const nameTok = this.eat(T.BARE);
     const varNode = node("Var", {start: dollar.span.start, end: nameTok.span.end}, {name: nameTok.value});
 
-    if (this.at(T.EQ)) {
-      this.eat(T.EQ);
+    if (this.at(T.COLON)) {
+      this.eat(T.COLON);
       if (this.at(T.DOLLAR)) {
         const other = this.parseBindingOrVar();
         const span = {start: varNode.span.start, end: other.span.end};
-        return node("BindEq", span, {left: varNode, right: other}); // $x=$y
+        return node("BindEq", span, {left: varNode, right: other}); // $x:$y
       } else {
-        // Bind: $x=pattern — RHS is a primary only (binding has higher precedence than quantifiers)
-        // For complex patterns, use parens: $x=(_*), $x=(a.b)
+        // Bind: $x:pattern — RHS is a primary only (binding has higher precedence than quantifiers)
+        // For complex patterns, use parens: $x:(_*), $x:(a.b)
         const rhs = this.parsePrimary();
         const span = {start: varNode.span.start, end: rhs.span.end};
         return node("Bind", span, {name: varNode.name, pat: rhs});
       }
     }
-    return varNode; // $x === $x:_
+    return varNode; // $x === $x=_
   }
 
   parseAtom() {

@@ -16,8 +16,8 @@ const data = {
 };
 
 const pattern = `{
-  planets.$name.size: $size
-  aka: [.. [$name .. $alias .. | $alias=$name ..] .. ] // $name itself as a possible alias
+  planets.$name.size = $size
+  aka = [.. [$name .. $alias .. | $alias:$name ..] .. ] // $name itself as a possible alias
 }`;
 
 Tendril(pattern).match(data).map(m => `Hello, ${m.$size} world ${m.$alias}`);
@@ -41,20 +41,20 @@ Defaults differ across arrays, objects, and sets; don’t assume identical behav
 
 ```
 // Basic equivalences
-{ foo: bar }                       ~= { "foo": "bar", "baz": "buzz" }   // objects are unanchored by default
+{ foo = bar }                       ~= { "foo": "bar", "baz": "buzz" }   // objects are unanchored by default
 [ a b c .. ]                      ~= [ "a", "b", "c", "d", "e" ]       // slice wildcard (lazy), not a spread
 
 // Object with constraints
 {
-  data.users[3].name: "John Smith"    // object?.data?.users?.[3]?.name == "John Smith"
-  _: /permission/                     // AND all property values match /permission/
+  data.users[3].name = "John Smith"    // object?.data?.users?.[3]?.name == "John Smith"
+  _ = /permission/                     // AND all property values match /permission/
 }
 
 // Array quantifiers
 [ a? b+ c* ]                       // optional a; one-or-more b; zero-or-more c
 
 // Repeated slice reuse
-[ $X=( _ _ ) .. $X ]              // first two items equal the last two
+[ $X:( _ _ ) .. $X ]              // first two items equal the last two
 
 ```
 
@@ -89,16 +89,16 @@ a b c                      // three patterns in sequence (array context)
 a ( b c )*2   === a b c b c
 a [ b c ]*2   === a [b c] [b c]
 
-a:b c:d e:f                // three key/value assertions (object context)
-{ a:b c:d e:f }            // one pattern matching an object
-{ a:b c:d e:f } as Map     // object treated as map
+a=b c=d e=f                // three key/value assertions (object context)
+{ a=b c=d e=f }            // one pattern matching an object
+{ a=b c=d e=f } as Map     // object treated as map
 
 a b c                      // set members (set context)
 {{ a b c }}                // pattern matching a Set
 
 >> a b c <<                // slice marked for replacement
->> k << : v                // replace key
-k : >> v <<                // replace value
+>> k << = v                // replace key
+k = >> v <<                // replace value
 ```
 
 **Precedence (high → low)**:
@@ -118,15 +118,15 @@ p1 & p2                    // conjunction (same value matches both)
 [ a b ]       !~= ["a","b","c"]
 [ a b .. ]    ~= ["a","b","c"]       // yes, ".." is the actual syntax
 
-{ b:_  c:_ }   ~= { b:1, c:2 }        // every kv assertion satisfied
-{ b:_      }  !~= { b:1, c:2 }        
-{ b:_  c:_ }  !~= { b:1 }             // objects anchored by default
-{ b:_  .. }   ~= { a:1, c:2, Z:1 }   
+{ b=_  c=_ }   ~= { b:1, c:2 }        // every kv assertion satisfied
+{ b=_      }  !~= { b:1, c:2 }
+{ b=_  c=_ }  !~= { b:1 }             // objects anchored by default
+{ b=_  .. }   ~= { a:1, c:2, Z:1 }
 
-{ /[ab]/:_  /[ad]/:_ }   ~= { a:1 }   // kv assertions can overlap
-{ /[ab]/:_  /[ad]/:_ }  !~= { d:1 }
+{ /[ab]/=_  /[ad]/=_ }   ~= { a:1 }   // kv assertions can overlap
+{ /[ab]/=_  /[ad]/=_ }  !~= { d:1 }
 
-{ b:_  $s=(..) }   ~= { a:1, c:2, Z:1 }  // Extracting the set of KV pairs that were not constrained by any of the assertions:  $s = { 'c':2, 'Z':1 }
+{ b=_  $s:(..) }   ~= { a:1, c:2, Z:1 }  // Extracting the set of KV pairs that were not constrained by any of the assertions:  $s = { 'c':2, 'Z':1 }
 ```
 
 
@@ -136,16 +136,16 @@ p1 & p2                    // conjunction (same value matches both)
 
 Bindings are **Prolog-style**: all occurrences of a symbol must unify.   **Key to remember**: Each occurrence of $x must *first* successfully match and bind *locally*. *Then* they must unify (they must all be structurally identical).
 ```
-$name = pattern            // bind variable if pattern matches
+$name : pattern            // bind variable if pattern matches
 $name                      // shorthand for $name:_*? (array slice context) or $name:_ (singular context)
 
-[ $x $x=/[ab] $y ]   ~= ['a','a','y']
-[ $x $x=/[ab] $y ]  !~= ['a','b','y']
-[ $x $x=$y $y ]      ~= ['q','q','q']
-[ $x=($z $y) $y $z ] ~= ['r','q','q','r']
+[ $x $x:/[ab] $y ]   ~= ['a','a','y']
+[ $x $x:/[ab] $y ]  !~= ['a','b','y']
+[ $x $x:$y $y ]      ~= ['q','q','q']
+[ $x:($z $y) $y $z ] ~= ['r','q','q','r']
 
-$key: $val              // binds any key/value pair
-$key=k: $val=v          // binds only when key = k and value = v
+$key = $val              // binds any key/value pair
+$key:k = $val:v          // binds only when key = k and value = v
 ```
 
 
@@ -174,8 +174,8 @@ Arrays are always anchored; `..` (or `_ *?`) relaxes that boundary.
 ## Quantifiers — Objects and Sets
 
 ```
-{ pat1:_  $happy=(pat2:_) }     // bind subset slice
-{ a:_  b:_  $rest=.. }      // bind residual slice
+{ pat1=_  $happy:(pat2=_) }     // bind subset slice
+{ a=_  b=_  $rest:.. }      // bind residual slice
 ```
 
 * Each object assertion matches a **slice** of key/value pairs.
@@ -185,15 +185,15 @@ Arrays are always anchored; `..` (or `_ *?`) relaxes that boundary.
 ---
 Quantifiers on KV assertions don't work the same as they do in arrays. There is no backtracking. They match against all the KVs, and then count the number of matches.
 ```
-k:v #{2,4}   === object has 2–4 keys matching k
-k:v #2       === k:v #{2,2}
-k:v #?       === k:v #{0,}      // optional
-k:v          === k:v #{1,}      // default: one or more
+k=v #{2,4}   === object has 2–4 keys matching k
+k=v #2       === k=v #{2,2}
+k=v #?       === k=v #{0,}      // optional
+k=v          === k=v #{1,}      // default: one or more
 
-..          === _:_ #?         // allow unknown keys
+..          === _=_ #?         // allow unknown keys
 
 // Multiple ellipsess allowed but redundant
-{ .. a:1 .. b:2 }   // valid; warns about redundancy
+{ .. a=1 .. b=2 }   // valid; warns about redundancy
 ```
 
 ---
@@ -210,11 +210,11 @@ k:v          === k:v #{1,}      // default: one or more
 ## Vertical / Path Patterns
 
 ```
-{ a.b.c:d }   ~= { a:{ b:{ c:'d' } } }
+{ a.b.c=d }   ~= { a:{ b:{ c:'d' } } }
 
-{ a[3].c:d }  ~= { a:[_,_,_,{ c:'d' }] }
+{ a[3].c=d }  ~= { a:[_,_,_,{ c:'d' }] }
 
-{ ((a.b.)*3)c:d }  
+{ ((a.b.)*3)c=d }
    ~= { a:{ b:{ a:{ b:{ a:{ b:{ c:'d' }}}}}}}
 ```
 
@@ -226,8 +226,8 @@ Array quantifiers apply to the *path prefix* (`a.b.` portion).
 ## Sets and Maps
 
 ```
-{ a:_ b:_ } as Set          // treat keys as set elements
-{ k:v  k2:v2 } as Map       // treat as map
+{ a=_ b=_ } as Set          // treat keys as set elements
+{ k=v  k2=v2 } as Map       // treat as map
 ```
 
 ---
@@ -237,8 +237,8 @@ Array quantifiers apply to the *path prefix* (`a.b.` portion).
 ```
 >> pattern <<          // singleton replacement target
 [ x >> y* << z ]       // replace array slice
->> k << : v            // replace key
-k : >> v <<            // replace value
+>> k << = v            // replace key
+k = >> v <<            // replace value
 ```
 
 Not valid around an entire `k:v` pair or a multi-step path.
@@ -263,10 +263,10 @@ Not valid around an entire `k:v` pair or a multi-step path.
 a*{m,n}            === repeat m–n times (greedy)
 a*{m,n}?           === same, lazy
 [ a b ]            !~= [ a b c ]      // arrays anchored
-{ a:_ }             ~= { a:1, c:2 }   // objects unanchored
-{ a:_ (?!=others) }=== anchored object
-$k:$v              === $k=_ : $v=_    // kv binding sugar
-$x                 === $x=_ (singleton) or $x=_*? (slice)
+{ a=_ }             ~= { a:1, c:2 }   // objects unanchored
+{ a=_ (?!=others) }=== anchored object
+$k = $v            === $k:_ = $v:_    // kv binding sugar
+$x                 === $x:_ (singleton) or $x:_*? (slice)
 ```
 
 # Language Reference (Technical)
@@ -333,7 +333,7 @@ SINGLETON_PATTERN       := LITERAL
                          | '(' SINGLETON_PATTERN ')'
                          | LOOKAHEAD_SINGLETON
                          | '_'
-                         | SYMBOL ('=' SINGLETON_PATTERN)?
+                         | SYMBOL (':' SINGLETON_PATTERN)?
                          | '>>' SINGLETON_PATTERN '<<'
                          | SINGLETON_PATTERN 'as' TYPE_NAME
 
@@ -344,7 +344,7 @@ ARRAY_PATTERN           := '[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTER
 ARRAY_WS                := single space (array adjacency)
 
 ARRAY_SLICE_PATTERN     := '..'                               // == _*? (lazy)
-                         | SYMBOL ('=' SINGLETON_PATTERN)?
+                         | SYMBOL (':' SINGLETON_PATTERN)?
                          | '(' ARRAY_SLICE_PATTERN ')' ARRAY_QUANT?
                          | SINGLETON_PATTERN ARRAY_QUANT?
                          | ARRAY_SLICE_PATTERN ARRAY_WS ARRAY_SLICE_PATTERN
@@ -363,7 +363,7 @@ OBJECT_ASSERTION        := KV_ASSERTION
                          | INDEXED_PATH_ASSERTION
                          | NEGATIVE_SLICE_ASSERTION
 
-KV_ASSERTION            := SINGLETON_PATTERN ':' SINGLETON_PATTERN
+KV_ASSERTION            := SINGLETON_PATTERN '=' SINGLETON_PATTERN
 PATH_ASSERTION          := SINGLETON_PATTERN '.' OBJECT_ASSERTION
 INDEXED_PATH_ASSERTION  := '[' SINGLETON_PATTERN ']' OBJECT_ASSERTION
 NEGATIVE_SLICE_ASSERTION:= '(?!=others)'
@@ -379,8 +379,8 @@ SET_OR_MAP_PATTERN      := OBJECT_PATTERN 'as' 'Set'
 ```
 p1 | p2                   // alternation
 p1 & p2                   // conjunction on a single value
-a.b:c                     // vertical/path assertion (right-associative)
-[a].b:c                   // index/key indirection
+a.b=c                     // vertical/path assertion (right-associative)
+[a].b=c                   // index/key indirection
 >> .. <<                 // replacement target
 ```
 
@@ -415,9 +415,9 @@ Precedence: `( )` > quantifiers > `.` > space > `&` > `|`.
 
 ## Binding and Unification
 
-* `$name = pattern` attempts to match the data to the pattern, and if successful, binds `$name` to the matched data. The pattern must be a singleton pattern, not a slice pattern.
-* Bare `$name` is shorthand for `$name=_`.
-* **Unification** If the same symbol occurs more than once, e.g. [ $x=pattern1 $x=pattern2 ]:
+* `$name : pattern` attempts to match the data to the pattern, and if successful, binds `$name` to the matched data. The pattern must be a singleton pattern, not a slice pattern.
+* Bare `$name` is shorthand for `$name:_`.
+* **Unification** If the same symbol occurs more than once, e.g. [ $x:pattern1 $x:pattern2 ]:
   - First pattern1 is matched. (Abort on failure.) The first $x is set to that matched value.
   - Then pattern2 is _independently_ matched. (Abort on failure.) The second $x is set to that matched value.
   - Then the two $x values are strictly (no type coercion) asserted to be structurally equal. (Abort on failure.)
@@ -425,10 +425,10 @@ Precedence: `( )` > quantifiers > `.` > space > `&` > `|`.
 Examples:
 
 ```
-[ $x $x=/[ab]/ $y ]      ~= ['a','a','y']
-[ $x $x=/[ab]/ $y ]     !~= ['a','b','y']
-[ $x $x=$y $y ]          ~= ['q','q','q']
-[ $x=($z $y) $y $z ]     ~= ['r','q','q','r']
+[ $x $x:/[ab]/ $y ]      ~= ['a','a','y']
+[ $x $x:/[ab]/ $y ]     !~= ['a','b','y']
+[ $x $x:$y $y ]          ~= ['q','q','q']
+[ $x:($z $y) $y $z ]     ~= ['r','q','q','r']
 
 // Structural equality (deep comparison)
 [ $x $x ] ~= [ [1,2], [1,2] ]         // YES
@@ -446,39 +446,39 @@ Examples:
 Example:
 
 ```
-{ /[ab].*/:22  /[bc].*/:22  xq*3 }  ~=  { b:22, c:22 }
+{ /[ab].*/=22  /[bc].*/=22  xq*3 }  ~=  { b:22, c:22 }
 ```
 
 ### Binding slices
 
 ```
-{ pat1:_  $happy=(pat2:_) }       // bind subset slice to $happy
-{ a:_  b:_  $rest=others }        // bind residual slice
+{ pat1=_  $happy:(pat2=_) }       // bind subset slice to $happy
+{ a=_  b=_  $rest:others }        // bind residual slice
 ```
 
 ### Anchoring objects
 
 ```
-{ a:1 b:2 (?!=others) }           // anchored object, no extras
+{ a=1 b=2 (?!=others) }           // anchored object, no extras
 ```
 
 ### Vertical/path assertions
 
 ```
-{ a.b.c:d }            ~= { a:{ b:{ c:"d" } } }
-{ a[3].c:d }           ~= { a:[_,_,_,{ c:"d" }] }
-{ ((a.b.)*3)c:d }      ~= { a:{ b:{ a:{ b:{ a:{ b:{ c:"d" }}}}}}}
+{ a.b.c=d }            ~= { a:{ b:{ c:"d" } } }
+{ a[3].c=d }           ~= { a:[_,_,_,{ c:"d" }] }
+{ ((a.b.)*3)c=d }      ~= { a:{ b:{ a:{ b:{ a:{ b:{ c:"d" }}}}}}}
 ```
 
-Objects are **unanchored by default**; `{a:b} ~= {a:b, c:d}`.
+Objects are **unanchored by default**; `{a=b} ~= {a:b, c=d}`.
 
 ---
 
 ## Sets and Maps
 
 ```
-{ a:_ b:_ } as Set         // treat keys as set elements
-{ k:v  k2:v2 } as Map      // treat as map
+{ a=_ b=_ } as Set         // treat keys as set elements
+{ k=v  k2=v2 } as Map      // treat as map
 ```
 
 These use the object form but enforce set/map semantics internally.
@@ -510,8 +510,8 @@ Mark what to replace with `>> .. <<`.
 ```
 >> pattern <<           // singleton
 [ x >> y* << z ]        // array slice
->> k << : v             // key replacement
-k : >> v <<             // value replacement
+>> k << = v             // key replacement
+k = >> v <<             // value replacement
 ```
 
 Not allowed around entire key/value pairs or multi-step paths.
@@ -524,11 +524,11 @@ Not allowed around entire key/value pairs or multi-step paths.
 
 ```js
 Tendril(`{
-  users.$userId.contact: [$userName _ _ $userPhone]
-  users.$userId.managerId: $managerId
-  users.$managerId.phone: $managerPhone
-  projects.$projectId.assigneeId: $userId
-  projects.$projectId.name: $projectName
+  users.$userId.contact = [$userName _ _ $userPhone]
+  users.$userId.managerId = $managerId
+  users.$managerId.phone = $managerPhone
+  projects.$projectId.assigneeId = $userId
+  projects.$projectId.name = $projectName
 }`)
 .find(input)
 .each(s => console.log(s.$projectName, s.$userName, s.$userPhone, s.$managerPhone));
@@ -537,20 +537,20 @@ Tendril(`{
 **Redact sensitive fields**
 
 ```js
-Tendril("{ (_.)*password: >>value<< }").replaceAll(input, "REDACTED");
+Tendril("{ (_.)*password = >>value<< }").replaceAll(input, "REDACTED");
 ```
 
 **Anchored object**
 
 ```
-{ a:1 b:2 (?!=others) } ~= { a:1, b:2 }
-{ a:1 b:2 (?!=others) } !~= { a:1, b:2, c:3 }
+{ a=1 b=2 (?!=others) } ~= { a:1, b:2 }
+{ a=1 b=2 (?!=others) } !~= { a:1, b:2, c:3 }
 ```
 
 **Bind object slices**
 
 ```
-{ /user.*/:_  $contacts=(/contact.*/:_)  $rest=others }
+{ /user.*/=_  $contacts:(/contact.*/=_)  $rest:others }
 ```
 
 ---
@@ -596,10 +596,10 @@ a*{m}                === repeat m times
 a*{m,n}              === m..n repetitions (greedy)
 a*{m,n}?             === m..n repetitions (lazy)
 [ a b ]              !~= [ a b c ]          // arrays anchored
-{ a:_ }               ~= { a:1, c:2 }       // objects unanchored
-{ a:_ (?!=others) }  === anchored object
-$k:$v                === $k=_ : $v=_        // kv binding sugar
-$x                   === $x=_ or $x=_*?     // depends on position
+{ a=_ }               ~= { a:1, c:2 }       // objects unanchored
+{ a=_ (?!=others) }  === anchored object
+$k = $v              === $k:_ = $v:_        // kv binding sugar
+$x                   === $x:_ or $x:_*?     // depends on position
 ```
 
 ---
@@ -646,13 +646,13 @@ For primitive patterns, you can use the coercion operator `~` to coerce the data
 **Bindings**
 
 If you want to bind the uncoerced value
-[ $x=~123 ]        ~= [ "123.0" ]   // yes, $x=="123.0". Logical, obeys existing rules. It means:
+[ $x:~123 ]        ~= [ "123.0" ]   // yes, $x=="123.0". Logical, obeys existing rules. It means:
                                     // 1. compare data to 123; fail if no match
                                     // 2. compare data to previously bound value of $x; fail if no *strict* match
                                     // 3. bind $x to data
 
 If you want to bind the coerced value
-[ ~$x=~123 ]       ~= [ "123.0" ]   // yes, $x==123. Idiomatic. Must be exactly ~SYMBOL=~PRIMITIVE_PATTERN. It means:
+[ ~$x:~123 ]       ~= [ "123.0" ]   // yes, $x==123. Idiomatic. Must be exactly ~SYMBOL:~PRIMITIVE_PATTERN. It means:
                                     // 1. compare number(data) to 123; fail if no match
                                     // 2. compare number(data) to previously bound value of $x; fail if no *strict* match
                                     // 3. bind $x to number(data)
@@ -661,11 +661,11 @@ Unification is strict. **Key to remember**: Each occurrence of $x must *first* s
 
 
 [ $x $x ]         !~= [ 123, "123" ]      // no (unification fails)
-[ $x $x="123" ]   !~= [ 123, 123 ]        // no (match fails, forgot the ~ operator)
-[ $x $x=~123 ]     ~= [ 123, "123" ]      // no, (unification fails)
-[ $x ~$x=~123 ]    ~= [ 123, "123" ]      // yes, $x==123
-[ $x $x=~123 ]     ~= [ "123", "123" ]    // yes, $x=="123"
-[ $x ~$x ]                                // `~$x` does not compile except as part of the idiom ~SYMBOL~PRIMITIVE_PATTERN.
+[ $x $x:"123" ]   !~= [ 123, 123 ]        // no (match fails, forgot the ~ operator)
+[ $x $x:~123 ]     ~= [ 123, "123" ]      // no, (unification fails)
+[ $x ~$x:~123 ]    ~= [ 123, "123" ]      // yes, $x==123
+[ $x $x:~123 ]     ~= [ "123", "123" ]    // yes, $x=="123"
+[ $x ~$x ]                                // `~$x` does not compile except as part of the idiom ~SYMBOL:~PRIMITIVE_PATTERN.
 ```
 
 ### Object keys and array indices
@@ -678,27 +678,39 @@ SET_PATTERN             := 'Set{' SINGLETON_PATTERN* '}'
 Object key patterns (not Map patterns) containing non-string primitive patterns rewrite them to string patterns at compile time:
 
 ```
-{ (q|123):456 } === { ("q""|"123"):456 }  ~= { "123":456 }
+{ (q|123)=456 } === { ("q""|"123")=456 }  ~= { "123":456 }
 ```
 
 - Likweise, .foo and [foo] patterns are rewritten as string patterns and number patterns, respectively.
  ```
- { $x:true["2"]:$x } === { $x:"true"[2]:$x } ~= { "true": [0,0,"true"] }
-                                            !~= { "true": [0,0,true] } 
+ { $x:"true"["2"]=$x } === { $x:"true"[2]=$x } ~= { "true": [0,0,"true"] }
+                                            !~= { "true": [0,0,true] }
  ```
 
 ### Structural coercion
 
 ** I'm dubious about allowing this, but here is a possible way to do it**
 
-`~~pattern` recursively modifies the behavior of all primitive matchers within the pattern. `~~$x=~~pattern` is the corresponding "bind to normalized value" idiom.
+`~~pattern` recursively modifies the behavior of all primitive matchers within the pattern. `~~$x:~~pattern` is the corresponding "bind to normalized value" idiom.
 
-```    
-[   $x=~~[ 123 "456" true ] ]    ~= [ [ "123.0", 456, 1 ] ]   // yes, $x == [ "123.0", 456, 1 ]
-[ ~~$x=~~[ 123 "456" true ] ]    ~= [ [ "123.0", 456, 1 ] ]   // yes, $x == [ 123, "456", true ]
- 
+```
+[   $x:~~[ 123 "456" true ] ]    ~= [ [ "123.0", 456, 1 ] ]   // yes, $x == [ "123.0", 456, 1 ]
+[ ~~$x:~~[ 123 "456" true ] ]    ~= [ [ "123.0", 456, 1 ] ]   // yes, $x == [ 123, "456", true ]
+
 // Primitive matchers (literals, regexes) are affected; wildcards aren't.
-[ ~~$x=~~[ /\w+/+ .. ] ]    ~= [ [ 123, 456, [], 789 ] ]   // yes, $x == [ "123", "456", [], 789 ]
+[ ~~$x:~~[ /\w+/+ .. ] ]    ~= [ [ 123, 456, [], 789 ] ]   // yes, $x == [ "123", "456", [], 789 ]
 
 
+```
+```
+
+(1) workhorse fluent api
+pattern = tendril(patternString)
+matcher = pattern.matcher(input, flags).with(bindings)
+matcher.match(...) => iterator of MatchInfo                  
+       ...
+
+(2) conveniences
+tendril.replaceAll(input, patternString, (bindings)=>structure)
+tendril.find(input,patternString)
 ```

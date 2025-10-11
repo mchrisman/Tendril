@@ -43,7 +43,7 @@ group('valid patterns', () => {
   }, { group: 'validate' });
 
   test('validate object pattern', async () => {
-    const ast = parseAndValidate('{ a:b }');
+    const ast = parseAndValidate('{ a=b }');
     assert.ok(ast);
     assert.equal(ast.type, 'Object');
   }, { group: 'validate' });
@@ -73,13 +73,13 @@ group('valid patterns', () => {
   }, { group: 'validate' });
 
   test('validate variable binding', async () => {
-    const ast = parseAndValidate('$x=foo');
+    const ast = parseAndValidate('$x:foo');
     assert.ok(ast);
     assert.equal(ast.type, 'Bind');
   }, { group: 'validate' });
 
   test('validate vertical pattern', async () => {
-    const ast = parseAndValidate('{ a.b.c:d }');
+    const ast = parseAndValidate('{ a.b.c=d }');
     assert.ok(ast);
     assert.equal(ast.type, 'Object');
     assert.equal(ast.kvs[0].kPat.type, 'Dot');
@@ -153,12 +153,12 @@ group('replacement validation', () => {
   }, { group: 'validate' });
 
   test('validate single key replacement', async () => {
-    const ast = parseAndValidate('{ >> k << : v }');
+    const ast = parseAndValidate('{ >>k<< = v }');
     assert.ok(ast);
   }, { group: 'validate' });
 
   test('validate single value replacement', async () => {
-    const ast = parseAndValidate('{ k : >> v << }');
+    const ast = parseAndValidate('{ k = >>v<< }');
     assert.ok(ast);
   }, { group: 'validate' });
 
@@ -205,7 +205,7 @@ group('replacement validation', () => {
 // Object validation
 group('object validation', () => {
   test('validate object anchoring with no spread', async () => {
-    const ast = parseAndValidate('{ a:b }');
+    const ast = parseAndValidate('{ a=b }');
     assert.equal(ast.anchored, true);
   }, { group: 'validate' });
 
@@ -315,7 +315,7 @@ group('assertion validation', () => {
 // Complex patterns
 group('complex patterns', () => {
   test('validate nested structure', async () => {
-    const ast = parseAndValidate('{ a.b.c:d }');
+    const ast = parseAndValidate('{ a.b.c=d }');
     assert.ok(ast);
     assert.equal(ast.type, 'Object');
   }, { group: 'validate' });
@@ -326,7 +326,7 @@ group('complex patterns', () => {
   }, { group: 'validate' });
 
   test('validate binding with complex pattern', async () => {
-    const ast = parseAndValidate('$x=/[a-z]+/');
+    const ast = parseAndValidate('$x:/[a-z]+/');
     assert.ok(ast);
   }, { group: 'validate' });
 

@@ -121,7 +121,7 @@ group('objects', () => {
   }, { group: 'parser' });
 
   test('parse object with single key-value', async () => {
-    const ast = parse('{a:b}');
+    const ast = parse('{a=b}');
     assert.equal(ast.type, 'Object');
     assert.equal(ast.kvs.length, 1);
     assert.ok(isNode(ast.kvs[0].kPat, 'String'));
@@ -129,27 +129,27 @@ group('objects', () => {
   }, { group: 'parser' });
 
   test('parse object with multiple key-values', async () => {
-    const ast = parse('{ a:1 b:2 }');
+    const ast = parse('{ a=1 b=2 }');
     assert.equal(ast.type, 'Object');
     assert.equal(ast.kvs.length, 2);
   }, { group: 'parser' });
 
   test('parse object with spread', async () => {
-    const ast = parse('{ a:b .. }');
+    const ast = parse('{ a=b .. }');
     assert.equal(ast.type, 'Object');
     assert.equal(ast.anchored, false);
     assert.equal(ast.hasSpread, true);
   }, { group: 'parser' });
 
   test('parse object with type guard', async () => {
-    const ast = parse('{a:b} as Map');
+    const ast = parse('{a=b} as Map');
     assert.equal(ast.type, 'Object');
     assert.ok(ast.typeGuard);
     assert.equal(ast.typeGuard.name, 'Map');
   }, { group: 'parser' });
 
   test('parse object with count quantifier', async () => {
-    const ast = parse('{a:b #{2,3}}');
+    const ast = parse('{a=b #{2,3}}');
     assert.equal(ast.type, 'Object');
     assert.ok(ast.kvs[0].count);
     assert.equal(ast.kvs[0].count.min, 2);
@@ -157,7 +157,7 @@ group('objects', () => {
   }, { group: 'parser' });
 
   test('parse object with regex key', async () => {
-    const ast = parse('{/[ab]/:_}');
+    const ast = parse('{/[ab]/=_}');
     assert.equal(ast.type, 'Object');
     assert.ok(isNode(ast.kvs[0].kPat, 'Regex'));
   }, { group: 'parser' });
@@ -334,7 +334,7 @@ group('precedence', () => {
 // Vertical patterns (only valid in object keys)
 group('vertical patterns', () => {
   test('parse vertical in object', async () => {
-    const ast = parse('{a.b.c:d}');
+    const ast = parse('{a.b.c=d}');
     assert.equal(ast.type, 'Object');
     assert.ok(isNode(ast.kvs[0].kPat, 'Dot'));
   }, { group: 'parser' });
@@ -349,20 +349,20 @@ group('variables and binding', () => {
   }, { group: 'parser' });
 
   test('parse binding', async () => {
-    const ast = parse('$x=foo');
+    const ast = parse('$x:foo');
     assert.equal(ast.type, 'Bind');
     assert.equal(ast.name, 'x');
     assert.ok(isNode(ast.pat, 'String'));
   }, { group: 'parser' });
 
   test('parse binding with pattern', async () => {
-    const ast = parse('$x=/[ab]/');
+    const ast = parse('$x:/[ab]/');
     assert.equal(ast.type, 'Bind');
     assert.ok(isNode(ast.pat, 'Regex'));
   }, { group: 'parser' });
 
   test('parse binding equality', async () => {
-    const ast = parse('$x=$y');
+    const ast = parse('$x:$y');
     assert.equal(ast.type, 'BindEq');
     assert.ok(isNode(ast.left, 'Var'));
     assert.ok(isNode(ast.right, 'Var'));
@@ -408,7 +408,7 @@ group('replacement', () => {
   }, { group: 'parser' });
 
   test('parse key replacement in object', async () => {
-    const ast = parse('{>> k << : v}');
+    const ast = parse('{>>k<< = v}');
     assert.equal(ast.type, 'Object');
     assert.equal(ast.kvs[0].type, 'ReplaceKey');
     assert.ok(ast.kvs[0].kPat);
@@ -416,7 +416,7 @@ group('replacement', () => {
   }, { group: 'parser' });
 
   test('parse value replacement in object', async () => {
-    const ast = parse('{k : >> v <<}');
+    const ast = parse('{k = >>v<<}');
     assert.equal(ast.type, 'Object');
     assert.equal(ast.kvs[0].type, 'ReplaceVal');
     assert.ok(ast.kvs[0].kPat);
@@ -439,7 +439,7 @@ group('spread', () => {
   }, { group: 'parser' });
 
   test('parse spread in object', async () => {
-    const ast = parse('{ a:b .. }');
+    const ast = parse('{ a=b .. }');
     assert.equal(ast.type, 'Object');
     assert.equal(ast.hasSpread, true);
   }, { group: 'parser' });
@@ -454,7 +454,7 @@ group('spread', () => {
 // Complex patterns from spec
 group('complex patterns from spec', () => {
   test('parse example from spec - user data', async () => {
-    const ast = parse('{ users.$userId.contact: [$userName _ _ $userPhone] }');
+    const ast = parse('{ users.$userId.contact = [$userName _ _ $userPhone] }');
     assert.equal(ast.type, 'Object');
     assert.ok(isNode(ast.kvs[0].kPat, 'Dot'));
     assert.ok(isNode(ast.kvs[0].vPat, 'Array'));
@@ -467,12 +467,12 @@ group('complex patterns from spec', () => {
   }, { group: 'parser' });
 
   test('parse password redaction pattern', async () => {
-    const ast = parse('{ (_.)*password: >>value<< }');
+    const ast = parse('{ (_.)*password = >>value<< }');
     assert.equal(ast.type, 'Object');
   }, { group: 'parser' });
 
   test('parse nested vertical', async () => {
-    const ast = parse('{ a.b.c:d }');
+    const ast = parse('{ a.b.c=d }');
     assert.equal(ast.type, 'Object');
     const kPat = ast.kvs[0].kPat;
     assert.equal(kPat.type, 'Dot');
@@ -512,7 +512,7 @@ group('error cases', () => {
 
   test('unterminated object throws', async () => {
     assert.throws(() => {
-      parse('{a:b');
+      parse('{a=b');
     }, PatternSyntaxError);
   }, { group: 'parser' });
 

@@ -229,9 +229,9 @@ group('special constructs', () => {
     assert.deepEqual(kinds(tokens), [T.DOLLAR, T.BARE]);
   }, { group: 'lexer' });
 
-  test('lex variable with equals', async () => {
-    const tokens = lex('$x=foo');
-    assert.deepEqual(kinds(tokens), [T.DOLLAR, T.BARE, T.EQ, T.BARE]);
+  test('lex variable with colon', async () => {
+    const tokens = lex('$x:foo');
+    assert.deepEqual(kinds(tokens), [T.DOLLAR, T.BARE, T.COLON, T.BARE]);
   }, { group: 'lexer' });
 });
 
@@ -276,8 +276,8 @@ group('complex patterns', () => {
   }, { group: 'lexer' });
 
   test('object pattern', async () => {
-    const tokens = lex('{ a:b }');
-    assert.deepEqual(kinds(tokens), [T.LBRACE, T.BARE, T.COLON, T.BARE, T.RBRACE]);
+    const tokens = lex('{ a=b }');
+    assert.deepEqual(kinds(tokens), [T.LBRACE, T.BARE, T.EQ, T.BARE, T.RBRACE]);
   }, { group: 'lexer' });
 
   test('set pattern', async () => {
