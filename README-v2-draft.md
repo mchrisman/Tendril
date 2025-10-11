@@ -136,7 +136,7 @@ Bindings are **Prolog-style**: all occurrences of a symbol must unify.   **Key t
 
 ```
 $name : pattern            // bind variable if pattern matches
-$name                      // shorthand for $name:_*? (array slice context) or $name:_ (singular context)
+$name                      // shorthand for $name:_ 
 
 [ $x $x:/[ab] $y ]   ~= ['a','a','y']
 [ $x $x:/[ab] $y ]  !~= ['a','b','y']
