@@ -18,7 +18,6 @@
 // • Counts `k:v #{m,n}` are post-checks over keys satisfying both k and v.
 // • Sets use order-insensitive bipartite matching; extras allowed only with
 //   set-level spread `..` (sugar for “allow extras”).
-// • Replacement: exactly one `>>…<<` overall (enforced by validator). We support
 //   array-slice, object-key, and object-value captures; `replaceAll()` applies
 //   non-overlapping edits left→right, returning a new immutable structure.
 
@@ -47,6 +46,7 @@ function needsAdvanced(n) {
     case "ReplaceSlice":
     case "ReplaceKey":
     case "ReplaceVal":
+    case "BindSlice":
     case "Assert": // Assertions always use M4 path for proper support
       return true;
     case "Alt": return n.options.some(needsAdvanced);
@@ -59,6 +59,13 @@ function needsAdvanced(n) {
     case "BindEq": return needsAdvanced(n.left) || needsAdvanced(n.right);
     default: return false;
   }
+}
+
+// Lower BindSlice: keep Spread as-is for special residual handling
+function lowerBindSlice(bs) {
+  // Don't transform Spread to (_=_)* for objects - it needs special handling
+  // to collect residual k=v pairs not matched by other assertions
+  return bs;
 }
 
 // Lower vertical key paths inside Object/Map kvs: k1.k2.k3 = v  ⇒  k1 = { k2.k3 = v } (anchored)
@@ -82,6 +89,12 @@ function lowerVerticalInObjectLike(obj) {
 
   const kvs = [];
   for (const kv of obj.kvs) {
+    if (kv.type === "BindSlice") {
+      // Lower BindSlice and recurse into its pattern
+      const lowered = lowerBindSlice(kv);
+      kvs.push({ ...lowered, pat: lowerVerticalEverywhere(lowered.pat) });
+      continue;
+    }
     if (kv.type === "ReplaceKey" || kv.type === "ReplaceVal") {
       // Replacement: also allow vertical on the key side
       if (kv.kPat?.type === "Dot" || kv.kPat?.type === "IndexedPath") {
@@ -111,6 +124,10 @@ function lowerVerticalEverywhere(n) {
     case "Map": {
       const loweredSelf = lowerVerticalInObjectLike(n);
       return { ...loweredSelf, kvs: loweredSelf.kvs.map(kv => {
+        if (kv.type === "BindSlice") {
+          // Already lowered in lowerVerticalInObjectLike
+          return kv;
+        }
         if (kv.type === "ReplaceKey" || kv.type === "ReplaceVal") {
           return {
             ...kv,
@@ -125,6 +142,7 @@ function lowerVerticalEverywhere(n) {
         };
       })};
     }
+    case "BindSlice": return { ...n, pat: lowerVerticalEverywhere(n.pat) };
     case "Array": return { ...n, elems: n.elems.map(lowerVerticalEverywhere) };
     case "Adj":   return { ...n, elems: n.elems.map(lowerVerticalEverywhere) };
     case "Alt":   return { ...n, options: n.options.map(lowerVerticalEverywhere) };
@@ -200,8 +218,13 @@ function* matchObjectLike(n, val, ctx, typeCheck) {
   if (!typeCheck(val)) return;
   const cov = new Coverage(val);
 
-  // First pass: evaluate all explicit kv patterns (non-consuming, independent).
+  // First pass: evaluate regular kv patterns (non-BindSlice) to establish coverage
   for (const kv of n.kvs) {
+    if (kv.type === "BindSlice") {
+      // Skip BindSlice in first pass - handle after coverage is established
+      continue;
+    }
+
     if (kv.type === "ReplaceKey") {
       // Mark all keys whose kPat matches; value must match vPat too.
       const keys = enumerateKeys(val, k => keyMatches(kv.kPat, k, ctx));
@@ -254,8 +277,68 @@ function* matchObjectLike(n, val, ctx, typeCheck) {
     if (!okThisKV) return;
   }
 
+  // Second pass: handle BindSlice nodes now that coverage is established
+  for (const kv of n.kvs) {
+    if (kv.type !== "BindSlice") continue;
+
+    const sliceObj = typeCheck === isMap ? new Map() : {};
+
+    if (kv.pat.type === "Spread") {
+      // $var:.. - bind residual k=v pairs not yet covered
+      const allKeys = enumerateKeys(val, () => true);
+      for (const k of allKeys) {
+        if (!cov.covered.has(k)) {
+          if (typeCheck === isMap) {
+            sliceObj.set(k, getValue(val, k));
+          } else {
+            sliceObj[k] = getValue(val, k);
+          }
+          cov.add(k); // Mark as covered now
+        }
+      }
+    } else if (kv.pat.type === "Object" || kv.pat.type === "Map") {
+      // $var:(kv-pattern) - bind k=v pairs matching the pattern
+      for (const innerKV of kv.pat.kvs) {
+        const keys = enumerateKeys(val, k => keyMatches(innerKV.kPat, k, ctx));
+        for (const k of keys) {
+          // Check if value matches
+          let vMatches = false;
+          const shadowCtx = { ...ctx, env: ctx.env.cloneRO() };
+          for (const _ of matchNode(innerKV.vPat, getValue(val, k), shadowCtx)) {
+            vMatches = true;
+            break;
+          }
+          if (vMatches) {
+            // Add to slice
+            if (typeCheck === isMap) {
+              sliceObj.set(k, getValue(val, k));
+            } else {
+              sliceObj[k] = getValue(val, k);
+            }
+            cov.add(k);
+          }
+        }
+      }
+
+      // Check count constraints if any
+      if (kv.pat.kvs.length > 0 && kv.pat.kvs[0].count) {
+        const count = kv.pat.kvs[0].count;
+        const size = typeCheck === isMap ? sliceObj.size : Object.keys(sliceObj).length;
+        if (!(size >= count.min && (count.max === Infinity || size <= count.max))) {
+          return;
+        }
+      }
+    }
+
+    // Bind the slice to the variable
+    const ok = ctx.env.bindOrCheck(kv.name, sliceObj, ctx.opts);
+    if (!ok) return;
+    recordVarOcc(ctx, kv.name);
+  }
+
   // Counts (post-check, non-consuming)
   for (const kv of n.kvs) {
+    if (kv.type === "BindSlice") continue; // Skip BindSlice in count check
     if (kv.count) {
       const keys = enumerateKeys(val, k => keyMatches(kv.kPat, k, ctx));
       let cnt = 0;
@@ -431,6 +514,34 @@ function* matchNode(n, val, ctx) {
           return;
         }
 
+        // Special case for Group(Adj) or bare Adj: match subsequence
+        if (el.type === "Adj" || (el.type === "Group" && el.sub.type === "Adj")) {
+          const adjNode = el.type === "Adj" ? el : el.sub;
+          const seqLen = adjNode.elems.length;
+          if (j + seqLen > val.length) return; // Not enough elements
+
+          // Match each element in the adjacency sequence
+          function* matchAdj(elemIdx, pos) {
+            if (elemIdx === seqLen) {
+              // All elements matched - continue from next position
+              yield* matchFrom(i + 1, pos);
+              return;
+            }
+
+            // Match current element of the subsequence
+            ctx.path.push({ kind: "array-slice", ref: val, start: pos, end: pos + 1 });
+            const snap = snapshotVarOcc(ctx.varOcc);
+            for (const _ of matchNode(adjNode.elems[elemIdx], val[pos], ctx)) {
+              yield* matchAdj(elemIdx + 1, pos + 1);
+            }
+            rollbackVarOcc(ctx.varOcc, snap);
+            ctx.path.pop();
+          }
+
+          yield* matchAdj(0, j);
+          return;
+        }
+
         // Special case for Quant: consume multiple array elements
         if (el.type === "Quant") {
           const { min, max, greedy, sub } = el;
@@ -461,6 +572,144 @@ function* matchNode(n, val, ctx) {
             }
           }
           return;
+        }
+
+        // Special case for Bind with array slice patterns
+        if (el.type === "Bind") {
+          const pat = el.pat;
+
+          // Case 1: $x:(sequence) - fixed-length slice binding
+          if (pat.type === "Adj" || (pat.type === "Group" && pat.sub && pat.sub.type === "Adj")) {
+            const adjNode = pat.type === "Adj" ? pat : pat.sub;
+            const seqLen = adjNode.elems.length;
+            if (j + seqLen > val.length) return; // Not enough elements
+
+            // Match each element in the sequence
+            function* matchSeq(elemIdx, pos) {
+              if (elemIdx === seqLen) {
+                // All elements matched - bind to slice
+                const slice = val.slice(j, pos);
+                const ok = ctx.env.bindOrCheck(el.name, slice, ctx.opts);
+                if (!ok) return;
+
+                // Record occurrence
+                const sliceRef = { kind: "array-slice", ref: val, start: j, end: pos };
+                const occArr = ctx.varOcc.get(el.name);
+                if (occArr) {
+                  occArr.push(sliceRef);
+                  yield* matchFrom(i + 1, pos);
+                  occArr.pop();
+                } else {
+                  ctx.varOcc.set(el.name, [sliceRef]);
+                  yield* matchFrom(i + 1, pos);
+                  ctx.varOcc.delete(el.name);
+                }
+                return;
+              }
+
+              const elem = adjNode.elems[elemIdx];
+
+              // Handle Quant elements specially - they can match variable numbers of elements
+              if (elem.type === "Quant") {
+                const { min, max, greedy, sub } = elem;
+                const maxReps = Math.min(max, val.length - pos);
+
+                function* matchReps(count, curPos) {
+                  if (count === 0) {
+                    yield* matchSeq(elemIdx + 1, curPos);
+                    return;
+                  }
+                  if (curPos >= val.length) return;
+
+                  ctx.path.push({ kind: "array-slice", ref: val, start: curPos, end: curPos + 1 });
+                  for (const _ of matchNode(sub, val[curPos], ctx)) {
+                    yield* matchReps(count - 1, curPos + 1);
+                  }
+                  ctx.path.pop();
+                }
+
+                if (greedy) {
+                  for (let reps = maxReps; reps >= min; reps--) {
+                    yield* matchReps(reps, pos);
+                  }
+                } else {
+                  for (let reps = min; reps <= maxReps; reps++) {
+                    yield* matchReps(reps, pos);
+                  }
+                }
+                return;
+              }
+
+              // Normal element: match single array element
+              ctx.path.push({ kind: "array-slice", ref: val, start: pos, end: pos + 1 });
+              const snap = snapshotVarOcc(ctx.varOcc);
+              for (const _ of matchNode(elem, val[pos], ctx)) {
+                yield* matchSeq(elemIdx + 1, pos + 1);
+              }
+              rollbackVarOcc(ctx.varOcc, snap);
+              ctx.path.pop();
+            }
+
+            yield* matchSeq(0, j);
+            return;
+          }
+
+          // Case 2: $x:pat* or $x:pat+ - variable-length slice binding via quantifier
+          if (pat.type === "Quant" || pat.type === "Spread" || (pat.type === "Group" && pat.sub && (pat.sub.type === "Quant" || pat.sub.type === "Spread"))) {
+            const innerPat = pat.type === "Group" ? pat.sub : pat;
+            const quantPat = innerPat.type === "Spread"
+              ? { type: "Quant", sub: { type: "Any", span: innerPat.span }, min: 0, max: Infinity, greedy: false, span: innerPat.span }
+              : innerPat;
+
+            const { min, max, greedy, sub } = quantPat;
+            const maxReps = Math.min(max, val.length - j);
+
+            // Match 'count' consecutive elements, then bind to slice
+            function* matchSliceReps(count, pos) {
+              if (count === 0) {
+                // Bind variable to the slice
+                const slice = val.slice(j, pos);
+                const ok = ctx.env.bindOrCheck(el.name, slice, ctx.opts);
+                if (!ok) return;
+
+                // Record occurrence
+                const sliceRef = { kind: "array-slice", ref: val, start: j, end: pos };
+                const occArr = ctx.varOcc.get(el.name);
+                if (occArr) {
+                  occArr.push(sliceRef);
+                  yield* matchFrom(i + 1, pos);
+                  occArr.pop();
+                } else {
+                  ctx.varOcc.set(el.name, [sliceRef]);
+                  yield* matchFrom(i + 1, pos);
+                  ctx.varOcc.delete(el.name);
+                }
+                return;
+              }
+              if (pos >= val.length) return;
+
+              // Match current element
+              ctx.path.push({ kind: "array-slice", ref: val, start: pos, end: pos + 1 });
+              for (const _ of matchNode(sub, val[pos], ctx)) {
+                yield* matchSliceReps(count - 1, pos + 1);
+              }
+              ctx.path.pop();
+            }
+
+            // Try different repetition counts based on greedy/lazy
+            if (greedy) {
+              for (let reps = maxReps; reps >= min; reps--) {
+                yield* matchSliceReps(reps, j);
+              }
+            } else {
+              for (let reps = min; reps <= maxReps; reps++) {
+                yield* matchSliceReps(reps, j);
+              }
+            }
+            return;
+          }
+
+          // Case 3: $x:singleton - binds to single element, fall through to normal handling
         }
 
         // Normal element: match single array element

@@ -491,6 +491,109 @@ group('Edge cases', () => {
   });
 });
 
+/* ==================== Advanced Real-World Patterns ==================== */
+
+group('Advanced patterns', () => {
+  test('when-else JSX-like transformation', () => {
+    const pattern = `[.. $whenelse:(
+      {tag = /^when$/i, $otherProps:..}
+      {tag = /^else$/i, children = $else, ..}?
+    ) ..]`;
+
+    const t = new Tendril(pattern);
+
+    const input = [
+      {tag: 'div', content: 'before'},
+      {tag: 'When', test: 'x > 0', children: ['content']},
+      {tag: 'else', children: ['fallback']},
+      {tag: 'span', content: 'after'}
+    ];
+
+    const result = t.replaceAll(input, $ => ({
+      $whenelse: {tag: 'when', children2: $.else, ...$.otherProps}
+    }));
+
+    // Should merge When + Else into single object
+    assert.equal(result.length, 3); // div, merged when-else, span
+    assert.equal(result[1].tag, 'when');
+    assert.equal(result[1].test, 'x > 0');
+    assert.deepEqual(result[1].children, ['content']); // from When
+    assert.deepEqual(result[1].children2, ['fallback']); // from Else
+  });
+
+  test('when-else JSX-like transformation 2', () => {
+    const pattern = Tendril(`[
+      ..
+      $whenelse:(
+        {tag = /^[Ww]hen$/, attrs = $attrs, children = $then, srcId = $id, ..}
+        {tag = /^[Ee]lse$/, children = $else, ..}?
+      )
+      ..
+    ]`)
+    const input = [
+      {tag: 'div', children: ['before']},
+      {tag: 'When', attrs: {'a:test': '{x}'}, children: ['A'], srcId: 'w1'},
+      {tag: 'Else', children: ['B']},
+      {tag: 'div', children: ['after']}
+    ]
+
+    const result = pattern.replaceAll(input, $ => {
+      const testAttr = $.attrs['a:test'] || $.attrs['test'];
+      return {
+        $whenelse: {
+          tag: 'If',
+          testAttr,
+          thenChildren: $.then,
+          elseChildren: $.else || [],
+          bindingName: null,
+          srcId: $.id
+        }
+      };
+    });
+    console.log('Result:', JSON.stringify(result, null, 2));
+    
+    
+    assert.deepEqual(result, [
+      {tag: 'div', children: ['before']},
+      {
+        tag: 'If',
+        testAttr: '{x}',
+        thenChildren: ['A'],
+        elseChildren: ['B'],  // Should capture from Else
+        bindingName: null,
+        srcId: 'w1'
+      },
+      {tag: 'div', children: ['after']}
+    ])
+    
+  });
+
+  test('when without else also matches', () => {
+    const pattern = `[.. $whenelse:(
+      {tag = /^[Ww]hen$/, $otherProps:..}
+      {tag = /^[Ee]lse$/, children = $else, ..}?
+    ) ..]`;
+
+    const t = new Tendril(pattern);
+
+    const input = [
+      { tag: 'When', test: 'x > 0', children: ['content'] },
+      { tag: 'div' }
+    ];
+
+    const result = t.replaceAll(input, $ => ({
+      $whenelse: { tag: 'when', children2: $.else, ...$.otherProps }
+    }));
+
+    // Should still transform When even without Else
+    assert.equal(result.length, 2);
+    assert.equal(result[0].tag, 'when');
+    assert.equal(result[0].test, 'x > 0');
+    assert.deepEqual(result[0].children, ['content']);
+    assert.equal(result[0].children2, undefined); // no else
+  });
+});
+
 /* ==================== Run Tests ==================== */
 
 if (require.main === module) {

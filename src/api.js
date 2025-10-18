@@ -1,7 +1,7 @@
 // api.js
 // Fluent Tendril API: Tendril and Solutions classes.
 // Exposes logical solutions, positional occurrences, projection utilities,
-// and replacement/editing without author-authored >>&<< markers.
+// and replacement/editing .
 //
 // JSDoc types are provided for editor tooling without TypeScript.
 //
@@ -737,6 +737,15 @@ function stillValid(tree, solution, originalTree) {
       if (!refs || refs.length === 0) continue;
 
       for (const ref of refs) {
+        // Skip validation for derived values (e.g. object slices recorded with array-slice refs)
+        // These are contextual and don't have independent tree locations
+        if (ref.kind === 'array-slice' && !Array.isArray(expectedValue)) {
+          continue;
+        }
+        if (ref.kind === 'object-value' && Array.isArray(expectedValue)) {
+          continue;
+        }
+
         // Find where ref.ref was in the original tree
         const containerPath = findPathToContainer(originalTree, ref.ref);
         if (!containerPath) return false;
@@ -754,9 +763,15 @@ function stillValid(tree, solution, originalTree) {
         switch (ref.kind) {
           case "array-slice":
             if (!Array.isArray(container)) return false;
-            if (ref.start === ref.end - 1) {
+            // Check if the expected value is an array (slice binding) or single element
+            if (Array.isArray(expectedValue)) {
+              // Slice binding - always use slice() to preserve array structure
+              currentValue = container.slice(ref.start, ref.end);
+            } else if (ref.start === ref.end - 1) {
+              // Single element binding
               currentValue = container[ref.start];
             } else {
+              // Multi-element slice but expected is not an array - shouldn't happen
               currentValue = container.slice(ref.start, ref.end);
             }
             break;

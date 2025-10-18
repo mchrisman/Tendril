@@ -35,10 +35,6 @@ export const T = {
   LQBRACE: "{#",
   RQBRACE: "#}",
 
-  // Replacement markers
-  REPL_L: ">>",
-  REPL_R: "<<",
-
   // Ellipsis sugar
   ELLIPSIS: "...",
 
@@ -245,19 +241,6 @@ export function lex(source) {
     }
     const c = peek();
 
-    // replacement markers
-    if (tryTwoChar(">", ">")) {
-      const start = i;
-      i += 2;
-      push(T.REPL_L, ">>", start, i, skipped);
-      continue;
-    }
-    if (tryTwoChar("<", "<")) {
-      const start = i;
-      i += 2;
-      push(T.REPL_R, "<<", start, i, skipped);
-      continue;
-    }
 
     // Note: {{ and }} are handled by the parser as consecutive { { or } }
     // The lexer stays context-free by only emitting single-char tokens

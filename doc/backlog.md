@@ -265,13 +265,105 @@ Examples:
 
 ( .. BEGIN << $x:(_*) >> END .. ) ~=  ( a BEGIN b BEGIN c END d END e )   // $x == ( b BEGIN c END d )  
 
+
+
+I want to define a safer and simpler regex language. What do you think of this proposal? 
               
-   
+1. Delete existing *, +, *{m,n} operators, together with their greedy and possessive forms.
 
+2. Introduce:
+    /(pat)*/    - greedy possessive 0-or-more
+    /(pat)+/    - greedy possessive 1-or-more
+    /left>right/  - Split the input before the first occurrance of `right` (no backtracking),
+                     // and match `left` to the left side, `right` to the right side.
+    /left>>right/  - Split the input before the last occurrance of `right` (no backtracking),
+                     // and match `left` to the left side, `right` to the right side.
+    /left<right/  - Similarly, split the slice after the last occurrance of `left` (no backtracking)
+    /left<<right/  -  Similarly, split the slice after the first occurrance of `left` (no backtracking)
 
-
-
-
-
+The key theory motivating this is that unrestricted star behavior is not only very inefficient, it's also not very useful, because the decision to stop a sequence is not arbitrary. You don't just stop it randomly someplace in the middle. You stop it on a condition. 
 
 ```
+
+more about keeping it "micro-library sized"  ... but also about "when to stop and think"; if it can't be done in 50 lines then perhaps we're not reducing the problem to its simplest terms.
+
+I'd love to hand-code the recursive descent *if* it could be made readable - which basically amounts to bringing back some form of fluent API or at least helper functions
+
+
+
+we need to (1) Change the semantics of object matching so that a KV pattern is an assertion that "if the key matches the key pattern, then the value matches the value pattern; (2) Clean up the confusion around whether in KV patterns, you bind symbols to the KV (individual values) or to the slice;
+
+(3) Also considering getting rid of greedy versus lazy quantifiers, and getting rid of any form of quantifier where you have to test every possible number of repetitions. Instead, Introduce:
+/(pat)*/ - greedy possessive 0-or-more
+/(pat)+/ - greedy possessive 1-or-more
+/left>right/ - Split the input before the first occurrance of right (no backtracking),
+// and match left to the left side, right to the right side.
+/left>>right/ - Split the input before the last occurrance of right (no backtracking),
+// and match left to the left side, right to the right side.
+/left<right/ - Similarly, split the slice after the last occurrance of left (no backtracking)
+/left<<right/ - Similarly, split the slice after the first occurrance of left (no backtracking)
+The key theory motivating this is that unrestricted star behavior is not only very inefficient, it's also not very useful, because the decision to stop a sequence is not arbitrary. You don't just stop it randomly someplace in the middle. You stop it on a condition.
+Let me be clear, we're not getting rid of backtracking entirely. There are still plenty of things that backtrack, a big one being alternations. Also, I'm not totally sure we can get rid of star completely without losing the ability to find a pattern anywhere in a structure (* applied to breadcrumb segments). I'm also not clear that I like change number one. It may be the wrong thing to do.
+
+
+
+What does {kpat:vpat} mean?
+
+Option A (current): 
+
+One of the difficulties is that sometimes we really need a variable to have a single value at a time, iterating:
+
+```js
+const data = {
+  planets: {Jupiter: {size: "big"}, Earth: {size: "small"}, Ceres: {size: "tiny"}},
+  aka: [["Jupiter", "Jove", "Zeus"], ["Earth", "Terra"], ["Ceres", "Demeter"]]
+};
+
+const pattern = `{
+  planets.$name.size = $size
+  aka = [.. [$name .. $alias .. | $alias:$name ..] .. ] // $name itself as a possible alias
+}`;
+
+Tendril(pattern)
+.solutions(data)
+.project($ => `Hello, ${$.size} world ${$.alias}`);
+
+=>
+[
+  "Hello, big world Jupiter",
+  "Hello, big world Jove",
+  "Hello, big world Zeus",
+  "Hello, small world Earth",
+  "Hello, small world Terra",
+  "Hello, tiny world Ceres",
+  "Hello, tiny world Demeter",
+]
+```
+
+while other times we want to treat it as a slice ($otherprops):
+```  
+> Tendril(`[.. $whenelse:(
+      {tag = /^when$/i, $otherProps:..}
+      {tag = /^else$/i, children = $else, ..}?
+    ) ..]`)
+.replaceAll(input, $ => ({
+$whenelse: { tag: 'when', children2: $.else, ...$.otherProps }
+}));
+ 
+```
+
+```
+pattern=
+{
+  search = [... $keyword ...]
+  articles.$keyword = [ ... $articleId ... ]
+}
+data=
+{ 
+   search: ["mountains", "rivers"],
+   articles: {
+      "mountains" : [12345,12346], 
+      "rivers" : [4567,4568,4569],
+      "lakes" : [5000,5001] 
+   }
+}

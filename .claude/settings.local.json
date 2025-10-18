@@ -6,7 +6,8 @@
       "Bash(node:*)",
       "Bash(npm test:*)",
       "Bash(cat:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(DEBUG_REPLACE=1 node:*)"
     ],
     "deny": [],
     "ask": []

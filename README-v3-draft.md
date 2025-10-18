@@ -345,5 +345,12 @@ Left $x   matches input at array head? Right $x matches input at array tail? Lef
    
    
        
-   
-   
+```javascript
+Tendril(`[.. $whenelse:(
+      {tag = /^when$/i, $otherProps:..}
+      {tag = /^else$/i, children = $else, ..}?
+    ) ..]`)
+.replaceAll(input, $ => ({
+$whenelse: { tag: 'when', children2: $.else, ...$.otherProps }
+}));
+```

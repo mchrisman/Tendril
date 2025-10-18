@@ -35,31 +35,6 @@ Tendril(pattern)
 
 ---
 
-# Quick Start (1 minute read)
-
-Defaults differ across arrays, objects, and sets; don’t assume identical behavior.
-
-```
-// Basic equivalences
-{ foo = bar }                    !~= { "foo": "bar", "baz": "buzz" } 
-[ a b c .. ]                      ~= [ "a", "b", "c", "d", "e" ] 
-
-// Object with constraints
-{
-  data.users[3].name = "John Smith"    // object?.data?.users?.[3]?.name == "John Smith"
-  _ = /permission/                     // AND all property values of object match /permission/
-}
-
-// Array quantifiers
-[ a? b+ c* ]                       // optional a; one-or-more b; zero-or-more c
-
-// Repeated symbols form assertions
-[ $X:( _ _ ) .. $X ]              // first two items equal the last two
-
-```
-
----
-
 # Cheat Sheet (10 minute read)
 
 In this document, `foo ~= bar` means `Tendril("foo").matches(bar)`, and `===` shows pattern equivalence. These notations are **only for illustration** — *not part of the API*.
@@ -273,7 +248,6 @@ SINGLETON_PATTERN       := LITERAL
                          | LOOKAHEAD_SINGLETON
                          | '_'
                          | SYMBOL (':' SINGLETON_PATTERN)?
-                         | '>>' SINGLETON_PATTERN '<<'
 
 LOOKAHEAD_SINGLETON     := '(?=' SINGLETON_PATTERN ')' SINGLETON_PATTERN
                          | '(?!' SINGLETON_PATTERN ')' SINGLETON_PATTERN
@@ -287,7 +261,6 @@ ARRAY_SLICE_PATTERN     := '..'                               // == _*? (lazy)
                          | SINGLETON_PATTERN ARRAY_QUANT?
                          | ARRAY_SLICE_PATTERN ARRAY_WS ARRAY_SLICE_PATTERN
                          | LOOKAHEAD_ARRAY_SLICE
-                         | '>>' ARRAY_SLICE_PATTERN '<<'
 
 LOOKAHEAD_ARRAY_SLICE   := '(?=' ARRAY_SLICE_PATTERN ')' ARRAY_SLICE_PATTERN
                          | '(?!' ARRAY_SLICE_PATTERN ')' ARRAY_SLICE_PATTERN
@@ -327,10 +300,9 @@ p1 | p2                   // alternation
 p1 & p2                   // conjunction on a single value
 a.b=c                     // vertical/path assertion (right-associative)
 [a].b=c                   // index/key indirection
->> .. <<                 // replacement target
 ```
 
-Precedence: `( )` > quantifiers > `.` > space > `&` > `|`.
+Precedence: `( )` > quantifiers > binding > path descent (i.e. . []) > space > `&` > `|`.
 
 ---
 
@@ -443,21 +415,6 @@ Array-slice lookaheads:
 
 ---
 
-## Replacement
-
-Mark what to replace with `>> .. <<`.
-
-```
->> pattern <<           // singleton
-[ x >> y* << z ]        // array slice
->> k << = v             // key replacement
-k = >> v <<             // value replacement
-```
-
-Not allowed around entire key/value pairs or multi-step paths.
-
----
-
 ## Examples
 
 **Find and join relational facts**
@@ -487,23 +444,6 @@ Tendril("{ (_.)*password = $value }")
 { /user.*/=_  $contacts:(/contact.*/=_)  $rest:.. }
 ```
 
----
-
-## Formal Semantics (summary)
-
-* Matching uses backtracking matcher generators with:
-
-    * **Scope** for variable bindings.
-    * **Unification** enforcing global consistency.
-    * **Type distinction** via distinct AST nodes (Object, Map, Set).
-    * **Lookaheads** asserting without consuming.
-* **Objects**:
-
-    * Each assertion → subset of k/v pairs.
-* **Arrays** anchored; `..` relaxes boundaries.
-* **Replacement** uses tracked source spans; replacements are exact.
-
----
-
 **End of Specification**
 
+// Todo: a better API exposition section, and mention the variable names

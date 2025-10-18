@@ -139,7 +139,6 @@ class Parser {
       k === T.LBRACK ||
       k === T.LBRACE ||
       k === T.LDBRACE ||
-      k === T.REPL_L ||
       k === T.ASSERT_POS ||
       k === T.ASSERT_NEG ||
       k === T.DOLLAR ||
@@ -308,7 +307,6 @@ class Parser {
       return this.parseObject();
     }
 
-    if (t.kind === T.REPL_L) return this.parseReplacement();
 
     if (t.kind === T.ASSERT_POS || t.kind === T.ASSERT_NEG) {
       return this.parseAssertion();
@@ -363,34 +361,11 @@ class Parser {
 
   parseKV_NormalOrReplacement() {
     // Handles:
-    //   >> k << = v      → ReplaceKey
-    //   k = >> v <<      → ReplaceVal
     //   k = v            → normal KV (possibly with #count)
-    if (this.at(T.REPL_L)) {
-      const start = this.eat(T.REPL_L).span.start;
-      this._inObjectKey = true;
-      const kPat = this.parseOrNoAdj();       // ⟵ no adjacency in object key
-      this._inObjectKey = false;
-      this.eat(T.REPL_R);
-      this.eat(T.EQ);
-      const vPat = this.parseOrNoAdj();       // ⟵ no adjacency in object value
-      const span = {start, end: vPat.span.end};
-      return {kind: "ReplaceKey", node: node("ReplaceKey", span, {kPat, vPat})};
-    }
-
     this._inObjectKey = true;
     const kPat = this.parseOrNoAdj();         // ⟵ no adjacency in object key
     this._inObjectKey = false;
     this.eat(T.EQ);
-
-    if (this.at(T.REPL_L)) {
-      const start = kPat.span.start;
-      this.eat(T.REPL_L);
-      const vPat = this.parseOrNoAdj();       // ⟵ no adjacency in object value
-      const r = this.eat(T.REPL_R);
-      const span = {start, end: r.span.end};
-      return {kind: "ReplaceVal", node: node("ReplaceVal", span, {kPat, vPat})};
-    }
 
     const vPat = this.parseOrNoAdj();         // ⟵ no adjacency in object value
     let count = null;
@@ -421,7 +396,76 @@ class Parser {
     let spreadCount = 0;
 
     while (!this.at(T.RBRACE)) {
-      if (this.at(T.ELLIPSIS)) {
+      // Check for slice binding: $var:(kv-pattern) or $var:..
+      if (this.at(T.DOLLAR)) {
+        const dollarPos = this.i;
+        const dollar = this.eat(T.DOLLAR);
+        const nameTok = this.eat(T.BARE);
+
+        if (this.at(T.COLON)) {
+          this.eat(T.COLON);
+
+          // $var:.. or $var:(kv-assertions)
+          if (this.at(T.ELLIPSIS)) {
+            // $var:.. - bind spread
+            const ellipsis = this.eat(T.ELLIPSIS);
+            const span = {start: dollar.span.start, end: ellipsis.span.end};
+            const varNode = node("Var", {start: dollar.span.start, end: nameTok.span.end}, {name: nameTok.value});
+            const spreadNode = node("Spread", ellipsis.span, {});
+            kvs.push(node("BindSlice", span, {name: varNode.name, pat: spreadNode}));
+            hasSpread = true;
+            spreadCount++;
+          } else if (this.at(T.LPAREN)) {
+            // $var:(kv-assertions) - bind KV slice
+            const parenStart = this.eat(T.LPAREN).span.start;
+            const innerKvs = [];
+            let innerHasSpread = false;
+
+            while (!this.at(T.RPAREN)) {
+              if (this.at(T.ELLIPSIS)) {
+                this.eat(T.ELLIPSIS);
+                innerHasSpread = true;
+              } else {
+                const res = this.parseKV_NormalOrReplacement();
+                if (res.kind === "KV" || res.kind === "ReplaceKey" || res.kind === "ReplaceVal") {
+                  innerKvs.push(res.node);
+                } else {
+                  throw this.err("Unexpected KV form in slice binding", this.cur().span.start);
+                }
+              }
+              this.opt(T.COMMA);
+              if (this.at(T.EOF)) throw this.err("Unterminated slice binding", parenStart);
+            }
+            const parenEnd = this.eat(T.RPAREN).span.end;
+            const span = {start: dollar.span.start, end: parenEnd};
+            const slicePat = node("Object", {start: parenStart, end: parenEnd}, {
+              kvs: innerKvs,
+              anchored: !innerHasSpread,
+              hasSpread: innerHasSpread,
+              spreadCount: innerHasSpread ? 1 : 0
+            });
+            kvs.push(node("BindSlice", span, {name: nameTok.value, pat: slicePat}));
+          } else {
+            // $var:k = v (binding just the key) - rewind and parse as normal KV
+            this.i = dollarPos;
+            const res = this.parseKV_NormalOrReplacement();
+            if (res.kind === "KV" || res.kind === "ReplaceKey" || res.kind === "ReplaceVal") {
+              kvs.push(res.node);
+            } else {
+              throw this.err("Unexpected KV form", this.cur().span.start);
+            }
+          }
+        } else {
+          // $var = value (no colon) - rewind and parse as normal KV
+          this.i = dollarPos;
+          const res = this.parseKV_NormalOrReplacement();
+          if (res.kind === "KV" || res.kind === "ReplaceKey" || res.kind === "ReplaceVal") {
+            kvs.push(res.node);
+          } else {
+            throw this.err("Unexpected KV form", this.cur().span.start);
+          }
+        }
+      } else if (this.at(T.ELLIPSIS)) {
         this.eat(T.ELLIPSIS);
         hasSpread = true;
         spreadCount++;
@@ -454,14 +498,6 @@ class Parser {
     return node("Object", {start, end}, {kvs, anchored: !hasSpread, hasSpread, spreadCount});
   }
 
-  parseReplacement() {
-    // >> a b c <<   (slice replacement target, typically in arrays)
-    const leftTok = this.eat(T.REPL_L);
-    const inner = this.parseOr();
-    const rightTok = this.eat(T.REPL_R);
-    const span = {start: leftTok.span.start, end: rightTok.span.end};
-    return node("ReplaceSlice", span, {target: inner});
-  }
 
   parseAssertion() {
     if (this.at(T.ASSERT_POS)) {
@@ -503,29 +539,48 @@ class Parser {
     const t = this.cur();
     if (t.kind === T.NUMBER) {
       const tok = this.eat(T.NUMBER);
+      this.warnIfColonAfterNonSymbol(tok);
       return node("Number", tok.span, {value: tok.value});
     }
     if (t.kind === T.BOOL) {
       const tok = this.eat(T.BOOL);
+      this.warnIfColonAfterNonSymbol(tok);
       return node("Bool", tok.span, {value: tok.value});
     }
     if (t.kind === T.STRING) {
       const tok = this.eat(T.STRING);
+      this.warnIfColonAfterNonSymbol(tok);
       return node("String", tok.span, {value: tok.value});
     }
     if (t.kind === T.BARE) {
       const tok = this.eat(T.BARE);
+      this.warnIfColonAfterNonSymbol(tok);
       return node("String", tok.span, {value: tok.value});
     }
     if (t.kind === T.REGEX) {
       const tok = this.eat(T.REGEX);
+      this.warnIfColonAfterNonSymbol(tok);
       return node("Regex", tok.span, {body: tok.value.body, flags: tok.value.flags});
     }
     if (t.kind === T.ANY) {
       const tok = this.eat(T.ANY);
+      this.warnIfColonAfterNonSymbol(tok);
       return node("Any", tok.span, {});
     }
     throw new PatternSyntaxError(`Unexpected token ${t.kind}`);
+  }
+
+  warnIfColonAfterNonSymbol(prevTok) {
+    if (this.at(T.COLON)) {
+      const colonTok = this.cur();
+      const prevText = this.src.substring(prevTok.span.start, prevTok.span.end);
+      console.warn(
+        `\n⚠️  Warning: Colon after '${prevText}' at position ${colonTok.span.start}\n` +
+        `   Did you mean to use a symbol? Try: $${prevText}:...\n` +
+        `   In Tendril, use '=' for key-value pairs: { ${prevText} = value }\n` +
+        `   Only symbols (starting with $) can appear before ':'`
+      );
+    }
   }
 
   expect(kind) {

@@ -1,7 +1,6 @@
 // ast-validate.js
 // Structural validation and light normalization passes.
 // Enforces:
-// - Exactly one replacement target (>>…<<) across slice/key/value forms.
 // - Arrays anchored by default; confirm spread sugar presence toggles anchoring in objects.
 // - Lookaheads appear only in allowed places (before array unit / key / value).
 // - Object kv counts well-formed (m<=n; finite n unless {m,} → Infinity).
@@ -83,7 +82,7 @@ function visit(n, ctx, meta) {
       ctx.replaceTargets++;
       // Must appear only inside Object kv list; parser guarantees placement, but we enforce context weakly.
       if (meta.context !== "object") {
-        throw new PatternSyntaxError("Key replacement (>>k<<:v) only valid inside an object", n.span.start);
+        throw new PatternSyntaxError("Key replacement only valid inside an object", n.span.start);
       }
       out = {
         ...n,
@@ -95,7 +94,7 @@ function visit(n, ctx, meta) {
     case "ReplaceVal":
       ctx.replaceTargets++;
       if (meta.context !== "object") {
-        throw new PatternSyntaxError("Value replacement (k:>>v<<) only valid inside an object", n.span.start);
+        throw new PatternSyntaxError("Value replacement only valid inside an object", n.span.start);
       }
       out = {
         ...n,
