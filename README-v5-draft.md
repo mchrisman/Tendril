@@ -86,6 +86,92 @@ Should `[ $x:(_?) $x .. ]` match `[ 1, 'y' ]` ? // I think: no.
 
 Should `[ [$x:(1? 2?)] $x ]` match `[ [1] 1 ]` ? // Yes. This is a good example demonstrating why we don't try to prove that a pattern represents a scalar at compile-time.
 
+## Core Grammar (informal EBNF)
+
+```
+// Regarding recursion: This expresses the desired logical intent, but may need to be refactored to make the recursion work. 
+
+// Regarding optional commas: Note that the lexer splits tokens on whitespace and otherwise treats whitespace as insignificant. 
+
+ROOT_PATTERN            := SINGLETON_PATTERN
+
+IDENT                   := /[a-zA-Z]\w+/
+                         
+S_ITEM                   := '$' IDENT
+S_SLICE                  := '@' IDENT
+
+ITEM                     := '(' ITEM ')'
+                          | S_ITEM
+                          | S_ITEM ':' '(' ITEM ')'
+                          | '_'
+                          | LITERAL
+                          | OBJ
+                          | ARR
+                          | ITEM '|' ITEM     
+                          
+A_SLICE                 := '(' (A_SLICE (','? A_SLICE)*)? ')'
+                          | S_SLICE
+                          | S_SLICE ':' '(' A_SLICE ')'
+                          | S_ITEM
+                          | S_ITEM ':' '(' A_SLICE ')'
+                          | ITEM
+                          | OBJ
+                          | ARR
+                          | A_SLICE A_QUANT        // todo, indicate precedence
+                          | A_SLICE '|' A_SLICE
+                          | '(?=' A_SLICE ')'
+                          | '(?!' A_SLICE ')'    
+                          
+ARR                      := [ (A_SLICE (','? A_SLICE)*)? ]                          
+
+KEY                     := ITEM
+VALUE                   := ITEM
+                          
+O_TERM                  := KEY BREADCRUMB* ('=' | '?=') VALUE O_QUANT?
+                          | '..' O_QUANT?
+                          | S_ITEM ':' O_TERM
+                          
+BREADCRUMB              := '.' KEY 
+                          | '[' KEY ']'
+                          
+O_SLICE                 := '(' (O_SLICE (','? O_SLICE)*)? ')'
+                          | S_SLICE
+                          | S_SLICE ':' '(' O_SLICE* ')'
+                          | O_TERM
+                          | '@_'
+                          
+OBJ                     := '{'  (O_SLICE (','? O_SLICE)*)? '}'
+
+A_QUANT                  := '?' | '??' 
+                          | '+' | '+?' | '++'
+                          | '*' | '*?' | '*+' 
+                          // The following are greedy and possessive.
+                          // Maximums are taken seriously: 
+                          //   [ 0*{2,4} ] does not match [0,0,0,0,0,0,0] 
+                          | '*{' INTEGER '}' //  '*' is deliberate, mirroring '#' quantifiers, and representing multiplication. 
+                          | '*{' INTEGER ',' INTEGER? '}'
+                          | '*{' ',' INTEGER '}'
+
+
+O_QUANT                   := '#' ( '?' | '{' INTEGER (',' INTEGER?)? '}' )
+                         // #?           → #{0,}   (optional, zero or more)
+                         // #{m}         → #{m,m}  (exactly m)
+                         // #{m,n}                 (m to n occurrences)
+                         // #{m,}        → #{m,∞}  (m or more, unbounded)
+
+
+```
+
+
+
+
+-------------------------------------------------------------------------
+
+Everything below this line is a copy of the older version and has not yet incorporated the above changes. Where it does not contradict the above, it is still valid.
+
+------------------------------------------------------------------------
+
+
 # Tendril
 
 <div style="padding:3em; margin:3em; background-color:pink">Status: alpha</div>
@@ -152,13 +238,21 @@ a b c                      // *Three* patterns in sequence (only allowed in an a
 a=b c=d e=f                // *Three* unordered key/value assertions
                            // (only allowed in an object/map context)
 { a=b c=d e=f }            // *One* pattern: an object with three assertions
-{ a=b c=d e=f } as Map     // One pattern matching a Map (does not match regular Object)
 
-{{ a b c }}                // pattern matching a Set
 ```
 
 **Precedence (high → low)**:
-Parentheses > Quantifiers > `.` > Space > `&` > `|`
+
+    Optional (`?`) 
+    Breadcrumb operators (`.`, `[]`)
+    Adjacenty/commas (in arrays, objects)
+    `&`
+    `|`
+    Binding (`:`)
+    Quantifiers
+    Key-value separator (`=`)
+
+As usual, parentheses override normal precedence. The lookahead operators come with mandatory parentheses.
 
 ```
 p1 | p2                    // alternation
@@ -324,63 +418,6 @@ SYMBOL                  // $[A-Za-z_][A-Za-z0-9_]* (logic variable)
   Grammar-level feature to distinguish Map patterns from Object patterns. Use `{{ }}` for Sets.
 
 ---
-
-## Core Grammar (informal EBNF)
-
-```
-ROOT_PATTERN            := SINGLETON_PATTERN
-
-SINGLETON_PATTERN       := LITERAL
-                         | ARRAY_PATTERN
-                         | OBJECT_PATTERN
-                         | MAP_PATTERN
-                         | SET_PATTERN
-                         | '(' SINGLETON_PATTERN ')'
-                         | LOOKAHEAD_SINGLETON
-                         | '_'
-                         | SYMBOL (':' SINGLETON_PATTERN)?
-
-LOOKAHEAD_SINGLETON     := '(?=' SINGLETON_PATTERN ')' SINGLETON_PATTERN
-                         | '(?!' SINGLETON_PATTERN ')' SINGLETON_PATTERN
-
-ARRAY_PATTERN           := '[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTERN)*)? ']'
-ARRAY_WS                := single space (array adjacency)
-
-ARRAY_SLICE_PATTERN     := '..'                               // == _*? (lazy)
-                         | SYMBOL (':' SINGLETON_PATTERN)?
-                         | '(' ARRAY_SLICE_PATTERN ')' ARRAY_QUANT?
-                         | SINGLETON_PATTERN ARRAY_QUANT?
-                         | ARRAY_SLICE_PATTERN ARRAY_WS ARRAY_SLICE_PATTERN
-                         | LOOKAHEAD_ARRAY_SLICE
-
-LOOKAHEAD_ARRAY_SLICE   := '(?=' ARRAY_SLICE_PATTERN ')' ARRAY_SLICE_PATTERN
-                         | '(?!' ARRAY_SLICE_PATTERN ')' ARRAY_SLICE_PATTERN
-
-ARRAY_QUANT             := '?' | '??' | '+' | '+?' | '*' ('{' (INTEGER (',' INTEGER)?)? '}')?
-
-OBJECT_PATTERN          := '{' OBJECT_ASSERTION* '}'
-MAP_PATTERN             := '{' OBJECT_ASSERTION* '}' 'as' 'Map'
-SET_PATTERN             := '{{' (SINGLETON_PATTERN (WS SINGLETON_PATTERN)*)? '}}'
-
-OBJECT_ASSERTION        := KV_ASSERTION
-                         | PATH_ASSERTION
-                         | INDEXED_PATH_ASSERTION
-                         | '..'                               // spread (allow extra keys)
-
-KV_ASSERTION            := SINGLETON_PATTERN '=' SINGLETON_PATTERN OBJECT_COUNT?
-PATH_ASSERTION          := SINGLETON_PATTERN '.' OBJECT_ASSERTION
-INDEXED_PATH_ASSERTION  := '[' SINGLETON_PATTERN ']' OBJECT_ASSERTION
-
-OBJECT_COUNT            := '#' ( '?' | '{' INTEGER (',' INTEGER?)? '}' )
-                         // #?           → #{0,}   (optional, zero or more)
-                         // #{m}         → #{m,m}  (exactly m)
-                         // #{m,n}                 (m to n occurrences)
-                         // #{m,}        → #{m,∞}  (m or more, unbounded)
-                         // (default: no count means #{1,}, one or more)
-
-// Note: 'as Set' on { } is a parse error
-// Note: 'as' on {{ }} is a parse error
-```
 
 ---
 
