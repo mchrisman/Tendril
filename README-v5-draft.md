@@ -1,14 +1,18 @@
 
+# This document
+
+This is the design document for the next version of Tendril. It's not well integrated because it is essentially the old design document prefixed with a list of changes.
+
+As for the code, this is a complete rewrite. However, due to ambiguities in the design document (which have hopefully now been resolved) there are major differences between the code and the design outlined here.
+
+NEXT TASK: Please add a TODO annotation at every place of this document that has not been brought into line with the "Changes for V5" section. Don't attempt to fix or change anything, just annotate. If anything is ambiguous, annotate that too.
 
 # Changes for V5 ( Not yet integrated into this document. )
 
-- Drop support for Sets/Maps
-- 
-- Drop the >>..<< syntax for replacement target (Instead, the bound variables themselves are replacement targets.)
 - 
 - Rationalize semantics for Object patterns:
   K?=V means for all (key,value) where key matches K, value matches V;
-  K=V means for all (key,value) where key matches K, value matches V, *and* there is at least one such
+  K=V means for all (key,value) where key matches K, value matches V, *and* there is at least one such.
 
 
 - `..` in objects refers to the **untested slice**: the set of all key value pairs whose key did not match any of the key patterns in any of the K=V assertions.
@@ -178,6 +182,8 @@ Everything below this line is a copy of the older version and has not yet incorp
 
 Tendril = structural pattern matching **+** relational logic, in a small, generator-inspired language for **match** and **replace** across JSON-like graphs.
 
+---
+
 ## Hello, world
 
 ```js
@@ -209,7 +215,7 @@ Tendril(pattern)
 
 ---
 
-# Cheat Sheet (10 minute read)
+# Cheat Sheet (10-minute read)
 
 In this document, `foo ~= bar` means `Tendril("foo").matches(bar)`, and `===` shows pattern equivalence. These notations are **only for illustration** — *not part of the API*.
 
@@ -218,10 +224,10 @@ In this document, `foo ~= bar` means `Tendril("foo").matches(bar)`, and `===` sh
 ## Atoms
 
 ```
-123                        // Pattern that matches a number literal
-true, false                // Pattern that matches a boolean literal
-"a", bareword, /regex/     // ... string literal or regex (regex uses JS engine)
-_                          // Pattern matching any single object or primitive
+123                        // number literal
+true, false                // boolean literal
+"a", bareword, /regex/     // string or regex literal
+_                          // wildcard (matches any single object or primitive)
 ```
 
 ---
@@ -255,9 +261,12 @@ a=b c=d e=f                // *Three* unordered key/value assertions
 As usual, parentheses override normal precedence. The lookahead operators come with mandatory parentheses.
 
 ```
-p1 | p2                    // alternation
-p1 & p2                    // conjunction (same value matches both)
+K?=V   // for all (key,value) where key matches K, value matches V
+K=V    // same, and there is at least one such pair
 ```
+
+`..` refers to the **untested slice**: all key/value pairs whose key did not match any key pattern in any `K=V` or `K?=V` assertion.
+`..` is not necessarily empty; it can be bound to any `@` variable (`@x:(..)`).
 
 ---
 
@@ -287,16 +296,32 @@ p1 & p2                    // conjunction (same value matches both)
 
 Bindings are Prolog-style. Patterns may be labeled with symbols. The patterns must match the data. **In addition**, if two patterns have the same label, they must match the same (or structurally equivalent) data. This is called **Unification**. The data value is bound to that symbol.
 ```
-$name : pattern            // bind variable if pattern matches
-$name                      // shorthand for `$name:_` (Careful! Not `$name:_*`)
+$name : pattern       // bind if pattern matches
+$name                 // shorthand for $name:(_)
 
 [ $x $x:/[ab]/ $y ]   ~= ['a','a','y']
 [ $x $x:/[ab]/ $y ]  !~= ['a','b','y']
 [ $x $x:$y $y ]      ~= ['q','q','q']
 [ $x:($z $y) $y $z ] ~= ['r','q','q','r']
+```
 
-$key = $val              // binds any key/value pair
-$key:k = $val:v          // binds only when key = k and value = v
+### Scalar vs. Slice bindings
+
+* `$x` binds a **scalar** (one item per solution).
+* `@x` binds a **slice** (0 … n items).
+* Bare `$x` ≡ `$x:(_)`
+* Bare `@x` ≡ `@x:(_*)`
+* `$x:(pattern)` ensures the data matches `pattern` and is a single value.
+  `$x:(_?)` and `$x:(_*)` both ≡ `$x:(_)`.
+
+Examples:
+
+```
+[ .. $x .. ] ~= ['a','b']       // [{x:'a'},{x:'b'}]
+[ $x .. ]    ~= ['a','b']       // [{x:'a'}]
+[ @x .. ]    ~= ['a','b']       // [{x:[]},{x:['a']},{x:['a','b']}]
+[ $x @y ]    ~= [[1,2],[3,4]]   // {x:[1,2], y:[[3,4]]}
+[ @x @y ]    ~= [[1,2],[3,4]]   // 3 solutions (different splits)
 ```
 
 ---
@@ -309,52 +334,37 @@ a*3          === a*{3,3}
 a*           === a*{0,}         // unbounded
 a+           === a*{1,}
 a?           === a*{0,1}
-a            === a*1
-a*{2,3}?     // lazy
 ..          === _*?            // lazy wildcard slice
+```
 
-// Multiple ellipses allowed. '..' is sugar for '_*?'.
-[a .. b .. c]  ~=  [a x y b z c]
+Multiple ellipses are allowed:
+`[a .. b .. c]  ~=  [a x y b z c]`
+
+---
+
+## Quantifiers — Objects
+
+Each key/value assertion operates over *all* pairs, then counts matches (no backtracking):
+
+```
+k=v #{2,4}   // object has 2–4 keys matching k
+k=v #?       // optional (0 or more)
+k=v          // default: at least one
+.. #{0}      // require no untested pairs
 ```
 
 ---
 
-## Quantifiers — Objects and Sets
-
-Each object assertion matches a **slice** of key/value pairs, possibly overlapping, no backtracking.
-```
-{{ pat1=_  $happy:(pat2=_) }}     // bind subset slice
-{{ a=_  b=_  @rest:(..) }}      // bind residual slice
-```
-
----
-Quantifiers on KV assertions don't work the same as they do in arrays.. They match against all the KVs, and then count the number of matches (no backtracking)
+## Lookahead / Assertions
 
 ```
-k=v #{2,4}   === object has 2–4 keys matching k
-k=v #2       === k=v #{2,2}
-k=v #?       === k=v #{0,}      // optional
-k=v          === k=v #{1,}      // default: one or more
-
-..          === _=_ #?         // allow unknown keys
-.. #{0}     === Object has no extra keys that were not accounted for in the assertions. 
-
-// Multiple ellipsess allowed but redundant
-{ .. a=1 .. b=2 }   // valid; warns about redundancy
+(?=pattern)   // positive lookahead
+(?!pattern)   // negative lookahead
 ```
 
 ---
 
-## Assertions
-
-```
-(?=pattern)   // positive lookahead — must match, no consume
-(?!pattern)   // negative lookahead — must not match
-```
-
----
-
-## Path Patterns a.k.a Breadcrumbs
+## Path (Breadcrumb) patterns
 
 ```
 { a.b.c=d }   ~= { a:{ b:{ c:'d' } } }
@@ -393,6 +403,7 @@ k=v          === k=v #{1,}      // default: one or more
 
 ## Lexical Atoms
 
+// To do, move this to the grammar section. 
 ```
 INTEGER                 // decimal integer (matches Number type)
 BOOLEAN                 // true | false
@@ -409,13 +420,6 @@ SYMBOL                  // $[A-Za-z_][A-Za-z0-9_]* (logic variable)
 * Booleans match boolean primitives using strict equality.
 * Strings: quoted or bare (unless keyword), match string primitives using strict equality.
 * Regex: matches strings via JS engine.
-* **Disambiguation** via `as`:
-
-  ```
-  { k=v } as Map              // creates Map pattern (matches Maps only)
-  ```
-
-  Grammar-level feature to distinguish Map patterns from Object patterns. Use `{{ }}` for Sets.
 
 ---
 
@@ -429,12 +433,8 @@ p1 & p2                   // conjunction on a single value
 a.b=c                     // vertical/path assertion (right-associative)
 [a].b=c                   // index/key indirection
 ```
-
-Precedence: `( )` > quantifiers > binding > path descent (i.e. . []) > space > `&` > `|`.
-
 ---
 
----
 
 ## Arrays
 
