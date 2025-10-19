@@ -81,8 +81,11 @@ export function tokenize(src) {
     if (reId.test(src)) {
       const j = reId.lastIndex;
       const w = src.slice(i, j);
-      if (w === 'AND') { push('kw', 'AND', j - i); continue; }
-      if (w === '_')   { push('any', '_',   j - i); continue; }
+      if (w === 'AND')   { push('kw', 'AND', j - i); continue; }
+      if (w === '_')     { push('any', '_',   j - i); continue; }
+      if (w === 'true')  { push('bool', true, j - i); continue; }
+      if (w === 'false') { push('bool', false, j - i); continue; }
+      if (w === 'null')  { push('null', null, j - i); continue; }
       push('id', w, j - i);
       continue;
     }
@@ -96,7 +99,7 @@ export function tokenize(src) {
     if (c2 === '?!')  { push('?!', '?!', 2); continue; }   // negative lookahead token
 
     // one-character punctuation/operators
-    const single = '[](){}:,.$=|*+?-'.includes(c) ? c : null;
+    const single = '[](){}:,.$=|*+?-#'.includes(c) ? c : null;
     if (single) { push(single, single, 1); continue; }
 
     throw syntax(`unexpected character '${c}'`, src, i);

@@ -158,13 +158,27 @@ function matchPattern(pat, node, env, emit, ctx) {
     }
 
     case 'Look': {
-      // Zero-width; no bindings allowed. Accept if any branch succeeds without changing env.
-      let ok = false;
-      const acceptIfEqual = (e2) => {
-        if (equalEnvs(env, e2)) ok = true;
-      };
-      matchPattern(pat.pat, node, cloneEnv(env), acceptIfEqual, ctx);
-      if ((ok && !pat.neg) || (!ok && pat.neg)) emit(cloneEnv(env));
+      // Zero-width assertion; bindings from successful positive lookahead persist.
+      let matchedEnv = null;
+      matchPattern(pat.pat, node, cloneEnv(env), (e2) => {
+        if (!matchedEnv) matchedEnv = e2;  // capture first successful match
+      }, ctx);
+
+      const matched = (matchedEnv !== null);
+      if ((matched && !pat.neg) || (!matched && pat.neg)) {
+        emit(matched ? matchedEnv : cloneEnv(env));
+      }
+      return;
+    }
+
+    case 'Bind': {
+      // Match inner pattern, then bind variable to node if successful
+      matchPattern(pat.pat, node, env, (e2) => {
+        const e3 = cloneEnv(e2);
+        if (bindScalar(e3, pat.name, node)) {
+          emit(e3);
+        }
+      }, ctx);
       return;
     }
 
@@ -176,11 +190,16 @@ function matchPattern(pat, node, env, emit, ctx) {
 
     case 'Obj': {
       if (!isObject(node)) return;
-      // lenient by default: extra keys allowed; '..' flag currently ignored (future: capture).
+      // Track which keys are tested by any assertion
+      const testedKeys = new Set();
+
       // For each entry: all keys matching keyPat must satisfy value pattern.
       let envs = [cloneEnv(env)];
       for (const ent of pat.entries) {
         const keys = objectKeysMatching(node, ent.key);
+        // Mark these keys as tested
+        for (const k of keys) testedKeys.add(k);
+
         if (ent.op === '=' && keys.length === 0) {
           envs = [];
           break;
@@ -202,6 +221,16 @@ function matchPattern(pat, node, env, emit, ctx) {
         envs = next;
         if (!envs.length) break;
       }
+
+      // Check residual slice count if '..' is present
+      if (pat.rest && envs.length > 0) {
+        const untestedCount = Object.keys(node).filter(k => !testedKeys.has(k)).length;
+        const {min, max} = pat.rest;
+        if (untestedCount < min || (max !== null && untestedCount > max)) {
+          envs = [];
+        }
+      }
+
       for (const e of envs) emit(e);
       return;
     }

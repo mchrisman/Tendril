@@ -74,12 +74,14 @@ const Lit = (v) => ({type: 'Lit', value: v});
 const Re = (r) => ({type: 'Re', re: r});
 const Alt = (alts) => ({type: 'Alt', alts});
 const Look = (neg, pat) => ({type: 'Look', neg, pat});
+const Bind = (name, pat) => ({type: 'Bind', name, pat});
 
 const Arr = (items) => ({type: 'Arr', items});
 const Spread = () => ({type: 'Spread'});
 const Quant = (sub, m, n) => ({type: 'Quant', sub, min: m, max: n});
 
-const Obj = (entries, rest = false) => ({type: 'Obj', entries, rest});
+const Obj = (entries, rest = null) => ({type: 'Obj', entries, rest});
+// rest: null (no ..) | {min, max} (..#{min,max})
 const ObjEntry = (key, op, val) => ({type: 'ObjEntry', key, op, val});
 
 // ---------- Rules / Paths ----------
@@ -190,7 +192,7 @@ function parsePatternExpr(p) {
 
 // Primary := Atom | Array | Object | '(' P ')' | '(' ('?='|'?!') P ')'
 function parsePrimary(p) {
-  if (p.peek('str', 'num', 'id', 're', 'any')) return parseAtom(p);
+  if (p.peek('bool', 'null', 'str', 'num', 'id', 're', 'any')) return parseAtom(p);
   if (p.peek('[')) return parseArray(p);
   if (p.peek('{')) return parseObject(p);
   if (p.peek('(')) {
@@ -209,11 +211,14 @@ function parsePrimary(p) {
   p.fail('expected pattern');
 }
 
-// Atom := str | num | id | re | '_'
+// Atom := bool | null | num | str | id | re | '_'
+// Parse order: bool > null > num > str > re > id
 function parseAtom(p) {
   if (p.peek('any')) return (p.eat('any'), Any());
-  if (p.peek('str')) return (Lit(p.eat('str').v));
+  if (p.peek('bool')) return (Lit(p.eat('bool').v));
+  if (p.peek('null')) return (p.eat('null'), Lit(null));
   if (p.peek('num')) return (Lit(p.eat('num').v));
+  if (p.peek('str')) return (Lit(p.eat('str').v));
   if (p.peek('re')) {
     const spec = p.eat('re').v;
     return Re(makeRegExp(spec));
@@ -256,6 +261,17 @@ function parseArray(p) {
 }
 
 function parseArrayItemPrimary(p) {
+  // Handle $symbol bindings
+  if (p.peek('$')) {
+    p.eat('$');
+    const name = p.eat('id').v;
+    if (p.maybe(':')) {
+      const pat = parsePatternExpr(p);
+      return Bind(name, pat);
+    }
+    return Bind(name, Any());  // bare $x => $x:_
+  }
+
   if (p.peek('(')) {
     p.eat('(');
     // group can also be a lookahead if next token is ?= or ?!
@@ -301,19 +317,20 @@ function maybeQuantifier(p) {
   return {m: lo, n: hi};
 }
 
-// Object := '{' ( ObjKV (',' ObjKV)* )? (','?) ( '..' )?  '}'
+// Object := '{' ( ObjKV (',' ObjKV)* )? (','?) ( '..' ('#{' ... '}')? )?  '}'
 // ObjKV  := KeyPat ( '?=' | '=' ) ValPat
 // KeyPat := Atom
 // ValPat := P               // full pattern in value position
 function parseObject(p) {
   p.eat('{');
   const entries = [];
-  let rest = false;
+  let rest = null;
   // allow empty object
   while (!p.peek('}')) {
     if (p.peek('..')) {
       p.eat('..');
-      rest = true;
+      rest = maybeObjectCount(p);
+      if (!rest) rest = {min: 0, max: null}; // default: 0+ (any)
       break;
     }
     // KeyPat
@@ -326,15 +343,37 @@ function parseObject(p) {
     // ValPat
     const val = parsePatternExpr(p);
     entries.push(ObjEntry(keyPat, op, val));
-    // comma-separated KVs
-    if (!p.maybe(',')) {
-      // allow whitespace separation; next could be '..' or '}'
-      if (p.peek('..')) { /* handled at top of loop */
-      } else if (!p.peek('}')) p.fail('expected , or }');
-    }
+    // commas optional between KVs (like in arrays)
+    p.maybe(',');
   }
   p.eat('}');
   return Obj(entries, rest);
+}
+
+// Parse object count: #{...} or #?
+// Returns {min, max} or null
+function maybeObjectCount(p) {
+  if (!p.peek('#')) return null;
+  p.eat('#');
+  if (p.maybe('?')) {
+    return {min: 0, max: null}; // #{0,∞}
+  }
+  if (!p.peek('{')) p.fail('expected { or ? after #');
+  p.eat('{');
+  const lo = p.eat('num').v;
+  let hi = null;
+  if (p.maybe(',')) {
+    if (p.peek('num')) {
+      hi = p.eat('num').v;
+    } else {
+      hi = null; // open-ended: #{m,}
+    }
+  } else {
+    hi = lo; // exact: #{m}
+  }
+  p.eat('}');
+  if (hi !== null && hi < lo) p.fail('count upper < lower');
+  return {min: lo, max: hi};
 }
 
 // ---------- Alternation helpers ----------
@@ -353,7 +392,7 @@ export const AST = {
   KeyLit, KeyVar, KeyPatVar,
   IdxAny, IdxLit, IdxVar, IdxVarLit,
   ValPat, ValVar, ValPatVar,
-  Any, Lit, Re, Alt, Look,
+  Any, Lit, Re, Alt, Look, Bind,
   Arr, Spread, Quant,
   Obj, ObjEntry,
 };

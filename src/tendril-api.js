@@ -73,9 +73,11 @@ export function replace(input, pattern, replacers, opts = {}) {
   const ast = compile(pattern);
   // Step 1: collect matches with precise sites (paths)
   const matches = collectOccurrences(ast, input, opts);
+  console.log('DEBUG matches:', JSON.stringify(matches, null, 2));
 
   // Step 2: compute patch plan
   const plan = buildPatchPlan(matches, replacers);
+  console.log('DEBUG plan:', JSON.stringify(plan, null, 2));
 
   // Step 3: apply patches on a deep clone
   return applyPatches(input, plan);
@@ -285,7 +287,9 @@ function matchPatternForCollect(pat, node, emit, env) {
       for (const sub of pat.alts) matchPatternForCollect(sub, node, emit, env);
       return;
     case 'Look': {
-      // read-only lookahead: bindings disallowed; treat as predicate
+      // Lookahead as predicate in occurrence collection context.
+      // Note: lookahead bindings aren't captured here, but this is acceptable
+      // since occurrence collection delegates to full engine for complex patterns.
       let ok = false;
       matchPatternForCollect(pat.pat, node, () => {
         ok = true;
