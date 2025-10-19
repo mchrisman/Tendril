@@ -10,13 +10,81 @@
   K?=V means for all (key,value) where key matches K, value matches V;
   K=V means for all (key,value) where key matches K, value matches V, *and* there is at least one such
 
-- `..` in objects refrs to the unmatched slice.
+
+- `..` in objects refers to the **untested slice**: the set of all key value pairs whose key did not match any of the key patterns in any of the K=V assertions.
+  Let us avoid the use of the word *anchored* in referring to objects. (It's confusing. The object is 'anchored' in the sense that *all* of the k/v pairs of the object are tested against *all* the assertions. But this doesn't imply that `..` is empty.)
 
 - Rationalize semantics and syntax for singleton vs slice matching:
-    $x:(pat) can bind a single item; bare $x means $x:(_)
-    @x:(pat...) can bind a slice; bare @X means @x:(_*)
-    In objects, @x(K=V...) binds a slice
+    $x:(ARRAY_SLICE_PATTERN) can bind a 0-item or 1-item match; bare $x means $x:(_)
+    @x:(ARRAY_SLICE_PATTERN) can bind a slice (n-item match); bare @X means @x:(_*)
+    In objects, @x(OBJECT_ASSERTION*) binds a slice (set of k/v pairs)
 
+a point of clarification about "@rest": 'rest' is not a special keyword.  '..' in Object patterns is a
+special token that means "the slice of all k/v pairs that matched *none* of the other assertions". You can bind it
+to any @ variable:  @xyz:(..). 
+
+- bare $x or @x is allowed, but if you want to enforce a pattern on the bound object, parentheses are now required:
+  $x:(pat) or @x(slice).
+
+- A `$` variable binds to a scalar; a `@` to a slice.  The terms *scalar* and *slice* refer to *data*, not to *patterns*. (Some patterns cannot be classified as scalar or slice at compile time.)
+- 
+  - In array patterns [ ], all the entries are slice patterns, and a *scalar* is merely an unwrapped slice of length zero or one. Formally, `$x:(pattern)` is a *triple assertion*: the data matches pattern AND the data is a single value AND (unification) if $x was previously bound, the data is equal to the previously bound value. Therefore $x:(_?) and $x:(_*) are both equivalent to $x:(_).
+ 
+Examples:
+```
+    [ .. $x .. ] ~= ['a','b'] => solutions [{x:'a'},{x:'b'}]
+       -- Scalar variables can have multiple solutions, but only one value per solution. 
+       
+    [ $x .. ] ~= ['a','b'] => solutions [{x:'a'}]
+       -- Not {x:undefined}, because the implicit _ wildcard matches one object, not zero objects
+
+    [ $x:(.*) .. ] ~= ['a','b'] => solutions [{x:'a'}]
+       -- Not {x:['a','b']}, because $x is a scalar var.
+       
+    [ @x .. ] ~= ['a','b'] => solutions [{x:[]}, {x:['a']}, {x:['a','b']}]
+    
+     [ $x @y ] =~ [[1,2],[3,4]] => one solution, {x:[1,2], y:[[3,4]]}.  
+         -- That $x is a scalar means that it binds to one item, not multiple items.  But that one item might be an array.
+         
+       Contrast with:
+        [ @x @y ] ~= [[1,2],[3,4]]
+        // Multiple solutions (greedy backtracking):
+        // {x:[], y:[[1,2],[3,4]]}
+        // {x:[[1,2]], y:[[3,4]]}
+        // {x:[[1,2],[3,4]], y:[]}    
+```
+
+  - In object patterns { }, the distinction between a scalar and a slice is observable at compile time. Keys and values are scalars. Slices contain key value *pairs*.  `{ @mySlice:(color=blue) $myKey:(color)=$myValue:(blue) }`
+
+- @x together with $x is a name collision, not permitted.
+
+Discuss: can $x match zero objects?
+
+Test cases:
+Should `[ $x y $x? ]` match `[ 1, 'y', 1 ]` ?  // Reminder: bare `$x` means `$x:(_)`, and _ always binds exactly one object.
+
+Should `[ $x y ($x:(_))? ]` match `[ 1,'y', 1 ]` ?  // Same thing. I think: yes. On the optional branch, the binding expression doesn't even exist, so it can't fail.
+Should `[ $x y $x:(_?) ]` match `[ 1,'y',  1 ]` ?   // I think: yes.
+
+Should `[ [($x:(_))? ..] $x ]` match `[ [1],  1 ]` ? // I think: yes.
+Should `[ [$x:(_?) ..] $x ]` match `[ [1],  1 ]` ? // I think: yes.
+
+Should `[ [($x:(_))? ..] $x ]` match `[ [1],  2 ]` ? // I think: yes.
+Should `[ [$x:(_?) ..] $x ]` match `[ [1],  2 ]` ? // I think: no.
+
+Should `[ [($x:(_))? ..] ($x:(_))? ..]` match `[ [1],  2 ]` ? // I think: yes.
+Should `[ [$x:(_?) ..] $x:(_?) .]` match `[ [1],  2 ]` ? // I think: no
+
+Should `[ [($x:(_))? ..] $x ]` match `[ [1],  null ]` ? // I think: yes
+Should `[ [$x:(_?) ..] $x ]` match `[ [],  null ]` ? // I think: no
+
+Should `[ [($x:(_))? ..] $x ]` match `[ [1] ]` ? // I think: no;
+Should `[ [$x:(_?) ..] $x ]` match `[ [1]  ]` ? // I think: no
+
+Should `[ ($x:(_))? $x ..]` match `[ 1, 'y' ]` ? // I think: Yes
+Should `[ $x:(_?) $x .. ]` match `[ 1, 'y' ]` ? // I think: no.
+
+Should `[ [$x:(1? 2?)] $x ]` match `[ [1] 1 ]` ? // Yes. This is a good example demonstrating why we don't try to prove that a pattern represents a scalar at compile-time.
 
 # Tendril
 
@@ -107,9 +175,11 @@ p1 & p2                    // conjunction (same value matches both)
 [ a b .. ]    ~= ["a","b","c"]       // yes, ".." is the actual syntax
 
 { b=_  c=_ }   ~= { b:1, c:2 }        // every kv assertion satisfied
-{ b=_      }  !~= { b:1, c:2 }
-{ b=_  c=_ }  !~= { b:1 }             // objects anchored by default
-{ b=_  .. }   ~= { a:1, c:2, Z:1 }
+{ b=_      }  !~= { b:1, c:2 }         // objects anchored by default
+{ b=_  c=_ }  !~= { b:1 }             // unsatisfied assertion
+{ b=_  c?=_ }   ~= { b:1 }             // optional assertion
+
+{ b=_  .. }   ~= { a:1, c:2, Z:1 }    // .. Represents all key-value pairs where the keys did not fall into the scope any of the other assertions. 
 
 { /[ab]/=_  /[ad]/=_ }   ~= { a:1 }   // kv assertions can overlap
 { /[ab]/=_  /[ad]/=_ }  !~= { d:1 }
@@ -160,7 +230,7 @@ a*{2,3}?     // lazy
 Each object assertion matches a **slice** of key/value pairs, possibly overlapping, no backtracking.
 ```
 {{ pat1=_  $happy:(pat2=_) }}     // bind subset slice
-{{ a=_  b=_  $rest:.. }}      // bind residual slice
+{{ a=_  b=_  @rest:(..) }}      // bind residual slice
 ```
 
 ---
@@ -173,6 +243,7 @@ k=v #?       === k=v #{0,}      // optional
 k=v          === k=v #{1,}      // default: one or more
 
 ..          === _=_ #?         // allow unknown keys
+.. #{0}     === Object has no extra keys that were not accounted for in the assertions. 
 
 // Multiple ellipsess allowed but redundant
 { .. a=1 .. b=2 }   // valid; warns about redundancy
@@ -391,7 +462,7 @@ Example:
 
 ```
 { pat1=_  $happy:(pat2=_) }       // bind subset slice to $happy
-{ a=_  b=_  $rest:.. }        // bind residual slice
+{ a=_  b=_  @rest:(..) }        // bind residual slice
 ```
 
 ### Vertical/path assertions
@@ -461,7 +532,7 @@ Tendril("{ (_.)*password = $value }")
 **Bind object slices**
 
 ```
-{ /user.*/=_  $contacts:(/contact.*/=_)  $rest:.. }
+{ /user.*/=_  $contacts:(/contact.*/=_)  @rest:(..) }
 ```
 
 **End of Specification**
