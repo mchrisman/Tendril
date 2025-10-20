@@ -2,6 +2,8 @@
 // Supports: alternation '|', lookaheads (?= / ?!), arrays with {m,n}, objects with K=V and K?=V.
 // No sets/maps or replacement markers. Quantifiers allowed only on array items.
 //
+// IMPORTANT: The following grammar comments may more or less reflect what has been built, but it is not consistent with the true specification in README-v5-draft.md. 
+//
 // AST overview (engine consumes this):
 // Program { type:'Program', rules: Path[] }
 // Path    { type:'Path', segs: Seg[] }

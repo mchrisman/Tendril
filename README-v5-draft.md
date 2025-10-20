@@ -1,177 +1,11 @@
 
-# This document
-
-This is the design document for the next version of Tendril. It's not well integrated because it is essentially the old design document prefixed with a list of changes.
+This is the design document for the next version of Tendril. It's not well integrated because it is essentially the old design document with change notes scattered into it.
 
 As for the code, this is a complete rewrite. However, due to ambiguities in the design document (which have hopefully now been resolved) there are major differences between the code and the design outlined here.
 
-NEXT TASK: Please add a TODO annotation at every place of this document that has not been brought into line with the "Changes for V5" section. Don't attempt to fix or change anything, just annotate. If anything is ambiguous, annotate that too.
+NEXT TASK: based on README-v5-draft.md (this document), create a cleaned-up README-v5.md (final draft).
+Remove redundancies. Be elegant and concise. Write in complete sentences, avoiding bullet points for exposition. ( You can use bullet points for lists of things. ) Write for both LLM and human audiences, not assuming any prior knowledge. Divide the document into an engaging pedagogical section and a thorough, complete reference section. Do not touch the grammar. Some improvements have been made since we last spoke. Do not correct anything that you believe to be incorrect. Just call it out. 
 
-# Changes for V5 ( Not yet integrated into this document. )
-
-- 
-- Rationalize semantics for Object patterns:
-  K?=V means for all (key,value) where key matches K, value matches V;
-  K=V means for all (key,value) where key matches K, value matches V, *and* there is at least one such.
-
-
-- `..` in objects refers to the **untested slice**: the set of all key value pairs whose key did not match any of the key patterns in any of the K=V assertions.
-  Let us avoid the use of the word *anchored* in referring to objects. (It's confusing. The object is 'anchored' in the sense that *all* of the k/v pairs of the object are tested against *all* the assertions. But this doesn't imply that `..` is empty.)
-
-- Rationalize semantics and syntax for singleton vs slice matching:
-    $x:(ARRAY_SLICE_PATTERN) can bind a 0-item or 1-item match; bare $x means $x:(_)
-    @x:(ARRAY_SLICE_PATTERN) can bind a slice (n-item match); bare @X means @x:(_*)
-    In objects, @x(OBJECT_ASSERTION*) binds a slice (set of k/v pairs)
-
-a point of clarification about "@rest": 'rest' is not a special keyword.  '..' in Object patterns is a
-special token that means "the slice of all k/v pairs that matched *none* of the other assertions". You can bind it
-to any @ variable:  @xyz:(..). 
-
-- bare $x or @x is allowed, but if you want to enforce a pattern on the bound object, parentheses are now required:
-  $x:(pat) or @x(slice).
-
-- A `$` variable binds to a scalar; a `@` to a slice.  The terms *scalar* and *slice* refer to *data*, not to *patterns*. (Some patterns cannot be classified as scalar or slice at compile time.)
-- 
-  - In array patterns [ ], all the entries are slice patterns, and a *scalar* is merely an unwrapped slice of length zero or one. Formally, `$x:(pattern)` is a *triple assertion*: the data matches pattern AND the data is a single value AND (unification) if $x was previously bound, the data is equal to the previously bound value. Therefore $x:(_?) and $x:(_*) are both equivalent to $x:(_).
- 
-Examples:
-```
-    [ .. $x .. ] ~= ['a','b'] => solutions [{x:'a'},{x:'b'}]
-       -- Scalar variables can have multiple solutions, but only one value per solution. 
-       
-    [ $x .. ] ~= ['a','b'] => solutions [{x:'a'}]
-       -- Not {x:undefined}, because the implicit _ wildcard matches one object, not zero objects
-
-    [ $x:(.*) .. ] ~= ['a','b'] => solutions [{x:'a'}]
-       -- Not {x:['a','b']}, because $x is a scalar var.
-       
-    [ @x .. ] ~= ['a','b'] => solutions [{x:[]}, {x:['a']}, {x:['a','b']}]
-    
-     [ $x @y ] =~ [[1,2],[3,4]] => one solution, {x:[1,2], y:[[3,4]]}.  
-         -- That $x is a scalar means that it binds to one item, not multiple items.  But that one item might be an array.
-         
-       Contrast with:
-        [ @x @y ] ~= [[1,2],[3,4]]
-        // Multiple solutions (greedy backtracking):
-        // {x:[], y:[[1,2],[3,4]]}
-        // {x:[[1,2]], y:[[3,4]]}
-        // {x:[[1,2],[3,4]], y:[]}    
-```
-
-  - In object patterns { }, the distinction between a scalar and a slice is observable at compile time. Keys and values are scalars. Slices contain key value *pairs*.  `{ @mySlice:(color=blue) $myKey:(color)=$myValue:(blue) }`
-
-- @x together with $x is a name collision, not permitted.
-
-Discuss: can $x match zero objects?
-
-Test cases:
-Should `[ $x y $x? ]` match `[ 1, 'y', 1 ]` ?  // Reminder: bare `$x` means `$x:(_)`, and _ always binds exactly one object.
-
-Should `[ $x y ($x:(_))? ]` match `[ 1,'y', 1 ]` ?  // Same thing. I think: yes. On the optional branch, the binding expression doesn't even exist, so it can't fail.
-Should `[ $x y $x:(_?) ]` match `[ 1,'y',  1 ]` ?   // I think: yes.
-
-Should `[ [($x:(_))? ..] $x ]` match `[ [1],  1 ]` ? // I think: yes.
-Should `[ [$x:(_?) ..] $x ]` match `[ [1],  1 ]` ? // I think: yes.
-
-Should `[ [($x:(_))? ..] $x ]` match `[ [1],  2 ]` ? // I think: yes.
-Should `[ [$x:(_?) ..] $x ]` match `[ [1],  2 ]` ? // I think: no.
-
-Should `[ [($x:(_))? ..] ($x:(_))? ..]` match `[ [1],  2 ]` ? // I think: yes.
-Should `[ [$x:(_?) ..] $x:(_?) .]` match `[ [1],  2 ]` ? // I think: no
-
-Should `[ [($x:(_))? ..] $x ]` match `[ [1],  null ]` ? // I think: yes
-Should `[ [$x:(_?) ..] $x ]` match `[ [],  null ]` ? // I think: no
-
-Should `[ [($x:(_))? ..] $x ]` match `[ [1] ]` ? // I think: no;
-Should `[ [$x:(_?) ..] $x ]` match `[ [1]  ]` ? // I think: no
-
-Should `[ ($x:(_))? $x ..]` match `[ 1, 'y' ]` ? // I think: Yes
-Should `[ $x:(_?) $x .. ]` match `[ 1, 'y' ]` ? // I think: no.
-
-Should `[ [$x:(1? 2?)] $x ]` match `[ [1] 1 ]` ? // Yes. This is a good example demonstrating why we don't try to prove that a pattern represents a scalar at compile-time.
-
-## Core Grammar (informal EBNF)
-
-```
-// Regarding recursion: This expresses the desired logical intent, but may need to be refactored to make the recursion work. 
-
-// Regarding optional commas: Note that the lexer splits tokens on whitespace and otherwise treats whitespace as insignificant. 
-
-ROOT_PATTERN            := SINGLETON_PATTERN
-
-IDENT                   := /[a-zA-Z]\w+/
-                         
-S_ITEM                   := '$' IDENT
-S_SLICE                  := '@' IDENT
-
-ITEM                     := '(' ITEM ')'
-                          | S_ITEM
-                          | S_ITEM ':' '(' ITEM ')'
-                          | '_'
-                          | LITERAL
-                          | OBJ
-                          | ARR
-                          | ITEM '|' ITEM     
-                          
-A_SLICE                 := '(' (A_SLICE (','? A_SLICE)*)? ')'
-                          | S_SLICE
-                          | S_SLICE ':' '(' A_SLICE ')'
-                          | S_ITEM
-                          | S_ITEM ':' '(' A_SLICE ')'
-                          | ITEM
-                          | OBJ
-                          | ARR
-                          | A_SLICE A_QUANT        // todo, indicate precedence
-                          | A_SLICE '|' A_SLICE
-                          | '(?=' A_SLICE ')'
-                          | '(?!' A_SLICE ')'    
-                          
-ARR                      := [ (A_SLICE (','? A_SLICE)*)? ]                          
-
-KEY                     := ITEM
-VALUE                   := ITEM
-                          
-O_TERM                  := KEY BREADCRUMB* ('=' | '?=') VALUE O_QUANT?
-                          | '..' O_QUANT?
-                          | S_ITEM ':' O_TERM
-                          
-BREADCRUMB              := '.' KEY 
-                          | '[' KEY ']'
-                          
-O_SLICE                 := '(' (O_SLICE (','? O_SLICE)*)? ')'
-                          | S_SLICE
-                          | S_SLICE ':' '(' O_SLICE* ')'
-                          | O_TERM
-                          | '@_'
-                          
-OBJ                     := '{'  (O_SLICE (','? O_SLICE)*)? '}'
-
-A_QUANT                  := '?' | '??' 
-                          | '+' | '+?' | '++'
-                          | '*' | '*?' | '*+' 
-                          // The following are greedy and possessive.
-                          // Maximums are taken seriously: 
-                          //   [ 0*{2,4} ] does not match [0,0,0,0,0,0,0] 
-                          | '*{' INTEGER '}' //  '*' is deliberate, mirroring '#' quantifiers, and representing multiplication. 
-                          | '*{' INTEGER ',' INTEGER? '}'
-                          | '*{' ',' INTEGER '}'
-
-
-O_QUANT                   := '#' ( '?' | '{' INTEGER (',' INTEGER?)? '}' )
-                         // #?           → #{0,}   (optional, zero or more)
-                         // #{m}         → #{m,m}  (exactly m)
-                         // #{m,n}                 (m to n occurrences)
-                         // #{m,}        → #{m,∞}  (m or more, unbounded)
-
-
-```
-
-
-
-
--------------------------------------------------------------------------
-
-Everything below this line is a copy of the older version and has not yet incorporated the above changes. Where it does not contradict the above, it is still valid.
 
 ------------------------------------------------------------------------
 
@@ -194,7 +28,7 @@ const data = {
 
 const pattern = `{
   planets.$name.size = $size
-  aka = [.. [$name .. $alias .. | $alias:$name ..] .. ] // $name itself as a possible alias
+  aka = [.. [$name .. $alias .. | $alias:($name) ..] .. ] // $name itself as a possible alias
 }`;
 
 Tendril(pattern)
@@ -247,12 +81,12 @@ a=b c=d e=f                // *Three* unordered key/value assertions
 
 ```
 
+
 **Precedence (high → low)**:
 
-    Optional (`?`) 
+    Optional (`?`)
     Breadcrumb operators (`.`, `[]`)
     Adjacenty/commas (in arrays, objects)
-    `&`
     `|`
     Binding (`:`)
     Quantifiers
@@ -261,8 +95,8 @@ a=b c=d e=f                // *Three* unordered key/value assertions
 As usual, parentheses override normal precedence. The lookahead operators come with mandatory parentheses.
 
 ```
-K?=V   // for all (key,value) where key matches K, value matches V
-K=V    // same, and there is at least one such pair
+  K?=V means for all (key,value) where key matches K, value matches V;
+  K=V means for all (key,value) where key matches K, value matches V, *and* there is at least one such.
 ```
 
 `..` refers to the **untested slice**: all key/value pairs whose key did not match any key pattern in any `K=V` or `K?=V` assertion.
@@ -278,7 +112,7 @@ K=V    // same, and there is at least one such pair
 [ a b .. ]    ~= ["a","b","c"]       // yes, ".." is the actual syntax
 
 { b=_  c=_ }   ~= { b:1, c:2 }        // every kv assertion satisfied
-{ b=_      }  !~= { b:1, c:2 }         // objects anchored by default
+{ b=_      }   ~= { b:1, c:2 }        // every kv assertion satisfied
 { b=_  c=_ }  !~= { b:1 }             // unsatisfied assertion
 { b=_  c?=_ }   ~= { b:1 }             // optional assertion
 
@@ -295,13 +129,14 @@ K=V    // same, and there is at least one such pair
 ## Binding
 
 Bindings are Prolog-style. Patterns may be labeled with symbols. The patterns must match the data. **In addition**, if two patterns have the same label, they must match the same (or structurally equivalent) data. This is called **Unification**. The data value is bound to that symbol.
+
 ```
-$name : pattern       // bind if pattern matches
+$name:(pattern)       // bind if pattern matches
 $name                 // shorthand for $name:(_)
 
-[ $x $x:/[ab]/ $y ]   ~= ['a','a','y']
-[ $x $x:/[ab]/ $y ]  !~= ['a','b','y']
-[ $x $x:$y $y ]      ~= ['q','q','q']
+[ $x $x:(/[ab]/) $y ]   ~= ['a','a','y']
+[ $x $x:(/[ab]/) $y ]  !~= ['a','b','y']
+[ $x $x:($y) $y ]      ~= ['q','q','q']
 [ $x:($z $y) $y $z ] ~= ['r','q','q','r']
 ```
 
@@ -312,7 +147,9 @@ $name                 // shorthand for $name:(_)
 * Bare `$x` ≡ `$x:(_)`
 * Bare `@x` ≡ `@x:(_*)`
 * `$x:(pattern)` ensures the data matches `pattern` and is a single value.
-  `$x:(_?)` and `$x:(_*)` both ≡ `$x:(_)`.
+
+  Example: `[ $x:(_?)]` matches `[ 1 ]` but not `[ ]` because $x must bind to a single value.
+  Example: `[ $x:(_*)]` matches `[ 1 ]` but not `[ 1 1 ]` because $x must bind to a single value.  
 
 Examples:
 
@@ -323,16 +160,87 @@ Examples:
 [ $x @y ]    ~= [[1,2],[3,4]]   // {x:[1,2], y:[[3,4]]}
 [ @x @y ]    ~= [[1,2],[3,4]]   // 3 solutions (different splits)
 ```
+- `..` in objects refers to the **untested slice**: the set of all key value pairs whose key did not match any of the key patterns in any of the assertions.
+  Let us avoid the use of the word *anchored* in referring to objects. (It's confusing. The object is 'anchored' in the sense that *all* of the k/v pairs of the object are tested against *all* the assertions. But this doesn't imply that `..` is empty.)
 
+- Rationalize semantics and syntax for singleton vs slice matching. We have two kinds of logic variables: scalars prefixed with '$', and slices prefixed with '@':
+  `$x:(A_SLICE)` can bind $x to exactly one item; bare $x means `$x:(_)`.
+  `@x:(A_SLICE)` can bind @x to zero, one, or more items; bare @X means `@x:(_*)`.
+  In objects, `@x:(O_BODY)` binds a slice (set of k/v pairs). The terms *scalar* and *slice* refer to *data*, not to *patterns*. (Some patterns cannot be classified as scalar or slice at compile time.)
+
+- '..' in Object patterns is a special token that means "the slice of all k/v pairs whose keys did not match any of the key patterns of any of the k/v assertions.
+
+- bare $x or @x is allowed, but if you want to enforce a pattern on the bound object, parentheses are now required:
+  `$x:(pat)` or `@x(slice)`.
+
+-
+  - In array patterns [ ], all the entries are slice patterns, and a *scalar* is merely an unwrapped slice of length exactly one. Formally, `$x:(pattern)` is a *triple assertion*: the data matches pattern AND the data is a single value AND (unification) if $x was previously bound, the data is equal to the previously bound value. Therefore $x:(_?) and $x:(_*) are both equivalent to $x:(_). You can bind `..` to any @ variable:  `@xyz:(..)`.
+
+Examples:
+
+```
+    [ .. $x .. ] ~= ['a','b'] => solutions [{x:'a'},{x:'b'}]
+       -- Scalar variables can have multiple solutions, but only one value per solution. 
+       
+    [ $x .. ] ~= ['a','b'] => solutions [{x:'a'}]
+       -- Not {x:undefined}, because the implicit _ wildcard matches one object, not zero objects
+
+    [ $x:(.*) .. ] ~= ['a','b'] => solutions [{x:'a'}]
+       -- Not {x:['a','b']}, because $x is a scalar var.
+       
+    [ @x .. ] ~= ['a','b'] => solutions [{x:[]}, {x:['a']}, {x:['a','b']}]
+    
+     [ $x @y ] =~ [[1,2],[3,4]] => one solution, {x:[1,2], y:[[3,4]]}.  
+         -- That $x is a scalar means that it binds to one item, not multiple items.  But that one item might be an array.
+         
+       Contrast with:
+        [ @x @y ] ~= [[1,2],[3,4]]
+        // Multiple solutions (greedy backtracking):
+        // {x:[], y:[[1,2],[3,4]]}
+        // {x:[[1,2]], y:[[3,4]]}
+        // {x:[[1,2],[3,4]], y:[]}    
+```
+
+- In object patterns { }, the distinction between a scalar and a slice is observable at compile time. Keys and values are scalars. Slices contain key value *pairs*.  `{ @mySlice:(color=blue) $myKey:(color)=$myValue:(blue) }`
+
+- @x together with $x is a name collision, not permitted.
+
+Test cases:
+Should `[ $x y $x? ]` match `[ 1, 'y', 1 ]` ? Yes.
+
+Should `[ $x y ($x:(_))? ]` match `[ 1,'y', 1 ]` ? // Same thing. I think: yes. On the optional branch, the binding expression doesn't even exist, so it can't fail.
+Should `[ $x y $x:(_?) ]` match `[ 1,'y',  1 ]` ? // I think: yes.
+
+Should `[ [($x:(_))? ..] $x ]` match `[ [1],  1 ]` ? // I think: yes.
+Should `[ [$x:(_?) ..] $x ]` match `[ [1],  1 ]` ? // I think: yes.
+
+Should `[ [($x:(_))? ..] $x ]` match `[ [1],  2 ]` ? // I think: yes.
+Should `[ [$x:(_?) ..] $x ]` match `[ [1],  2 ]` ? // I think: no.
+
+Should `[ [($x:(_))? ..] ($x:(_))? ..]` match `[ [1],  2 ]` ? // I think: yes.
+Should `[ [$x:(_?) ..] $x:(_?) .]` match `[ [1],  2 ]` ? // I think: no
+
+Should `[ [($x:(_))? ..] $x ]` match `[ [1],  null ]` ? // I think: yes
+Should `[ [$x:(_?) ..] $x ]` match `[ [],  null ]` ? // I think: no
+
+Should `[ [($x:(_))? ..] $x ]` match `[ [1] ]` ? // I think: no;
+Should `[ [$x:(_?) ..] $x ]` match `[ [1]  ]` ? // I think: no
+
+Should `[ ($x:(_))? $x ..]` match `[ 1, 'y' ]` ? // I think: Yes
+Should `[ $x:(_?) $x .. ]` match `[ 1, 'y' ]` ? // I think: no.
+
+Should `[ [$x:(1? 2?)] $x ]` match `[ [1] 1 ]` ? // Yes. This is a good example demonstrating why we don't try to prove that a pattern represents a scalar at compile-time.
 ---
 
 ## Quantifiers — Arrays
 
 ```
-a*{2,3}      === a a | a a a
+a*{2,3}      === 2 or 3 repetitions    // greedy,possessive
 a*3          === a*{3,3}
-a*           === a*{0,}         // unbounded
-a+           === a*{1,}
+a*?          === a*{0,}         // not greedy
+a*           === a*{0,}         // greedy
+a*+          === a*{0,}         // greedy, possessive
+a+?, a+, a++ === a*{1,}         // Not greedy, greedy, greedy possessive
 a?           === a*{0,1}
 ..          === _*?            // lazy wildcard slice
 ```
@@ -348,9 +256,9 @@ Each key/value assertion operates over *all* pairs, then counts matches (no back
 
 ```
 k=v #{2,4}   // object has 2–4 keys matching k
-k=v #?       // optional (0 or more)
-k=v          // default: at least one
+k=v #{0}     // object has no keys matching k
 .. #{0}      // require no untested pairs
+
 ```
 
 ---
@@ -378,6 +286,107 @@ k=v          // default: at least one
 
 # Language Reference (Technical)
 
+## Core Grammar (informal EBNF)
+
+// Regarding recursion: This expresses the desired logical intent, but may need to be refactored to make the recursion work.
+
+// Regarding optional commas: Note that the lexer splits tokens on whitespace and otherwise treats whitespace as insignificant.
+
+## Literals
+
+**Literals and matching**
+
+* Numbers match number primitives using strict equality.
+* Booleans match boolean primitives using strict equality.
+* Strings: quoted or bare (unless keyword), match string primitives using strict equality.
+* Regex: matches strings via JS engine.
+
+```
+INTEGER                 :=  decimal integer (matches Number type)
+BOOLEAN                 :=  true | false
+QUOTED_STRING           :=  quoted string literal
+REGEX                   :=  /pattern/flags (JS regex literal)
+BAREWORD                :=  [A-Za-z_][A-Za-z0-9_]* unless a keyword
+_                       :=  singleton wildcard (matches any single value)
+
+ LITERAL := INTEGER | BOOLEAN | QUOTED_STRING | REGEX | BAREWORD 
+ 
+IDENT                   := /[a-zA-Z]\w*/
+                         
+
+ROOT_PATTERN            := ITEM
+
+S_ITEM                   := '$' IDENT
+S_SLICE                  := '@' IDENT
+
+ITEM                     := '(' ITEM ')'
+                          | S_ITEM
+                          | S_ITEM ':' '(' ITEM ')'
+                          | '_'
+                          | LITERAL
+                          | OBJ
+                          | ARR
+                          | ITEM '|' ITEM     
+
+A_BODY                   :=  (A_SLICE (','? A_SLICE)*)?
+    
+A_SLICE                  := '(' A_BODY ')'
+                          | S_SLICE
+                          | S_SLICE ':' '(' A_SLICE ')'
+                          | S_ITEM
+                          | S_ITEM ':' '(' A_SLICE ')'
+                          | ITEM
+                          | OBJ
+                          | ARR
+                          | A_SLICE A_QUANT        // todo, indicate precedence
+                          | A_SLICE '|' A_SLICE
+                          | '(?=' A_SLICE ')'
+                          | '(?!' A_SLICE ')'    
+                          
+ARR                      := '[' A_BODY ']'                          
+
+KEY                     := ITEM
+VALUE                   := ITEM
+
+O_TERM                  := KEY BREADCRUMB* ('=' | '?=') VALUE O_QUANT?
+                          | '..' O_QUANT?
+                          | S_ITEM ':' '(' O_TERM ')'
+                          
+B_QUANT                 := '?' | '+' | '*'                          
+BREADCRUMB              := '.' KEY 
+                          | '[' KEY ']'
+                          | '(' '.' KEY ')' B_QUANT 
+                          | '[' KEY ']' B_QUANT
+                          
+                          
+O_BODY                  := (O_SLICE (','? O_SLICE)*)? 
+
+O_SLICE                 := '(' O_BODY ')'
+                          | S_SLICE
+                          | S_SLICE ':' '(' O_SLICE* ')'
+                          | O_TERM
+
+OBJ                     := '{' O_BODY '}'
+
+A_QUANT                  := '?'  
+                          | '+' | '+?' | '++'   // greedy, not greedy, greedy possessive 
+                          | '*' | '*?' | '*+'   // greedy, not greedy, greedy possessive
+                          // The following are greedy and possessive.
+                          | '*{' INTEGER '}' //  '*' is deliberate, mirroring '#' quantifiers, and representing multiplication. 
+                          | '*{' INTEGER ',' INTEGER '}'
+                          | '*{' INTEGER ',' '}'
+                          | '*{' ',' INTEGER '}'
+
+
+O_QUANT                   := '#' ( '?' | '{' INTEGER (',' INTEGER?)? '}' )
+                         // #?           → #{0,}   (optional, zero or more)
+                         // #{m}         → #{m,m}  (exactly m)
+                         // #{m,n}                 (m to n occurrences)
+                         // #{m,}        → #{m,∞}  (m or more, unbounded)
+
+
+```
+
 ## Conventions
 
 * **Whitespace & comments**
@@ -392,35 +401,11 @@ k=v          // default: at least one
     * `foo ~= bar` means `Tendril("foo").match(bar) !== null`
     * `===` indicates syntactic or semantic equivalence between patterns.
 
-* **Precedence (high → low)**
-  Parentheses, quantifiers, `.`, space (array adjacency), `&`, `|`.
-
 * **Data model**
   JSON-like: objects, arrays, strings, numbers, booleans, null.
   Regex literals use JavaScript’s regex syntax.
 
 ---
-
-## Lexical Atoms
-
-// To do, move this to the grammar section. 
-```
-INTEGER                 // decimal integer (matches Number type)
-BOOLEAN                 // true | false
-QUOTED_STRING           // quoted string literal
-REGEX                   // /pattern/flags (JS regex literal)
-BAREWORD                // [A-Za-z_][A-Za-z0-9_]* unless a keyword
-_                       // singleton wildcard (matches any single value)
-SYMBOL                  // $[A-Za-z_][A-Za-z0-9_]* (logic variable)
-```
-
-**Literals and matching**
-
-* Numbers match number primitives using strict equality.
-* Booleans match boolean primitives using strict equality.
-* Strings: quoted or bare (unless keyword), match string primitives using strict equality.
-* Regex: matches strings via JS engine.
-
 ---
 
 ---
@@ -429,7 +414,6 @@ SYMBOL                  // $[A-Za-z_][A-Za-z0-9_]* (logic variable)
 
 ```
 p1 | p2                   // alternation
-p1 & p2                   // conjunction on a single value
 a.b=c                     // vertical/path assertion (right-associative)
 [a].b=c                   // index/key indirection
 ```
@@ -441,29 +425,29 @@ a.b=c                     // vertical/path assertion (right-associative)
 * **Sequencing** is by space inside `[..]`.
 * **Quantifiers**:
 
-  ```
-  a*{2,3}   === a a | a a a
-  a*3       === a*{3,3}
-  a*        === a*{0,}
-  a+        === a*{1,}
-  a?        === a*{0,1}
-  a*?       // lazy
+```
+  // See grammar for complete list
+  a*{2,3}
+  a*+
+  a+
+  a?
   ..       === _*?       // lazy wildcard slice
-  ```
+```
+  
 * **Nested quantifiers** are allowed via grouping:
 
   ```
   [ ((a b)+ c)*2 ]  ~=  [a,b,a,b,c,a,b,a,b,c]
   ```
-* Arrays are **anchored by default**; `[a b] !~= [a b c]`.
+* Arrays are **anchored by default**; i.e. `[a b] !~= [a b c]`.
 
 ---
 
 ## Binding and Unification
 
-* `$name : pattern` attempts to match the data to the pattern, and if successful, binds `$name` to the matched data. The pattern must be a singleton pattern, not a slice pattern.
-* Bare `$name` is shorthand for `$name:_`.
-* **Unification** If the same symbol occurs more than once, e.g. [ $x:pattern1 $x:pattern2 ]:
+* `$name:(pattern)` attempts to match the data to the pattern, and if successful, binds `$name` to the matched data. The pattern must be a singleton pattern, not a slice pattern.
+* Bare `$name` is shorthand for `$name:(_)`.
+* **Unification** If the same symbol occurs more than once, e.g. `[ $x:(pattern1) $x:(pattern2) ]`:
     - First pattern1 is matched. (Abort on failure.) The first $x is set to that matched value.
     - Then pattern2 is _independently_ matched. (Abort on failure.) The second $x is set to that matched value.
     - Then the two $x values are asserted to be structurally equal using strict equality. (Abort on failure.)
@@ -471,9 +455,9 @@ a.b=c                     // vertical/path assertion (right-associative)
 Examples:
 
 ```
-[ $x $x:/[ab]/ $y ]      ~= ['a','a','y']
-[ $x $x:/[ab]/ $y ]     !~= ['a','b','y']
-[ $x $x:$y $y ]          ~= ['q','q','q']
+[ $x $x:(/[ab]/) $y ]      ~= ['a','a','y']
+[ $x $x:(/[ab]/) $y ]     !~= ['a','b','y']
+[ $x $x:($y) $y ]          ~= ['q','q','q']
 [ $x:($z $y) $y $z ]     ~= ['r','q','q','r']
 
 // Structural equality (deep comparison)
@@ -490,12 +474,12 @@ Examples:
 * Assertions are **conjunctive** and **non-exclusive**; a single property may satisfy several.
 
 Example:
-
 ```
-{ /[ab].*/=22  /[bc].*/=22  xq*3 }  ~=  { b:22, c:22 }
+{ /[ab].*/=22  /[bc].*/=22 }  ~=  { b:22, c:22 }
 ```
 
 ### Binding slices
+
 
 ```
 { pat1=_  $happy:(pat2=_) }       // bind subset slice to $happy
@@ -510,22 +494,9 @@ Example:
 { ((a.b.)*3)c=d }      ~= { a:{ b:{ a:{ b:{ a:{ b:{ c:"d" }}}}}}}
 ```
 
-Objects are **anchored by default**; `{a=b} !~= {a:b, c=d}`.
 
 ---
 
-## Sets and Maps
-
-```
-{{ a b c }}                // Set pattern (double braces) - matches Sets ONLY
-{ k=v  k2=v2 } as Map      // Map pattern - matches Maps ONLY (not plain objects)
-{ k=v  k2=v2 }             // Object pattern - matches plain objects ONLY (not Maps)
-// Note: '{ } as Set' is a syntax error - use {{ }} for sets
-```
-
-These use similar syntax but create distinct AST nodes with different matching semantics.
-
----
 
 ## Lookahead and Negation
 
@@ -561,13 +532,14 @@ Tendril(`{
 
 **Redact sensitive fields**
 
+<!-- TODO: AMBIGUOUS - The pattern "_(._)*.password" is syntactically unclear. Is this meant to match paths like "foo.bar.password"? According to the grammar, this would be parsed as: KEY='_', BREADCRUMB*='(._)*', but then where does '.password' fit? Based on line 291-293 example, breadcrumb quantifiers work like ((a.b.)*3)c, so maybe this should be "((._)*.password)" or "_((._)*.password)"? Clarify the intended syntax and semantics. -->
+
 ```js
-Tendril("{ (_.)*password = $value }")
+Tendril("{ _(._)*.password = $value }")
   .replaceAll(input, $ => ({ $value: "REDACTED" }));
 ```
 
 **Bind object slices**
-
 ```
 { /user.*/=_  $contacts:(/contact.*/=_)  @rest:(..) }
 ```

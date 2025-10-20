@@ -5,30 +5,77 @@ import {
   bindScalar, bindSlice, cloneEnv, isBound,
 } from './microparser.js';
 
-// Public entry: evaluate a parsed Program AST on input, return list of env Maps.
+// ------------- Solution structure: {env, sites} -------------
+// Solution tracks both bindings (env) and where they were bound (sites)
+// Site kinds:
+//  - scalar: {kind: 'scalar', path: [], valueRef: obj}
+//  - slice (array): {kind: 'slice', path: [], sliceStart: n, sliceEnd: m, valueRefs: [obj1, ...]}
+//  - slice (object): {kind: 'slice', path: [], keys: ['a', ...], valueRefs: {a: obj1, ...}}
+
+function newSolution() {
+  return {env: new Map(), sites: new Map()};
+}
+
+function cloneSolution(sol) {
+  const sites = new Map();
+  for (const [k, v] of sol.sites) {
+    sites.set(k, [...v]); // shallow copy of site array
+  }
+  return {env: cloneEnv(sol.env), sites};
+}
+
+function recordScalarSite(sol, varName, path, valueRef) {
+  if (!sol.sites.has(varName)) {
+    sol.sites.set(varName, []);
+  }
+  sol.sites.get(varName).push({kind: 'scalar', path: [...path], valueRef});
+}
+
+function recordSliceSite(sol, varName, path, sliceStart, sliceEnd, valueRefs) {
+  if (!sol.sites.has(varName)) {
+    sol.sites.set(varName, []);
+  }
+  sol.sites.get(varName).push({
+    kind: 'slice',
+    path: [...path],
+    sliceStart,
+    sliceEnd,
+    valueRefs: [...valueRefs],
+  });
+}
+
+// Public entry: evaluate a parsed Program AST on input, return list of solutions.
+// Each solution: {bindings: Object, sites: Map<varName, Site[]>}
 export function matchProgram(ast, input, opts = {}) {
   const maxSteps = opts.maxSteps ?? 20000;
   const ctx = {steps: 0, maxSteps};
-  let envs = [new Map()];
+  let solutions = [newSolution()];
 
-  for (const path of ast.rules) {
+  for (const rulePath of ast.rules) {
     const next = [];
-    for (const env of envs) {
-      walkPath(path.segs, 0, input, env, (e) => next.push(e), ctx);
+    for (const sol of solutions) {
+      walkPath(rulePath.segs, 0, input, [], sol, (s) => next.push(s), ctx);
       guard(ctx);
     }
-    envs = next;
-    if (!envs.length) break;
+    solutions = next;
+    if (!solutions.length) break;
   }
-  return envs;
+
+  // Convert to public API format
+  return solutions.map(sol => ({
+    bindings: Object.fromEntries(
+      Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
+    ),
+    sites: sol.sites,
+  }));
 }
 
 // ------------- Core path walker -------------
 
-function walkPath(segs, i, node, env, emit, ctx) {
+function walkPath(segs, i, node, path, sol, emit, ctx) {
   guard(ctx);
   if (i === segs.length) {
-    emit(cloneEnv(env));
+    emit(cloneSolution(sol));
     return;
   }
 
@@ -39,7 +86,7 @@ function walkPath(segs, i, node, env, emit, ctx) {
       if (!isObject(node)) return;
       for (const k of Object.keys(node)) {
         if (!keyAtomOk(seg.pat, k)) continue;
-        walkPath(segs, i + 1, node[k], env, emit, ctx);
+        walkPath(segs, i + 1, node[k], [...path, k], sol, emit, ctx);
       }
       return;
     }
@@ -47,25 +94,27 @@ function walkPath(segs, i, node, env, emit, ctx) {
       if (!isObject(node)) return;
       for (const k of Object.keys(node)) {
         if (!keyAtomOk(seg.pat, k)) continue;
-        const e = cloneEnv(env);
-        if (!bindScalar(e, seg.name, k)) continue;
-        walkPath(segs, i + 1, node[k], e, emit, ctx);
+        const s = cloneSolution(sol);
+        if (!bindScalar(s.env, seg.name, k)) continue;
+        recordScalarSite(s, seg.name, path, k);
+        walkPath(segs, i + 1, node[k], [...path, k], s, emit, ctx);
       }
       return;
     }
     case 'KeyVar': {
       if (!isObject(node)) return;
-      const bound = env.get(seg.name)?.value;
+      const bound = sol.env.get(seg.name)?.value;
       if (bound != null) {
         if (Object.prototype.hasOwnProperty.call(node, bound)) {
-          walkPath(segs, i + 1, node[bound], env, emit, ctx);
+          walkPath(segs, i + 1, node[bound], [...path, bound], sol, emit, ctx);
         }
         return;
       }
       for (const k of Object.keys(node)) {
-        const e = cloneEnv(env);
-        if (!bindScalar(e, seg.name, k)) continue;
-        walkPath(segs, i + 1, node[k], e, emit, ctx);
+        const s = cloneSolution(sol);
+        if (!bindScalar(s.env, seg.name, k)) continue;
+        recordScalarSite(s, seg.name, path, k);
+        walkPath(segs, i + 1, node[k], [...path, k], s, emit, ctx);
       }
       return;
     }
@@ -74,55 +123,59 @@ function walkPath(segs, i, node, env, emit, ctx) {
       if (!Array.isArray(node)) return;
       for (let a = 0; a < node.length; a++) {
         if (!(a in node)) continue;
-        walkPath(segs, i + 1, node[a], env, emit, ctx);
+        walkPath(segs, i + 1, node[a], [...path, a], sol, emit, ctx);
       }
       return;
     }
     case 'IdxLit': {
       if (!Array.isArray(node)) return;
       const a = seg.idx;
-      if (a in node) walkPath(segs, i + 1, node[a], env, emit, ctx);
+      if (a in node) walkPath(segs, i + 1, node[a], [...path, a], sol, emit, ctx);
       return;
     }
     case 'IdxVarLit': {
       if (!Array.isArray(node)) return;
       const a = seg.idx;
-      const e = cloneEnv(env);
-      if (!bindScalar(e, seg.name, a)) return;
-      if (a in node) walkPath(segs, i + 1, node[a], e, emit, ctx);
+      const s = cloneSolution(sol);
+      if (!bindScalar(s.env, seg.name, a)) return;
+      recordScalarSite(s, seg.name, path, a);
+      if (a in node) walkPath(segs, i + 1, node[a], [...path, a], s, emit, ctx);
       return;
     }
     case 'IdxVar': {
       if (!Array.isArray(node)) return;
-      const b = env.get(seg.name)?.value;
+      const b = sol.env.get(seg.name)?.value;
       if (Number.isInteger(b)) {
-        if (b in node) walkPath(segs, i + 1, node[b], env, emit, ctx);
+        if (b in node) walkPath(segs, i + 1, node[b], [...path, b], sol, emit, ctx);
         return;
       }
       for (let a = 0; a < node.length; a++) {
         if (!(a in node)) continue;
-        const e = cloneEnv(env);
-        if (!bindScalar(e, seg.name, a)) continue;
-        walkPath(segs, i + 1, node[a], e, emit, ctx);
+        const s = cloneSolution(sol);
+        if (!bindScalar(s.env, seg.name, a)) continue;
+        recordScalarSite(s, seg.name, path, a);
+        walkPath(segs, i + 1, node[a], [...path, a], s, emit, ctx);
       }
       return;
     }
 
     case 'ValPat': {
-      matchPattern(seg.pat, node, env, emit, ctx);
+      matchPattern(seg.pat, node, path, sol, emit, ctx);
       return;
     }
     case 'ValVar': {
-      const e = cloneEnv(env);
-      if (!bindScalar(e, seg.name, node)) return;
-      emit(e);
+      const s = cloneSolution(sol);
+      if (!bindScalar(s.env, seg.name, node)) return;
+      recordScalarSite(s, seg.name, path, node);
+      emit(s);
       return;
     }
     case 'ValPatVar': {
-      matchPattern(seg.pat, node, env, (e) => {
-        const e2 = cloneEnv(e);
-        if (!bindScalar(e2, seg.name, node)) return;
-        emit(e2);
+      matchPattern(seg.pat, node, path, sol, (s) => {
+        const s2 = cloneSolution(s);
+        if (!bindScalar(s2.env, seg.name, node)) return;
+        recordScalarSite(s2, seg.name, path, node);
+        emit(s2);
       }, ctx);
       return;
     }
@@ -134,24 +187,24 @@ function walkPath(segs, i, node, env, emit, ctx) {
 
 // ------------- Pattern matching -------------
 
-function matchPattern(pat, node, env, emit, ctx) {
+function matchPattern(pat, node, path, sol, emit, ctx) {
   guard(ctx);
   switch (pat.type) {
     case 'Any':
-      emit(cloneEnv(env));
+      emit(cloneSolution(sol));
       return;
 
     case 'Lit':
-      if (Object.is(node, pat.value)) emit(cloneEnv(env));
+      if (Object.is(node, pat.value)) emit(cloneSolution(sol));
       return;
 
     case 'Re':
-      if (pat.re.test(String(node))) emit(cloneEnv(env));
+      if (pat.re.test(String(node))) emit(cloneSolution(sol));
       return;
 
     case 'Alt': {
       for (const sub of pat.alts) {
-        matchPattern(sub, node, env, emit, ctx);
+        matchPattern(sub, node, path, sol, emit, ctx);
         guard(ctx);
       }
       return;
@@ -159,24 +212,25 @@ function matchPattern(pat, node, env, emit, ctx) {
 
     case 'Look': {
       // Zero-width assertion; bindings from successful positive lookahead persist.
-      let matchedEnv = null;
-      matchPattern(pat.pat, node, cloneEnv(env), (e2) => {
-        if (!matchedEnv) matchedEnv = e2;  // capture first successful match
+      let matchedSol = null;
+      matchPattern(pat.pat, node, path, cloneSolution(sol), (s2) => {
+        if (!matchedSol) matchedSol = s2;  // capture first successful match
       }, ctx);
 
-      const matched = (matchedEnv !== null);
+      const matched = (matchedSol !== null);
       if ((matched && !pat.neg) || (!matched && pat.neg)) {
-        emit(matched ? matchedEnv : cloneEnv(env));
+        emit(matched ? matchedSol : cloneSolution(sol));
       }
       return;
     }
 
     case 'Bind': {
       // Match inner pattern, then bind variable to node if successful
-      matchPattern(pat.pat, node, env, (e2) => {
-        const e3 = cloneEnv(e2);
-        if (bindScalar(e3, pat.name, node)) {
-          emit(e3);
+      matchPattern(pat.pat, node, path, sol, (s2) => {
+        const s3 = cloneSolution(s2);
+        if (bindScalar(s3.env, pat.name, node)) {
+          recordScalarSite(s3, pat.name, path, node);
+          emit(s3);
         }
       }, ctx);
       return;
@@ -184,7 +238,7 @@ function matchPattern(pat, node, env, emit, ctx) {
 
     case 'Arr': {
       if (!Array.isArray(node)) return;
-      matchArrayAnchored(pat.items, node, env, emit, ctx);
+      matchArrayAnchored(pat.items, node, path, sol, emit, ctx);
       return;
     }
 
@@ -194,44 +248,44 @@ function matchPattern(pat, node, env, emit, ctx) {
       const testedKeys = new Set();
 
       // For each entry: all keys matching keyPat must satisfy value pattern.
-      let envs = [cloneEnv(env)];
+      let solutions = [cloneSolution(sol)];
       for (const ent of pat.entries) {
         const keys = objectKeysMatching(node, ent.key);
         // Mark these keys as tested
         for (const k of keys) testedKeys.add(k);
 
         if (ent.op === '=' && keys.length === 0) {
-          envs = [];
+          solutions = [];
           break;
         }
-        // fold: for each existing env, all keys must match
+        // fold: for each existing solution, all keys must match
         let next = [];
-        for (const e0 of envs) {
-          let okForAll = [e0];
+        for (const s0 of solutions) {
+          let okForAll = [s0];
           for (const k of keys) {
             let okNext = [];
-            for (const e1 of okForAll) {
-              matchPattern(ent.val, node[k], e1, (e2) => okNext.push(e2), ctx);
+            for (const s1 of okForAll) {
+              matchPattern(ent.val, node[k], [...path, k], s1, (s2) => okNext.push(s2), ctx);
             }
             okForAll = okNext;
             if (!okForAll.length) break;
           }
           next = next.concat(okForAll);
         }
-        envs = next;
-        if (!envs.length) break;
+        solutions = next;
+        if (!solutions.length) break;
       }
 
       // Check residual slice count if '..' is present
-      if (pat.rest && envs.length > 0) {
+      if (pat.rest && solutions.length > 0) {
         const untestedCount = Object.keys(node).filter(k => !testedKeys.has(k)).length;
         const {min, max} = pat.rest;
         if (untestedCount < min || (max !== null && untestedCount > max)) {
-          envs = [];
+          solutions = [];
         }
       }
 
-      for (const e of envs) emit(e);
+      for (const s of solutions) emit(s);
       return;
     }
 
@@ -242,14 +296,14 @@ function matchPattern(pat, node, env, emit, ctx) {
 
 // ------------- Array machinery -------------
 
-function matchArrayAnchored(items, arr, env, emit, ctx) {
+function matchArrayAnchored(items, arr, path, sol, emit, ctx) {
   // Anchored: start at index 0 and must end at arr.length
-  stepItems(0, 0, env);
+  stepItems(0, 0, sol);
 
-  function stepItems(ixItem, ixArr, eIn) {
+  function stepItems(ixItem, ixArr, sIn) {
     guard(ctx);
     if (ixItem === items.length) {
-      if (ixArr === arr.length) emit(cloneEnv(eIn));
+      if (ixArr === arr.length) emit(cloneSolution(sIn));
       return;
     }
     const it = items[ixItem];
@@ -259,7 +313,7 @@ function matchArrayAnchored(items, arr, env, emit, ctx) {
       // try consuming k elements, k from 0..(remaining)
       const maxK = arr.length - ixArr;
       for (let k = 0; k <= maxK; k++) {
-        stepItems(ixItem + 1, ixArr + k, eIn);
+        stepItems(ixItem + 1, ixArr + k, sIn);
         if (ctx.steps > ctx.maxSteps) break;
       }
       return;
@@ -267,31 +321,31 @@ function matchArrayAnchored(items, arr, env, emit, ctx) {
 
     // Quantified item: repeat sub m..n times over consecutive elements
     if (it.type === 'Quant') {
-      return quantOnArray(it.sub, it.min, it.max, ixItem, ixArr, eIn);
+      return quantOnArray(it.sub, it.min, it.max, ixItem, ixArr, sIn);
     }
 
     // Regular pattern item — match one element at current index
     if (ixArr >= arr.length) return;
-    matchPattern(it, arr[ixArr], eIn, (e2) => {
-      stepItems(ixItem + 1, ixArr + 1, e2);
+    matchPattern(it, arr[ixArr], [...path, ixArr], sIn, (s2) => {
+      stepItems(ixItem + 1, ixArr + 1, s2);
     }, ctx);
   }
 
-  function quantOnArray(sub, m, n, ixItem, ixArr, eIn) {
+  function quantOnArray(sub, m, n, ixItem, ixArr, sIn) {
     // Consume exactly k repetitions for some k ∈ [m..n]
     const maxRep = Math.min(n, arr.length - ixArr);
 
     // DP-like iterative expansion to avoid deep recursion explosion
-    let frontier = [{idx: ixArr, env: cloneEnv(eIn), reps: 0}];
+    let frontier = [{idx: ixArr, sol: cloneSolution(sIn), reps: 0}];
 
     // First, ensure we can reach at least m reps
     for (let r = 0; r < m; r++) {
       const next = [];
       for (const st of frontier) {
-        const {idx, env} = st;
+        const {idx, sol} = st;
         if (idx >= arr.length) continue;
-        matchPattern(sub, arr[idx], env, (e2) => {
-          next.push({idx: idx + 1, env: e2, reps: st.reps + 1});
+        matchPattern(sub, arr[idx], [...path, idx], sol, (s2) => {
+          next.push({idx: idx + 1, sol: s2, reps: st.reps + 1});
         }, ctx);
       }
       frontier = next;
@@ -301,23 +355,23 @@ function matchArrayAnchored(items, arr, env, emit, ctx) {
     // Having satisfied m, allow up to n with early handoff to next item at each stage
     // First, handoff with exactly m
     for (const st of frontier) {
-      stepItems(ixItem + 1, st.idx, st.env);
+      stepItems(ixItem + 1, st.idx, st.sol);
     }
 
     // Then extend from m+1 to n
     for (let r = m + 1; r <= maxRep; r++) {
       const grown = [];
       for (const st of frontier) {
-        const {idx, env} = st;
+        const {idx, sol} = st;
         if (idx >= arr.length) continue;
-        matchPattern(sub, arr[idx], env, (e2) => {
-          grown.push({idx: idx + 1, env: e2, reps: st.reps + 1});
+        matchPattern(sub, arr[idx], [...path, idx], sol, (s2) => {
+          grown.push({idx: idx + 1, sol: s2, reps: st.reps + 1});
         }, ctx);
       }
       frontier = grown;
       if (!frontier.length) break;
       for (const st of frontier) {
-        stepItems(ixItem + 1, st.idx, st.env);
+        stepItems(ixItem + 1, st.idx, st.sol);
       }
     }
   }
