@@ -345,27 +345,62 @@ Bind object slices:
 ### API sketch
 
 **Query API**:
-- `Tendril(pattern).solutions(data)` returns an iterable of solution environments. Each environment contains:
-  - `.bindings`: map from variable names to bound values (scalars with `$`, slices with `@`)
-  - `.at`: map from variable names to site descriptors (for replacement)
-- `.all(data)` returns all solutions as an array
-- `.match(data)` returns the first solution or null
-- `.project(fn)` maps each solution's bindings through `fn`
 
-**Replacement API**:
-Use `replace` to replace 
-- `.replace(data, fn)` applies transformations using **only the first solution**. The function `fn(bindings)` returns an object like `{varName: newValue}`. Variable names can be with or without the `$`/`@` prefix. Use `$0` to replace the entire match.
-- `.replaceAll(data, fn)` is a convenience: equivalent to `.replace(data, b => ({$0: fn(b)}))`
-
-**Replacing slices**:
+Several convenience methods are provided (todo, list them), covering the primary API which is more complex and powerful.
 ```
-Tendril("[1 @x:(2? 3) 4]").replace([1,3,4], (_)=>)
+    Tendril(pattern).solutions(data)
+    Tendril(pattern).occurrences(data)
+```    
+**Bound variables**
+Each solution or occurrence returns a map of bound variables, including:
+$ — scalar variables
+@ — slice variables (wrapped in Slice objects)
+```
+    firstResult = Tendril("[ $x:(1) @y:(2 3) { k=$k @z:(..) }]")
+           .solutions([1, 2, 3, {k:"value", p:true, q:false}]).first()
+    
+    firstResult.bindings == 
+    {
+        x:1, 
+        y:Slice.array(2,3) // Representing a contiguous subsequence of an array, 
+                           // not a complete array. 
+        k:"value"
+        z:Slice.object({p:true, q:false}) // Representing a subset of an object's properties, 
+                                   // not a complete object. 
+    }                  
+```
+**Replacement**
+The Replacement API lets you specify a function that generates replacements.
 
+Replace the entire input:
+```
+// swap x and y
+Tendril("[$x $y]").replace([3,4], var => [ var.y, var.x ])  // [4,3]
+
+// swap slices; use the familiar spreading operator
+Tendril("[@x 99 @y]").replace([1,2,99,4], var => [...var.y, 99, ...var.x])  // [4,3,99,2]
 ```
 
-**Greedy matching**: All quantifiers are greedy, meaning longer matches are emitted first. This ensures `.replace()` operates on the longest/best match. To see all alternative matches, use `.all(data)`.
+Or replace just the matched parts (bound variables):  
+```
+// replace all occurrences of slice variables
+const input = [
+  { light: "entry", switch: "on" },
+  { light: "kitchen", switch: "off" }
+];
 
-The illustrative `~=` operator in this document is not an API.
+Tendril("[{ @s:(switch=_) ..}*]")
+  .replaceAll(input, vars => ({ s: Slice.object({ switch: "auto" }) }));
+
+// => [
+//      { light: "entry", switch: "auto" },
+//      { light: "kitchen", switch: "auto" }
+//    ]
+```
+
+Note: Replacements modify the original data in place.
+If you want to preserve it, deep-clone your input first.
+
 
 ---
 
