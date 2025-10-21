@@ -4,6 +4,7 @@
 import {
   bindScalar, bindSlice, cloneEnv, isBound,
 } from './microparser.js';
+import {Slice} from './tendril-api.js';
 
 // ------------- Solution structure: {env, sites} -------------
 // Solution tracks both bindings (env) and where they were bound (sites)
@@ -48,18 +49,96 @@ function recordSliceSite(sol, varName, path, sliceStart, sliceEnd, valueRefs) {
 // Each solution: {bindings: Object, sites: Map<varName, Site[]>}
 export function match(ast, input, opts = {}) {
   const maxSteps = opts.maxSteps ?? 20000;
-  const ctx = {steps: 0, maxSteps};
+  const debug = opts.debug;
+  const ctx = {steps: 0, maxSteps, debug};
   const solutions = [];
 
   matchItem(ast, input, [], newSolution(), (sol) => solutions.push(sol), ctx);
 
-  // Convert to public API format
-  return solutions.map(sol => ({
-    bindings: Object.fromEntries(
+  // Convert to public API format and add $0 binding
+  return solutions.map(sol => {
+    const bindings = Object.fromEntries(
       Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
-    ),
-    sites: sol.sites,
-  }));
+    );
+
+    // Add $0 binding for the entire matched value
+    bindings['0'] = input;
+
+    // Add site for $0
+    const sites = new Map(sol.sites);
+    sites.set('0', [{kind: 'scalar', path: [], valueRef: input}]);
+
+    return {bindings, sites};
+  });
+}
+
+// Scan mode: find all occurrences at any depth
+export function scan(ast, input, opts = {}) {
+  const maxSteps = opts.maxSteps ?? 20000;
+  const debug = opts.debug;
+  const ctx = {steps: 0, maxSteps, debug};
+  const solutions = [];
+
+  // Helper: recursively scan value at path
+  function scanValue(value, path) {
+    guard(ctx);
+
+    // Try matching pattern at this position
+    matchItem(ast, value, path, newSolution(), (sol) => solutions.push(sol), ctx);
+
+    // Recursively descend into structure
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        scanValue(value[i], [...path, i]);
+      }
+    } else if (value && typeof value === 'object') {
+      for (const key of Object.keys(value)) {
+        scanValue(value[key], [...path, key]);
+      }
+    }
+  }
+
+  scanValue(input, []);
+
+  // Convert to public API format and add $0 binding
+  return solutions.map(sol => {
+    const bindings = Object.fromEntries(
+      Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
+    );
+
+    // Add $0 binding for the matched value at this occurrence
+    const matchedValue = getAtPath(input, sol.sites.get('0')?.[0]?.path || []);
+    bindings['0'] = matchedValue;
+
+    // Add site for $0 - use the first binding's path as the occurrence location
+    const occurrencePath = getOccurrencePath(sol.sites);
+    const sites = new Map(sol.sites);
+    sites.set('0', [{kind: 'scalar', path: occurrencePath, valueRef: matchedValue}]);
+
+    return {bindings, sites};
+  });
+}
+
+// Helper: get value at path
+function getAtPath(root, path) {
+  let current = root;
+  for (const key of path) {
+    current = current[key];
+  }
+  return current;
+}
+
+// Helper: determine occurrence path (shortest path among all bindings)
+function getOccurrencePath(sites) {
+  let shortestPath = [];
+  for (const [_, siteList] of sites) {
+    for (const site of siteList) {
+      if (shortestPath.length === 0 || site.path.length < shortestPath.length) {
+        shortestPath = site.path;
+      }
+    }
+  }
+  return shortestPath;
 }
 
 // Backward compatibility: matchProgram for old tests
@@ -77,7 +156,32 @@ export function matchProgram(ast, input, opts = {}) {
 function matchItem(item, node, path, sol, emit, ctx) {
   guard(ctx);
 
-  switch (item.type) {
+  // Debug hook: entering item match
+  if (ctx.debug?.onEnter) {
+    ctx.debug.onEnter(item.type, node, path);
+  }
+
+  let matched = false;
+  const originalEmit = emit;
+  const trackingEmit = (s) => {
+    matched = true;
+    originalEmit(s);
+  };
+
+  try {
+    // Temporarily replace emit to track if we matched
+    emit = trackingEmit;
+
+    doMatch();
+  } finally {
+    // Debug hook: exiting item match
+    if (ctx.debug?.onExit) {
+      ctx.debug.onExit(item.type, node, path, matched);
+    }
+  }
+
+  function doMatch() {
+    switch (item.type) {
     case 'Any':
       emit(cloneSolution(sol));
       return;
@@ -133,6 +237,9 @@ function matchItem(item, node, path, sol, emit, ctx) {
         const s3 = cloneSolution(s2);
         if (bindScalar(s3.env, item.name, node)) {
           recordScalarSite(s3, item.name, path, node);
+          if (ctx.debug?.onBind) {
+            ctx.debug.onBind('scalar', item.name, node);
+          }
           emit(s3);
         }
       }, ctx);
@@ -164,6 +271,7 @@ function matchItem(item, node, path, sol, emit, ctx) {
 
     default:
       throw new Error(`Unknown item type: ${item.type}`);
+    }
   }
 }
 
@@ -228,8 +336,12 @@ function matchArray(items, arr, path, sol, emit, ctx) {
         matchArray(sliceBind.pat.items, testSlice, [...path, ixArr], sIn, (s2) => {
           const slice = testSlice;
           const s3 = cloneSolution(s2);
-          if (bindSlice(s3.env, sliceBind.name, slice)) {
+          const sliceValue = Slice.array(...slice);
+          if (bindSlice(s3.env, sliceBind.name, sliceValue)) {
             recordSliceSite(s3, sliceBind.name, path, ixArr, ixArr + k, slice);
+            if (ctx.debug?.onBind) {
+              ctx.debug.onBind('slice', sliceBind.name, sliceValue);
+            }
             stepItems(ixItem + 1, ixArr + k, s3);
           }
         }, ctx);
@@ -265,8 +377,12 @@ function matchArray(items, arr, path, sol, emit, ctx) {
 
         // Try binding this slice
         const s2 = cloneSolution(sIn);
-        if (bindSlice(s2.env, sliceBind.name, slice)) {
+        const sliceValue = Slice.array(...slice);
+        if (bindSlice(s2.env, sliceBind.name, sliceValue)) {
           recordSliceSite(s2, sliceBind.name, path, ixArr, ixArr + k, slice);
+          if (ctx.debug?.onBind) {
+            ctx.debug.onBind('slice', sliceBind.name, sliceValue);
+          }
           stepItems(ixItem + 1, ixArr + k, s2);
         }
       }
@@ -276,8 +392,12 @@ function matchArray(items, arr, path, sol, emit, ctx) {
         matchItem(sliceBind.pat, arr[ixArr], [...path, ixArr], sIn, (s2) => {
           const slice = [arr[ixArr]];
           const s3 = cloneSolution(s2);
-          if (bindSlice(s3.env, sliceBind.name, slice)) {
+          const sliceValue = Slice.array(...slice);
+          if (bindSlice(s3.env, sliceBind.name, sliceValue)) {
             recordSliceSite(s3, sliceBind.name, path, ixArr, ixArr + 1, slice);
+            if (ctx.debug?.onBind) {
+              ctx.debug.onBind('slice', sliceBind.name, sliceValue);
+            }
             stepItems(ixItem + 1, ixArr + 1, s3);
           }
         }, ctx);
@@ -361,7 +481,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
 
 // ------------- Object matching -------------
 
-function matchObject(terms, spread, obj, path, sol, emit, ctx) {
+function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = null) {
   guard(ctx);
 
   const DEBUG = false; // Set to true for debugging
@@ -375,30 +495,83 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx) {
   if (DEBUG) console.log(`[matchObject] obj keys:`, Object.keys(obj), `terms:`, terms.length);
 
   for (const term of terms) {
-    // Handle slice bindings for residual keys: @rest:(..)
+    // Handle slice bindings: @var:(pattern) or @var:(..)
     if (term.type === 'SliceBind') {
-      // Bind remaining untested keys to the slice variable
+      const isSpread = term.pat.type === 'Spread';
       const next = [];
-      for (const s0 of solutions) {
-        const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
-        const residualObj = {};
-        for (const k of residualKeys) {
-          residualObj[k] = obj[k];
-        }
 
-        const s2 = cloneSolution(s0);
-        if (bindSlice(s2.env, term.name, residualObj)) {
-          // Record slice site - for objects, we record the keys
-          if (!s2.sites.has(term.name)) {
-            s2.sites.set(term.name, []);
+      for (const s0 of solutions) {
+        if (isSpread) {
+          // @var:(..) - capture residual keys
+          const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
+          const residualObj = {};
+          for (const k of residualKeys) {
+            residualObj[k] = obj[k];
           }
-          s2.sites.get(term.name).push({
-            kind: 'slice',
-            path: [...path],
-            keys: residualKeys,
-            valueRefs: residualObj
-          });
-          next.push(s2);
+
+          const s2 = cloneSolution(s0);
+          const sliceValue = Slice.object(residualObj);
+          if (bindSlice(s2.env, term.name, sliceValue)) {
+            if (!s2.sites.has(term.name)) {
+              s2.sites.set(term.name, []);
+            }
+            s2.sites.get(term.name).push({
+              kind: 'slice',
+              path: [...path],
+              keys: residualKeys,
+              valueRefs: residualObj
+            });
+            if (ctx.debug?.onBind) {
+              ctx.debug.onBind('slice', term.name, sliceValue);
+            }
+            next.push(s2);
+          }
+        } else {
+          // @var:(pattern) - recursively match pattern, collect matched keys
+          if (term.pat.type !== 'OGroup') {
+            throw new Error(`SliceBind in object context expects OGroup or Spread pattern, got ${term.pat.type}`);
+          }
+
+          const matchedKeys = new Set();
+          matchObject(
+            term.pat.slices,
+            null,
+            obj,
+            path,
+            s0,
+            (s2) => {
+              // Bind the matched keys as a slice
+              const capturedObj = {};
+              for (const k of matchedKeys) {
+                capturedObj[k] = obj[k];
+              }
+
+              const s3 = cloneSolution(s2);
+              const sliceValue = Slice.object(capturedObj);
+              if (bindSlice(s3.env, term.name, sliceValue)) {
+                if (!s3.sites.has(term.name)) {
+                  s3.sites.set(term.name, []);
+                }
+                s3.sites.get(term.name).push({
+                  kind: 'slice',
+                  path: [...path],
+                  keys: Array.from(matchedKeys),
+                  valueRefs: capturedObj
+                });
+                if (ctx.debug?.onBind) {
+                  ctx.debug.onBind('slice', term.name, sliceValue);
+                }
+                next.push(s3);
+              }
+            },
+            ctx,
+            matchedKeys  // Collect matched keys
+          );
+
+          // Mark matched keys as tested in parent context
+          for (const k of matchedKeys) {
+            testedKeys.add(k);
+          }
         }
       }
       solutions = next;
@@ -462,12 +635,51 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx) {
     if (!solutions.length) break;
   }
 
-  // Check residual slice count if spread is present
+  // Handle spread: bare '..' or '@var:(..)'
   if (spread && solutions.length > 0) {
-    const {min, max} = parseQuantRange(spread.quant);
-    const untestedCount = Object.keys(obj).filter(k => !testedKeys.has(k)).length;
-    if (untestedCount < min || (max !== null && untestedCount > max)) {
-      solutions = [];
+    if (spread.type === 'SliceBind') {
+      // @var:(..) - bind residual keys to slice variable
+      const next = [];
+      for (const s0 of solutions) {
+        const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
+        const residualObj = {};
+        for (const k of residualKeys) {
+          residualObj[k] = obj[k];
+        }
+
+        const s2 = cloneSolution(s0);
+        const sliceValue = Slice.object(residualObj);
+        if (bindSlice(s2.env, spread.name, sliceValue)) {
+          if (!s2.sites.has(spread.name)) {
+            s2.sites.set(spread.name, []);
+          }
+          s2.sites.get(spread.name).push({
+            kind: 'slice',
+            path: [...path],
+            keys: residualKeys,
+            valueRefs: residualObj
+          });
+          if (ctx.debug?.onBind) {
+            ctx.debug.onBind('slice', spread.name, sliceValue);
+          }
+          next.push(s2);
+        }
+      }
+      solutions = next;
+    } else {
+      // Bare '..' - just check count
+      const {min, max} = parseQuantRange(spread.quant);
+      const untestedCount = Object.keys(obj).filter(k => !testedKeys.has(k)).length;
+      if (untestedCount < min || (max !== null && untestedCount > max)) {
+        solutions = [];
+      }
+    }
+  }
+
+  // Report matched keys to caller if requested
+  if (outMatchedKeys) {
+    for (const k of testedKeys) {
+      outMatchedKeys.add(k);
     }
   }
 

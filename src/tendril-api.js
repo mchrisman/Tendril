@@ -1,7 +1,7 @@
 // tendril-api.js — public API matching V1 surface
 
 import {parsePattern} from './tendril-parser.js';
-import {match} from './tendril-engine.js';
+import {match, scan} from './tendril-engine.js';
 import {deepEqual} from './tendril-util.js';
 
 // ------------------- Compile & cache -------------------
@@ -38,6 +38,7 @@ class Solutions {
     this._genFactory = genFactory;
     this._filters = [];
     this._uniqueSpec = null;
+    this._uniqueByFn = null;
     this._takeN = null;
   }
 
@@ -47,6 +48,16 @@ class Solutions {
     next._filters = this._filters.slice();
     next._takeN = this._takeN;
     next._uniqueSpec = {vars};
+    next._uniqueByFn = this._uniqueByFn;
+    return next;
+  }
+
+  uniqueBy(keyFn) {
+    const next = new Solutions(this._genFactory);
+    next._filters = this._filters.slice();
+    next._takeN = this._takeN;
+    next._uniqueSpec = this._uniqueSpec;
+    next._uniqueByFn = keyFn;
     return next;
   }
 
@@ -55,6 +66,7 @@ class Solutions {
     next._filters = this._filters.concat([pred]);
     next._takeN = this._takeN;
     next._uniqueSpec = this._uniqueSpec;
+    next._uniqueByFn = this._uniqueByFn;
     return next;
   }
 
@@ -63,6 +75,7 @@ class Solutions {
     next._filters = this._filters.slice();
     next._takeN = Math.max(0, n | 0);
     next._uniqueSpec = this._uniqueSpec;
+    next._uniqueByFn = this._uniqueByFn;
     return next;
   }
 
@@ -116,8 +129,9 @@ class Solutions {
     const baseIt = this._genFactory()[Symbol.iterator]();
     const filters = this._filters;
     const unique = this._uniqueSpec;
+    const uniqueByFn = this._uniqueByFn;
     const takeN = this._takeN;
-    const seen = unique ? new Set() : null;
+    const seen = (unique || uniqueByFn) ? new Set() : null;
     let yielded = 0;
 
     return {
@@ -139,7 +153,14 @@ class Solutions {
 
           // Apply uniqueness
           if (seen) {
-            const key = stableKey(projectBindings(sol.bindings, unique.vars));
+            let key;
+            if (uniqueByFn) {
+              // Custom key function
+              key = stableKey(uniqueByFn(sol));
+            } else if (unique) {
+              // Projected bindings
+              key = stableKey(projectBindings(sol.bindings, unique.vars));
+            }
             if (seen.has(key)) continue;
             seen.add(key);
           }
@@ -165,13 +186,67 @@ class TendrilImpl {
   constructor(pattern) {
     this._pattern = String(pattern);
     this._ast = null;
+    this._env = null;
+    this._opts = {};
+    this._debug = null;
+  }
+
+  withEnv(env) {
+    const t = new TendrilImpl(this._pattern);
+    t._ast = this._ast;
+    t._env = env;
+    t._opts = this._opts;
+    t._debug = this._debug;
+    return t;
+  }
+
+  withOptions(opts) {
+    const t = new TendrilImpl(this._pattern);
+    t._ast = this._ast;
+    t._env = this._env;
+    t._opts = {...this._opts, ...opts};
+    t._debug = this._debug;
+    return t;
+  }
+
+  debug(listener) {
+    const t = new TendrilImpl(this._pattern);
+    t._ast = this._ast;
+    t._env = this._env;
+    t._opts = this._opts;
+    t._debug = listener;
+    return t;
   }
 
   solutions(input) {
     const ast = this._ast || (this._ast = compile(this._pattern));
+    const opts = {...this._opts};
+    if (this._debug) {
+      opts.debug = this._debug;
+    }
     const genFactory = function* () {
-      const rawSolutions = match(ast, input);
+      const rawSolutions = match(ast, input, opts);
       for (const sol of rawSolutions) {
+        // Convert sites Map to 'at' object for V1 compatibility
+        const at = {};
+        for (const [varName, siteList] of sol.sites) {
+          at[varName] = siteList;
+        }
+        yield {bindings: sol.bindings, at, sites: sol.sites};
+      }
+    };
+    return new Solutions(genFactory);
+  }
+
+  occurrences(input) {
+    const ast = this._ast || (this._ast = compile(this._pattern));
+    const opts = {...this._opts};
+    if (this._debug) {
+      opts.debug = this._debug;
+    }
+    const genFactory = function* () {
+      const rawOccurrences = scan(ast, input, opts);
+      for (const sol of rawOccurrences) {
         // Convert sites Map to 'at' object for V1 compatibility
         const at = {};
         for (const [varName, siteList] of sol.sites) {
@@ -191,13 +266,17 @@ class TendrilImpl {
     return this.solutions(input).toArray();
   }
 
-  replace(input, f) {
+  replace(input, fnOrValue) {
     // Use only the first solution (greedy quantifiers ensure longest match comes first)
     const sol = this.solutions(input).first();
     if (!sol) return input;
 
     const edits = [];
-    const plan = f(sol.bindings) || {};
+    // If not a function, treat as $0 replacement
+    const plan = typeof fnOrValue === 'function'
+      ? fnOrValue(sol.bindings) || {}
+      : {'0': fnOrValue};
+
     for (const [varName, to] of Object.entries(plan)) {
       const key = varName.startsWith('$') ? varName.slice(1) : varName;
       const spots = sol.at[key] || [];
@@ -208,9 +287,44 @@ class TendrilImpl {
     return applyEdits(input, edits);
   }
 
-  replaceAll(input, builder) {
-    // Convenience: wraps builder result in {$0: ...} to replace entire match
-    return this.replace(input, b => ({$0: builder(b)}));
+  replaceAll(input, fnOrValue) {
+    // Collect all occurrences with their replacement plans
+    const allOccurrences = Array.from(this.occurrences(input)).map(sol => {
+      const plan = typeof fnOrValue === 'function'
+        ? fnOrValue(sol.bindings) || {}
+        : {'0': fnOrValue};
+      return {sol, plan};
+    });
+
+    // Sort by depth (deepest first) for safe replacement
+    allOccurrences.sort((a, b) => {
+      const depthA = a.sol.at['0']?.[0]?.path?.length || 0;
+      const depthB = b.sol.at['0']?.[0]?.path?.length || 0;
+      return depthB - depthA;
+    });
+
+    // Collect all edits
+    const edits = [];
+    for (const {sol, plan} of allOccurrences) {
+      for (const [varName, to] of Object.entries(plan)) {
+        const key = varName.startsWith('$') ? varName.slice(1) : varName;
+        const spots = sol.at[key] || [];
+        for (const site of spots) {
+          edits.push({site, to});
+        }
+      }
+    }
+
+    return applyEdits(input, edits);
+  }
+
+  edit(input, f) {
+    const edits = [];
+    for (const sol of this.solutions(input)) {
+      const list = f(sol) || [];
+      for (const e of list) edits.push(e);
+    }
+    return applyEdits(input, edits);
   }
 }
 
@@ -223,31 +337,97 @@ export function Tendril(pattern) {
 
 // ------------------- Convenience functions -------------------
 
+// Helper: filter out $0 from bindings for extraction
+function filterBindings(bindings) {
+  const {0: _, ...rest} = bindings;
+  return rest;
+}
+
 export function matches(pattern, input) {
   return Tendril(pattern).match(input) !== null;
 }
 
 export function extract(pattern, input) {
   const s = Tendril(pattern).match(input);
-  return s ? s.bindings : null;
+  return s ? filterBindings(s.bindings) : null;
 }
 
 export function extractAll(pattern, input) {
-  return Tendril(pattern).solutions(input).project(b => b);
+  return Tendril(pattern).solutions(input).project(b => filterBindings(b));
 }
 
 export function replaceAll(pattern, input, builder) {
-  return Tendril(pattern).replace(input, b => ({$0: builder(b)}));
+  return Tendril(pattern).replaceAll(input, typeof builder === 'function' ? (b => ({0: builder(b)})) : builder);
 }
 
-// ------------------- Slice helper -------------------
+export function uniqueMatches(pattern, input, ...vars) {
+  return Tendril(pattern).solutions(input).unique(...vars).project(b => b);
+}
+
+// ------------------- Slice class -------------------
 
 /**
- * Slice() — helper to wrap slice replacement values
- * Usage: t.replace(input, v => ({pair: Slice(v.x, v.x, v.x)}))
+ * Slice — wrapper for slice bindings and replacements
+ * Represents a contiguous subsequence of an array or subset of object properties
  */
-export function Slice(...elements) {
-  return {__slice__: true, elements};
+export class Slice {
+  constructor(type, value) {
+    // Make internal properties non-enumerable so they don't pollute spreading
+    Object.defineProperty(this, '_type', {
+      value: type,
+      writable: false,
+      enumerable: false,
+      configurable: false
+    });
+    Object.defineProperty(this, '_value', {
+      value: value,
+      writable: false,
+      enumerable: false,
+      configurable: false
+    });
+
+    if (type === "array") {
+      // Copy array elements as numeric properties
+      value.forEach((v, i) => { this[i] = v; });
+      this.length = value.length;
+    } else if (type === "object") {
+      Object.assign(this, value);
+    }
+  }
+
+  // Factory methods
+  static array(...items) {
+    return new Slice("array", items);
+  }
+
+  static object(obj) {
+    return new Slice("object", obj);
+  }
+
+  // Iterable protocol (for [...s])
+  [Symbol.iterator]() {
+    if (this._type !== "array") {
+      throw new TypeError("Object-type Slice is not iterable");
+    }
+    let i = 0;
+    const arr = this._value;
+    return {
+      next() {
+        return i < arr.length ? { value: arr[i++], done: false } : { done: true };
+      }
+    };
+  }
+
+  // Index access (s[2])
+  get [Symbol.toStringTag]() {
+    return `Slice(${this._type})`;
+  }
+
+  // Optional: convenience to mimic array indexing directly
+  at(i) {
+    if (this._type === "array") return this._value[i];
+    throw new TypeError("Not an array slice");
+  }
 }
 
 // ------------------- Replacement implementation -------------------
@@ -282,46 +462,85 @@ function applyEdits(input, edits) {
       }
     }
 
-    // Apply splices (needs index adjustment)
+    // Apply splices (needs index adjustment for arrays)
     if (splices.length > 0) {
-      // Sort by sliceStart ascending (leftmost first - Option C)
-      splices.sort((a, b) => a.site.sliceStart - b.site.sliceStart);
+      // Separate array slices from object slices
+      const arraySplices = splices.filter(e => e.site.sliceStart !== undefined);
+      const objectSplices = splices.filter(e => e.site.keys !== undefined);
 
-      let offset = 0;
-      for (const edit of splices) {
-        const arr = getAt(root, edit.site.path);
-        if (!Array.isArray(arr)) continue;
+      // Handle array splices
+      if (arraySplices.length > 0) {
+        // Sort by sliceStart ascending (leftmost first - Option C)
+        arraySplices.sort((a, b) => a.site.sliceStart - b.site.sliceStart);
 
-        // Adjust indices by cumulative offset
-        const start = edit.site.sliceStart + offset;
-        const end = edit.site.sliceEnd + offset;
+        let offset = 0;
+        for (const edit of arraySplices) {
+          const arr = getAt(root, edit.site.path);
+          if (!Array.isArray(arr)) continue;
 
-        // Deep equality check: verify all elements still match
+          // Adjust indices by cumulative offset
+          const start = edit.site.sliceStart + offset;
+          const end = edit.site.sliceEnd + offset;
+
+          // Deep equality check: verify all elements still match
+          let allMatch = true;
+          for (let i = 0; i < edit.site.valueRefs.length; i++) {
+            if (!deepEqual(arr[start + i], edit.site.valueRefs[i])) {
+              allMatch = false;
+              break;
+            }
+          }
+
+          if (allMatch) {
+            // Slice replacements MUST use Slice wrapper
+            if (!edit.to || !(edit.to instanceof Slice) || edit.to._type !== 'array') {
+              throw new Error(
+                `Array slice variable replacement must use Slice.array(). ` +
+                `Use: replace(data, $ => ({varName: Slice.array(...elements)}))`
+              );
+            }
+
+            // Extract replacement elements from Slice wrapper
+            const elements = edit.to._value;
+
+            // Splice out old, splice in new
+            const oldLength = end - start;
+            const newLength = elements.length;
+            arr.splice(start, oldLength, ...elements);
+            offset += (newLength - oldLength);
+          }
+        }
+      }
+
+      // Handle object splices
+      for (const edit of objectSplices) {
+        const obj = getAt(root, edit.site.path);
+        if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) continue;
+
+        // Deep equality check: verify all keys/values still match
         let allMatch = true;
-        for (let i = 0; i < edit.site.valueRefs.length; i++) {
-          if (!deepEqual(arr[start + i], edit.site.valueRefs[i])) {
+        for (const key of edit.site.keys) {
+          if (!deepEqual(obj[key], edit.site.valueRefs[key])) {
             allMatch = false;
             break;
           }
         }
 
         if (allMatch) {
-          // Slice replacements MUST use Slice() wrapper
-          if (!edit.to || !edit.to.__slice__) {
+          // Object slice replacements MUST use Slice.object()
+          if (!edit.to || !(edit.to instanceof Slice) || edit.to._type !== 'object') {
             throw new Error(
-              `Slice variable replacement must use Slice() wrapper. ` +
-              `Use: replace(data, $ => ({varName: Slice(...elements)}))`
+              `Object slice variable replacement must use Slice.object(). ` +
+              `Use: replace(data, $ => ({varName: Slice.object({...props})}))`
             );
           }
 
-          // Extract replacement elements from Slice wrapper
-          const elements = edit.to.elements;
-
-          // Splice out old, splice in new
-          const oldLength = end - start;
-          const newLength = elements.length;
-          arr.splice(start, oldLength, ...elements);
-          offset += (newLength - oldLength);
+          // Remove old keys, merge in new properties
+          const newProps = edit.to._value;
+          for (const key of edit.site.keys) {
+            delete obj[key];
+          }
+          Object.assign(obj, newProps);
         }
       }
     }

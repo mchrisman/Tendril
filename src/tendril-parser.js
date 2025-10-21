@@ -380,24 +380,51 @@ function parseAQuant(p) {
 // ---------- OBJECTS ----------
 
 function parseObj(p) {
-  // OBJ := '{' O_BODY '}'
-  // O_BODY := (O_SLICE (','? O_SLICE)*)?
+  // OBJ := '{' O_TERM* SPREAD_TERM? '}'
+  // SPREAD_TERM := S_SLICE ':' '(' '..' ')' | '..'
+  // Restriction: spread must appear at END only
   p.eat('{');
-  const slices = [];
-  let spread = null;
+  const allSlices = [];
 
+  // Parse all slices
   while (!p.peek('}')) {
     const slice = parseOSlice(p);
-    if (slice.type === 'Spread') {
-      spread = slice;
-    } else {
-      slices.push(slice);
-    }
+    allSlices.push(slice);
     p.maybe(',');
   }
 
   p.eat('}');
-  return Obj(slices, spread);
+
+  // Check if last slice is a spread
+  let spread = null;
+  let terms = allSlices;
+
+  if (allSlices.length > 0) {
+    const last = allSlices[allSlices.length - 1];
+
+    // Check if last slice is a spread
+    if (last.type === 'Spread') {
+      spread = last;
+      terms = allSlices.slice(0, -1);
+    } else if (last.type === 'SliceBind' && last.pat.type === 'Spread') {
+      // @rest:(..) - slice binding with spread pattern
+      spread = last;
+      terms = allSlices.slice(0, -1);
+    }
+
+    // Error if spread appears anywhere but the end
+    for (let i = 0; i < terms.length; i++) {
+      const slice = terms[i];
+      if (slice.type === 'Spread') {
+        p.fail('object spread (..) must appear at end of object pattern, not in middle');
+      }
+      if (slice.type === 'SliceBind' && slice.pat.type === 'Spread') {
+        p.fail('object spread (@var:(..)) must appear at end of object pattern, not in middle');
+      }
+    }
+  }
+
+  return Obj(terms, spread);
 }
 
 function parseOSlice(p) {
@@ -425,6 +452,13 @@ function parseOSlice(p) {
     const name = p.eat('id').v;
     if (p.maybe(':')) {
       p.eat('(');
+      // Check for special case: @x:(..)
+      if (p.peek('..')) {
+        p.eat('..');
+        p.eat(')');
+        return SliceBind(name, Spread(null));
+      }
+      // Otherwise parse O_BODY: @x:(pattern)
       const slices = [];
       while (!p.peek(')')) {
         slices.push(parseOSlice(p));
@@ -445,6 +479,7 @@ function parseOSlice(p) {
 function parseOTerm(p) {
   // O_TERM := KEY BREADCRUMB* ('=' | '?=') VALUE O_QUANT?
   //         | '..' O_QUANT?
+  // Note: parseObj will validate that .. only appears at end
 
   // Handle ..
   if (p.peek('..')) {

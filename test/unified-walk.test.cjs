@@ -59,7 +59,7 @@ group('Tendril class - solutions', () => {
     const sols = t.solutions(42);
     const first = sols.first();
     assert.ok(first);
-    assert.deepEqual(first.bindings, {x: 42});
+    assert.deepEqual(first.bindings, {0: 42, x: 42});
   });
 
   test('solutions tracks binding sites', async () => {
@@ -76,11 +76,25 @@ group('Tendril class - solutions', () => {
     const t = Tendril('{a=$x}');
     const sols = t.all({a: 1});
     assert.equal(sols.length, 1);
-    assert.deepEqual(sols[0].bindings, {x: 1});
+    assert.deepEqual(sols[0].bindings, {0: {a: 1}, x: 1});
   });
 });
 
 group('Tendril.replace() - scalar replacement', () => {
+  test('replace $0 (entire match) using function', async () => {
+    await loadAPI();
+    const t = Tendril('[$x $y]');
+    const result = t.replace([3, 4], (v) => ({0: [v.y, v.x]}));
+    assert.deepEqual(result, [4, 3]);
+  });
+
+  test('replace using value overload', async () => {
+    await loadAPI();
+    const t = Tendril('[$x $y]');
+    const result = t.replace([3, 4], [99, 100]);
+    assert.deepEqual(result, [99, 100]);
+  });
+
   test('replace scalar at root', async () => {
     await loadAPI();
     const t = Tendril('$x');
@@ -187,7 +201,7 @@ group('Complex patterns - When/Else matching', () => {
 
     const result = pattern4.replace(test4, ($) => {
       return {
-        whenelse: Slice({
+        whenelse: Slice.array({
           tag: 'If',
           attrs: $.attrs || {},
           thenChildren: $.then,

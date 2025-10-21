@@ -278,7 +278,6 @@ KEY            := ITEM
 VALUE          := ITEM
 
 O_TERM         := KEY BREADCRUMB* ('=' | '?=') VALUE O_QUANT?
-               | '..' O_QUANT?
 
 B_QUANT        := '?' | '+' | '*'
 BREADCRUMB     := '.' KEY
@@ -293,7 +292,7 @@ O_SLICE        := '(' O_BODY ')'
                | S_SLICE ':' '(' O_SLICE* ')'
                | O_TERM
 
-OBJ            := '{' O_BODY '}'
+OBJ            := '{' O_BODY (S_SLICE ':' '('  '..' ')' |  '..')? }'
 
 A_QUANT        := '?'
                | '+' | '+?' | '++'
