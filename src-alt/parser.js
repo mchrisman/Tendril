@@ -14,12 +14,13 @@ export function parsePattern(pattern){
 
 class Parser{
   constructor(tokens){ this.t=tokens; this.i=0; this.nud={}; this.led={}; this.lbp={};
-    // Register grammar
+    // Atoms
     this.prefix('NUM', tok=>A.lit(tok.value));
     this.prefix('BOOL', tok=>A.lit(tok.value));
     this.prefix('STR', tok=>A.lit(tok.value));
     this.prefix('REGEX', tok=>A.re(tok.value));
-    this.prefix('_', _=>A.wc()); // not produced by lexer; left for completeness
+    this.prefix('ID', tok=>A.lit(tok.value)); // bareword literal
+    this.prefix('_', _=>A.wc());
 
     // Grouping
     this.prefix('(', _=>{ const e=this.expression(BP.LOW); this.eat(')'); return e; });
@@ -55,7 +56,6 @@ class Parser{
     // Postfix quantifiers: +, *, *?, ++, *+ and counted *{...}
     this.postfix('+', BP.QUANT, (tok,left)=> A.quant(left, {min:1,max:Infinity,greedy:true,poss:false}));
     this.postfix('*', BP.QUANT, (tok,left)=> {
-      // Detect *? or *+ or *{...}
       if (this.peek('?')){ this.eat('?'); return A.quant(left, {min:0,max:Infinity,greedy:false,poss:false}); }
       if (this.peek('+')){ this.eat('+'); return A.quant(left, {min:0,max:Infinity,greedy:true,poss:true}); }
       if (this.peek('{')){ const q=this.parseCount(); return A.quant(left, q); }
@@ -63,7 +63,6 @@ class Parser{
     });
   }
 
-  // Pratt core
   expression(rbp){
     let tok = this.t[this.i++]; const nud=this.nud[tok.type]||this.nud[tok.lexeme]; if(!nud) this.err(`Unexpected ${tok.lexeme}`);
     let left = nud(tok);
@@ -89,8 +88,19 @@ class Parser{
   parseObject(){
     const slices=[];
     while(!this.peek('}')){
-      if (this.peek('..')){ this.eat('..'); const cnt=this.maybeObjCount(); slices.push(A.oResid(cnt)); }
-      else {
+      if (this.peek('..')){ // pure residual
+        this.eat('..');
+        const cnt=this.maybeObjCount();
+        slices.push(A.oResid(cnt));
+      } else if (this.peek('@')) { // @rest:(..)
+        this.eat('@');
+        const id = this.eat('ID').value;
+        this.eat(':'); this.eat('(');
+        this.eat('..');
+        const cnt=this.maybeObjCount();
+        this.eat(')');
+        slices.push(A.oResid(cnt, id));
+      } else {
         // KEY ( .KEY | [KEY] )* ('=' | '?=') VALUE (O_QUANT)?
         const key = this.expression(BP.DOT);
         const steps=[];
@@ -139,7 +149,7 @@ class Parser{
     return {min, max};
   }
 
-  // mini-API
+  // Pratt helpers
   prefix(sym,fn){ this.nud[sym]=fn; }
   infix(sym,bp,fn){ this.led[sym]=fn; this.lbp[sym]=bp; }
   postfix(sym,bp,fn){ this.led[sym]=fn; this.lbp[sym]=bp; }

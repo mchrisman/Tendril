@@ -1,7 +1,8 @@
 // tendril-api.js — public API matching V1 surface
 
 import {parsePattern} from './tendril-parser.js';
-import {matchProgram} from './tendril-engine.js';
+import {match} from './tendril-engine.js';
+import {deepEqual} from './tendril-util.js';
 
 // ------------------- Compile & cache -------------------
 
@@ -9,7 +10,7 @@ const CACHE_MAX = 64;
 const _cache = new Map(); // pattern -> ast (LRU-ish)
 
 function compile(pattern) {
-  if (pattern && pattern.type === 'Program') return pattern; // already compiled
+  if (pattern && pattern.type) return pattern; // already compiled (any AST node)
   if (_cache.has(pattern)) {
     const hit = _cache.get(pattern);
     // simple LRU touch
@@ -169,7 +170,7 @@ class TendrilImpl {
   solutions(input) {
     const ast = this._ast || (this._ast = compile(this._pattern));
     const genFactory = function* () {
-      const rawSolutions = matchProgram(ast, input);
+      const rawSolutions = match(ast, input);
       for (const sol of rawSolutions) {
         // Convert sites Map to 'at' object for V1 compatibility
         const at = {};
@@ -191,18 +192,25 @@ class TendrilImpl {
   }
 
   replace(input, f) {
+    // Use only the first solution (greedy quantifiers ensure longest match comes first)
+    const sol = this.solutions(input).first();
+    if (!sol) return input;
+
     const edits = [];
-    for (const sol of this.solutions(input)) {
-      const plan = f(sol.bindings) || {};
-      for (const [varName, to] of Object.entries(plan)) {
-        const key = varName.startsWith('$') ? varName.slice(1) : varName;
-        const spots = sol.at[key] || [];
-        for (const site of spots) {
-          edits.push({site, to});
-        }
+    const plan = f(sol.bindings) || {};
+    for (const [varName, to] of Object.entries(plan)) {
+      const key = varName.startsWith('$') ? varName.slice(1) : varName;
+      const spots = sol.at[key] || [];
+      for (const site of spots) {
+        edits.push({site, to});
       }
     }
     return applyEdits(input, edits);
+  }
+
+  replaceAll(input, builder) {
+    // Convenience: wraps builder result in {$0: ...} to replace entire match
+    return this.replace(input, b => ({$0: builder(b)}));
   }
 }
 
@@ -229,7 +237,7 @@ export function extractAll(pattern, input) {
 }
 
 export function replaceAll(pattern, input, builder) {
-  return Tendril(pattern).replace(input, b => ({$out: builder(b)}));
+  return Tendril(pattern).replace(input, b => ({$0: builder(b)}));
 }
 
 // ------------------- Slice helper -------------------
@@ -268,8 +276,8 @@ function applyEdits(input, edits) {
     // Apply scalar sets
     for (const edit of sets) {
       const current = getAt(root, edit.site.path);
-      // Identity check: only replace if current value is same object
-      if (Object.is(current, edit.site.valueRef)) {
+      // Deep equality check: only replace if current value matches what was matched
+      if (deepEqual(current, edit.site.valueRef)) {
         root = setAt(root, edit.site.path, edit.to);
       }
     }
@@ -288,18 +296,26 @@ function applyEdits(input, edits) {
         const start = edit.site.sliceStart + offset;
         const end = edit.site.sliceEnd + offset;
 
-        // Identity check: verify all elements still match
+        // Deep equality check: verify all elements still match
         let allMatch = true;
         for (let i = 0; i < edit.site.valueRefs.length; i++) {
-          if (!Object.is(arr[start + i], edit.site.valueRefs[i])) {
+          if (!deepEqual(arr[start + i], edit.site.valueRefs[i])) {
             allMatch = false;
             break;
           }
         }
 
         if (allMatch) {
+          // Slice replacements MUST use Slice() wrapper
+          if (!edit.to || !edit.to.__slice__) {
+            throw new Error(
+              `Slice variable replacement must use Slice() wrapper. ` +
+              `Use: replace(data, $ => ({varName: Slice(...elements)}))`
+            );
+          }
+
           // Extract replacement elements from Slice wrapper
-          const elements = edit.to && edit.to.__slice__ ? edit.to.elements : [edit.to];
+          const elements = edit.to.elements;
 
           // Splice out old, splice in new
           const oldLength = end - start;

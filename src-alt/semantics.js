@@ -20,26 +20,23 @@ export function deepEq(a,b){
   return false;
 }
 
-// env: plain object { [name]: {kind:'scalar'|'slice', value:any, path?, site? } }
+// env: { [name]: {kind:'scalar'|'slice', value:any, path?, site?, slice? } }
 export function unify(env, name, val, kind){
   const cur = env[name];
   if (!cur){ env[name] = { kind, value: val, path: null, site: 'value' }; return true; }
   return cur.kind===kind && deepEq(cur.value, val);
 }
 
-// Regex (full-string match semantics for literals)
+// Regex: UNANCHORED per user request
 export function rxFull(rx, s){
   if (typeof s!=='string') return false;
-  // Force ^...$ if not already anchored
-  const source = rx.source;
-  const anchored = source.startsWith('^') && source.endsWith('$');
-  const r = anchored ? rx : new RegExp(`^(?:${source})$`, rx.flags);
-  return r.test(s);
+  rx.lastIndex = 0; // avoid stateful flags like /g
+  return rx.test(s);
 }
 
 export const cloneEnvShallow = (env)=> Object.assign({}, env);
 
-// Path utilities for API layer (filled in matcher when binding)
+// Path steps for API metadata
 export const pathStepKey   = (key)=>({type:'key', key});
 export const pathStepIndex = (idx)=>({type:'index', key: idx});
 

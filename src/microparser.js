@@ -95,11 +95,16 @@ export function tokenize(src) {
     if (c2 === '..')  { push('..', '..', 2); continue; }
     if (c2 === '>>')  { push('>>', '>>', 2); continue; }
     if (c2 === '<<')  { push('<<', '<<', 2); continue; }
-    if (c2 === '?=')  { push('?=', '?=', 2); continue; }   // positive lookahead token (syntactic help)
+    if (c2 === '?=')  { push('?=', '?=', 2); continue; }   // positive lookahead token
     if (c2 === '?!')  { push('?!', '?!', 2); continue; }   // negative lookahead token
+    if (c2 === '??')  { push('??', '??', 2); continue; }   // lazy optional
+    if (c2 === '++')  { push('++', '++', 2); continue; }   // possessive plus
+    if (c2 === '*+')  { push('*+', '*+', 2); continue; }   // possessive star
+    if (c2 === '+?')  { push('+?', '+?', 2); continue; }   // lazy plus
+    if (c2 === '*?')  { push('*?', '*?', 2); continue; }   // lazy star
 
     // one-character punctuation/operators
-    const single = '[](){}:,.$=|*+?-#'.includes(c) ? c : null;
+    const single = '[](){}:,.$@=|*+?-#'.includes(c) ? c : null;
     if (single) { push(single, single, 1); continue; }
 
     throw syntax(`unexpected character '${c}'`, src, i);

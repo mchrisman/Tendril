@@ -7,10 +7,10 @@ export const K = {
   OR: 'OR',
   LOOK: 'LOOK',                        // {pos:boolean, pat}
   QUANT: 'QUANT',                      // {node, min, max, greedy, poss}
-  ARR: 'ARR',                          // {seq: Node[]}    // adjacency inside [...]
+  ARR: 'ARR',                          // {seq: Node[]}
   OBJ: 'OBJ',                          // {slices: Slice[]}
   O_ASSERT: 'O_ASSERT',                // {key, steps, op:'='|'?=', val, count?}
-  O_RESID: 'O_RESID',                  // {count?}         // '..' residual
+  O_RESID: 'O_RESID',                  // {count?, bindName?}  // '..' residual and optional binder
 };
 
 export const lit  = (v)=>({k:K.LIT, v});
@@ -28,8 +28,8 @@ export const quant= (node, q)=>({k:K.QUANT, node, ...q});
 export const arr  = (seq)=>({k:K.ARR, seq});
 export const obj  = (slices)=>({k:K.OBJ, slices});
 export const oAssert = (key, steps, op, val, count)=>({k:K.O_ASSERT, key, steps, op, val, count});
-export const oResid  = (count)=>({k:K.O_RESID, count});
+export const oResid  = (count, bindName=null)=>({k:K.O_RESID, count, bindName});
 
-// Helpers for breadcrumb steps used in O_ASSERT
-export const stepKey  = (key)=>({type:'key', key});     // .key
-export const stepIdx  = (key)=>({type:'index', key});   // [expr] (expr must resolve to number or string)
+// Breadcrumb steps used in O_ASSERT
+export const stepKey  = (key)=>({type:'key', key});
+export const stepIdx  = (key)=>({type:'index', key});

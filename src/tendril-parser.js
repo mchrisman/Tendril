@@ -1,400 +1,619 @@
-// tendril-parser.js — AST builder for Tendril patterns & paths
-// Supports: alternation '|', lookaheads (?= / ?!), arrays with {m,n}, objects with K=V and K?=V.
-// No sets/maps or replacement markers. Quantifiers allowed only on array items.
+// tendril-parser.js — v5-A compliant parser
+// Implements the v5-A grammar from README-v5-A.md exactly.
 //
-// IMPORTANT: The following grammar comments may more or less reflect what has been built, but it is not consistent with the true specification in README-v5-draft.md. 
+// Grammar structure:
+//   ROOT_PATTERN := ITEM
+//   ITEM := atoms, bindings, objects, arrays, alternations
+//   A_SLICE := array slice patterns (with quantifiers, @x, $x)
+//   O_SLICE := object slice patterns (with breadcrumbs, @x)
 //
-// AST overview (engine consumes this):
-// Program { type:'Program', rules: Path[] }
-// Path    { type:'Path', segs: Seg[] }
-// Seg ∈ KeyLit | KeyVar | KeyPatVar | IdxAny | IdxLit | IdxVar | IdxVarLit | ValPat | ValVar | ValPatVar
-// Patterns (used in ValPat, inside arrays/objects):
-//   P := Alt { type:'Alt', alts: P[] }            // created by '|', flattened
-//      | Any  { type:'Any' }
-//      | Lit  { type:'Lit', value:any }
-//      | Re   { type:'Re',  re:RegExp }           // constructed via makeRegExp()
-//      | Arr  { type:'Arr', items: ArrItem[] }    // arrays are anchored sequences
-//      | Obj  { type:'Obj', entries: ObjEntry[], rest:boolean }
-//      | Look { type:'Look', neg:boolean, pat:P } // zero-width; may not bind (engine enforces)
-// ArrItem := Spread {type:'Spread'} | Quant {type:'Quant', sub:P, min:number, max:number|null} | P
-// ObjEntry { key: Atom, op:'='|'?=', val: P }     // key is an Atom (Any|Lit|Re); no key-vars here
-//
-// Grammar sketch (value context):
-//   P := T ('|' T)*               // lowest precedence
-//   T := Primary
-//   Primary := Atom | Array | Object | '(' P ')' | '(' ('?='|'?!') P ')'
-//   Array := '[' ( Item )* ']'    // Item := Spread | Quantified(Atom|Group|Array|Object)
-//   Quantified(X) := X ('{' m (',' n)? '}')?
-//   Spread := '..'                // not quantifiable
-//
-//   Atom := str | num | id | re | '_' (any)
-//
-// Path grammar:
-//   Rules := Path ('AND' Path)*
-//   Path  := Seg+
-//   Seg   := KeySeg | IndexSeg | ValueSeg
-//   KeySeg   := '.'? ( KeyLit | '$' id (':' Atom)? )
-//   IndexSeg := '[' ( '_' | num | '$' id (':' num)? ) ']'
-//   ValueSeg := '=' ( P | '$' id (':' P)? )
-//
-// Notes:
-// - Alternation & lookaheads available only inside value patterns (P), arrays, objects.
-// - Engine will enforce: no bindings inside lookaheads; no slice '@' (not in this minimal parser).
-// - If you plan to add '@' later, extend tokenizer + add Val/Obj/Arr capture nodes.
+// AST Node Types:
+//   Atoms: Any, Lit, Re, Bool, Null
+//   Containers: Arr, Obj
+//   Bindings: SBind (scalar $x), SliceBind (slice @x)
+//   Operators: Alt, Look, Quant
+//   Object: OTerm (with breadcrumbs), Spread (..)
+//   Breadcrumbs: Breadcrumb with optional B_Quant
 
 import {Parser, makeRegExp} from './microparser.js';
 
 // ---------- Public API ----------
 
-export function parsePattern(patternSrc) {
-  const p = new Parser(patternSrc);
-  const ast = parseRules(p);
-  if (!p.atEnd()) p.fail('trailing input');
+export function parsePattern(src) {
+  const p = new Parser(src);
+  const ast = parseRootPattern(p);
+  if (!p.atEnd()) p.fail('trailing input after pattern');
   return ast;
 }
 
-// ---------- AST node builders (tiny, centralized) ----------
+// ---------- AST Node Constructors ----------
 
-const Program = (rules) => ({type: 'Program', rules});
-const Path = (segs) => ({type: 'Path', segs});
-
-const KeyLit = (pat) => ({type: 'KeyLit', pat});
-const KeyVar = (name) => ({type: 'KeyVar', name});
-const KeyPatVar = (name, p) => ({type: 'KeyPatVar', name, pat: p});
-
-const IdxAny = () => ({type: 'IdxAny'});
-const IdxLit = (idx) => ({type: 'IdxLit', idx});
-const IdxVar = (name) => ({type: 'IdxVar', name});
-const IdxVarLit = (name, idx) => ({type: 'IdxVarLit', name, idx});
-
-const ValPat = (pat) => ({type: 'ValPat', pat});
-const ValVar = (name) => ({type: 'ValVar', name});
-const ValPatVar = (name, pat) => ({type: 'ValPatVar', name, pat});
-
+// Atoms
 const Any = () => ({type: 'Any'});
 const Lit = (v) => ({type: 'Lit', value: v});
 const Re = (r) => ({type: 'Re', re: r});
+const Bool = (v) => ({type: 'Bool', value: v});
+const Null = () => ({type: 'Null'});
+
+// Bindings
+const SBind = (name, pat) => ({type: 'SBind', name, pat});  // $x:(pat)
+const SliceBind = (name, pat) => ({type: 'SliceBind', name, pat});  // @x:(pat)
+
+// Containers
+const Arr = (items) => ({type: 'Arr', items});
+const Obj = (terms, spread = null) => ({type: 'Obj', terms, spread});
+
+// Operators
 const Alt = (alts) => ({type: 'Alt', alts});
 const Look = (neg, pat) => ({type: 'Look', neg, pat});
-const Bind = (name, pat) => ({type: 'Bind', name, pat});
+const Quant = (sub, op, min = null, max = null) => ({
+  type: 'Quant',
+  sub,
+  op,  // '?', '??', '+', '++', '+?', '*', '*+', '*?', '*{...}'
+  min,
+  max
+});
 
-const Arr = (items) => ({type: 'Arr', items});
-const Spread = () => ({type: 'Spread'});
-const Quant = (sub, m, n) => ({type: 'Quant', sub, min: m, max: n});
+// Object terms
+const OTerm = (key, breadcrumbs, op, val, quant) => ({
+  type: 'OTerm',
+  key,           // ITEM
+  breadcrumbs,   // Breadcrumb[]
+  op,            // '=' or '?='
+  val,           // ITEM
+  quant          // null or {min, max}
+});
 
-const Obj = (entries, rest = null) => ({type: 'Obj', entries, rest});
-// rest: null (no ..) | {min, max} (..#{min,max})
-const ObjEntry = (key, op, val) => ({type: 'ObjEntry', key, op, val});
+const Spread = (quant) => ({type: 'Spread', quant});  // .. with optional #{...}
 
-// ---------- Rules / Paths ----------
+const Breadcrumb = (kind, key, quant) => ({
+  type: 'Breadcrumb',
+  kind,   // 'dot' or 'bracket'
+  key,    // ITEM
+  quant   // null or {op: '?'|'+'|'*', min, max}
+});
 
-function parseRules(p) {
-  const rules = [];
-  while (!p.atEnd()) {
-    rules.push(parsePath(p));
-    // optional AND separator
-    if (p.peek('kw') && p.cur().v === 'AND') {
-      p.eat('kw');
+// ---------- ROOT_PATTERN ----------
+
+function parseRootPattern(p) {
+  return parseItem(p);
+}
+
+// ---------- ITEM ----------
+
+function parseItem(p) {
+  // Handle alternation at this level (lowest precedence)
+  // ITEM := Term ('|' Term)*
+  let left = parseItemTerm(p);
+
+  if (p.peek('|')) {
+    const alts = [left];
+    while (p.maybe('|')) {
+      alts.push(parseItemTerm(p));
     }
+    return Alt(alts);
   }
-  return Program(rules);
+
+  return left;
 }
 
-function parsePath(p) {
-  const segs = [];
-  // A rule ends at 'AND' or end-of-input
-  while (!p.atEnd() && !(p.peek('kw') && p.cur().v === 'AND')) {
-    segs.push(parseSeg(p));
-  }
-  if (segs.length === 0) p.fail('expected path segment');
-  return Path(segs);
-}
+function parseItemTerm(p) {
+  // ITEM := '(' ITEM ')'
+  //       | S_ITEM
+  //       | S_ITEM ':' '(' ITEM ')'
+  //       | '_'
+  //       | LITERAL
+  //       | OBJ
+  //       | ARR
 
-function parseSeg(p) {
-  if (p.maybe('.')) return parseKeySeg(p, true);
-  if (p.peek('[')) return parseIndexSeg(p);
-  if (p.maybe('=')) return parseValueSeg(p);
-  // leading dot optional for key segs
-  return parseKeySeg(p, false);
-}
-
-// KeySeg: '.'? ( KeyLit | '$' id (':' Atom)? )
-function parseKeySeg(p, hadDot) {
-  if (p.peek('$')) {
-    p.eat('$');
-    const name = p.eat('id').v;
-    if (p.maybe(':')) {
-      const pat = parseAtom(p);
-      return KeyPatVar(name, pat);
-    }
-    return KeyVar(name);
-  }
-  // literal/pattern key
-  const pat = parseAtom(p);
-  return KeyLit(pat);
-}
-
-// IndexSeg: '[' ( '_' | num | '$' id (':' num)? ) ']'
-function parseIndexSeg(p) {
-  p.eat('[');
-  if (p.maybe('any')) {
-    p.eat(']');
-    return IdxAny();
-  }
-  if (p.peek('num')) {
-    const n = p.eat('num').v;
-    p.eat(']');
-    return IdxLit(n);
-  }
-  if (p.peek('$')) {
-    p.eat('$');
-    const name = p.eat('id').v;
-    if (p.maybe(':')) {
-      const n = p.eat('num').v;
-      p.eat(']');
-      return IdxVarLit(name, n);
-    }
-    p.eat(']');
-    return IdxVar(name);
-  }
-  p.fail('expected _, number, or $var in index');
-}
-
-// ValueSeg: '=' ( P | '$' id (':' P)? )
-function parseValueSeg(p) {
-  // we arrive here after eating '='
-  if (p.peek('$')) {
-    p.eat('$');
-    const name = p.eat('id').v;
-    if (p.maybe(':')) {
-      const pat = parsePatternExpr(p);
-      return ValPatVar(name, pat);
-    }
-    return ValVar(name);
-  }
-  const pat = parsePatternExpr(p);
-  return ValPat(pat);
-}
-
-// ---------- Pattern expressions (value context) ----------
-
-// Alternation with Pratt (lowest precedence)
-function parsePatternExpr(p) {
-  const spec = {
-    primary: parsePrimary,
-    peekOp: (p2) => (p2.peek('|') ? '|' : null),
-    info: (_op) => ({prec: 1, assoc: 'left', kind: 'infix'}),
-    buildInfix: (_op, a, b) => mergeAlt(a, b),
-    buildPostfix: () => {
-      throw new Error('no postfix ops');
-    },
-  };
-  return p.parseExpr(spec, 0);
-}
-
-// Primary := Atom | Array | Object | '(' P ')' | '(' ('?='|'?!') P ')'
-function parsePrimary(p) {
-  if (p.peek('bool', 'null', 'str', 'num', 'id', 're', 'any')) return parseAtom(p);
-  if (p.peek('[')) return parseArray(p);
-  if (p.peek('{')) return parseObject(p);
+  // Parenthesized item
   if (p.peek('(')) {
+    // Could be grouping, lookahead, or binding with parens
+    // Peek ahead to distinguish
+    if (p.peekAt(1, '?')) {
+      // Lookahead: (?= or (?!
+      return parseLookahead(p);
+    }
+    // Just grouping
     p.eat('(');
-    if (p.peek('?=', '?!')) {
-      const neg = p.maybe('?!') ? true : (p.eat('?='), false);
-      const pat = parsePatternExpr(p);
-      p.eat(')');
-      return Look(neg, pat);
-    } else {
-      const inner = parsePatternExpr(p);
-      p.eat(')');
-      return inner;
-    }
+    const inner = parseItem(p);
+    p.eat(')');
+    return inner;
   }
-  p.fail('expected pattern');
-}
 
-// Atom := bool | null | num | str | id | re | '_'
-// Parse order: bool > null > num > str > re > id
-function parseAtom(p) {
-  if (p.peek('any')) return (p.eat('any'), Any());
-  if (p.peek('bool')) return (Lit(p.eat('bool').v));
-  if (p.peek('null')) return (p.eat('null'), Lit(null));
-  if (p.peek('num')) return (Lit(p.eat('num').v));
-  if (p.peek('str')) return (Lit(p.eat('str').v));
+  // Scalar binding: $x or $x:(...)
+  if (p.peek('$')) {
+    p.eat('$');
+    const name = p.eat('id').v;
+    if (p.maybe(':')) {
+      p.eat('(');
+      const pat = parseItem(p);
+      p.eat(')');
+      return SBind(name, pat);
+    }
+    // Bare $x means $x:(_)
+    return SBind(name, Any());
+  }
+
+  // Slice binding: @x or @x:(...)
+  if (p.peek('@')) {
+    p.eat('@');
+    const name = p.eat('id').v;
+    if (p.maybe(':')) {
+      p.eat('(');
+      const pat = parseASlice(p);
+      p.eat(')');
+      return SliceBind(name, pat);
+    }
+    // Bare @x means @x:(_*)
+    return SliceBind(name, Quant(Any(), '*', 0, Infinity));
+  }
+
+  // Wildcard
+  if (p.maybe('any')) {
+    return Any();
+  }
+
+  // Literals
+  if (p.peek('num')) {
+    return Lit(p.eat('num').v);
+  }
+  if (p.peek('bool')) {
+    return Bool(p.eat('bool').v);
+  }
+  if (p.peek('null')) {
+    p.eat('null');
+    return Null();
+  }
+  if (p.peek('str')) {
+    return Lit(p.eat('str').v);
+  }
+  if (p.peek('id')) {
+    // Bareword string
+    return Lit(p.eat('id').v);
+  }
   if (p.peek('re')) {
-    const spec = p.eat('re').v;
-    return Re(makeRegExp(spec));
+    const {source, flags} = p.eat('re').v;
+    return Re(makeRegExp({source, flags}));
   }
-  if (p.peek('id')) return (Lit(p.eat('id').v));
-  p.fail('expected atom');
+
+  // Object
+  if (p.peek('{')) {
+    return parseObj(p);
+  }
+
+  // Array
+  if (p.peek('[')) {
+    return parseArr(p);
+  }
+
+  p.fail('expected item (literal, wildcard, $var, @var, array, object, or parenthesized expression)');
 }
 
-// Array := '[' ( Item )* ']'
-// Item := Spread | Quantified(Atom|Group|Array|Object)
-// Group := '(' P ')'
-// Quantified: '{m,n}' allowed; '{m}' allowed; '{m,}' disallowed.
-function parseArray(p) {
-  p.eat('[');
-  const items = [];
-  while (!p.peek(']')) {
-    if (p.peek('..')) {
-      p.eat('..');
-      // spread cannot be quantified
-      items.push(Spread());
-    } else {
-      // one item possibly with quantifier
-      const base = parseArrayItemPrimary(p);
-      const quant = maybeQuantifier(p);
-      if (quant) {
-        // forbid quantifying Look or Spread (Spread handled above)
-        if (base.type === 'Look') p.fail('cannot quantify lookahead');
-        items.push(Quant(base, quant.m, quant.n));
-      } else {
-        items.push(base);
-      }
-    }
-    // commas optional inside arrays? Keep strict: optional separators are not used; space-separated.
-    // If you prefer commas, uncomment next line and allow optional ','
-    if (p.maybe(',')) { /* allow commas between items */
-    }
+function parseLookahead(p) {
+  // (?= A_SLICE) or (?! A_SLICE)
+  p.eat('(');
+  let neg = false;
+  if (p.peek('?=')) {
+    p.eat('?=');
+  } else if (p.peek('?!')) {
+    p.eat('?!');
+    neg = true;
+  } else {
+    p.fail('expected ?= or ?! after ( in lookahead');
   }
+  const pat = parseASlice(p);
+  p.eat(')');
+  return Look(neg, pat);
+}
+
+// ---------- ARRAYS ----------
+
+// A_BODY := (A_SLICE (','? A_SLICE)*)?
+function parseABody(p, stopToken) {
+  const items = [];
+  while (!p.peek(stopToken)) {
+    items.push(parseASlice(p));
+    p.maybe(',');  // Optional comma
+  }
+  return items;
+}
+
+function parseArr(p) {
+  // ARR := '[' A_BODY ']'
+  p.eat('[');
+  const items = parseABody(p, ']');
   p.eat(']');
   return Arr(items);
 }
 
-function parseArrayItemPrimary(p) {
-  // Handle $symbol bindings
+function parseASlice(p) {
+  // A_SLICE := '(' A_BODY ')'
+  //          | S_SLICE
+  //          | S_SLICE ':' '(' A_BODY ')'
+  //          | S_ITEM
+  //          | S_ITEM ':' '(' A_BODY ')'
+  //          | ITEM
+  //          | OBJ
+  //          | ARR
+  //          | A_SLICE A_QUANT
+  //          | A_SLICE '|' A_SLICE
+  //          | '(?=' A_SLICE ')'
+  //          | '(?!' A_SLICE ')'
+
+  // Special handling for .. (spread)
+  if (p.peek('..')) {
+    p.eat('..');
+    // .. in array context is a Spread, optionally followed by quantifier
+    const quant = isAQuant(p) ? parseAQuant(p) : null;
+    return Spread(quant ? `${quant.op}` : null);
+  }
+
+  let base = parseASliceBase(p);
+
+  // Handle quantifier
+  if (isAQuant(p)) {
+    const q = parseAQuant(p);
+    base = Quant(base, q.op, q.min, q.max);
+  }
+
+  // Handle alternation
+  if (p.peek('|')) {
+    const alts = [base];
+    while (p.maybe('|')) {
+      let alt = parseASliceBase(p);
+      if (isAQuant(p)) {
+        const q = parseAQuant(p);
+        alt = Quant(alt, q.op, q.min, q.max);
+      }
+      alts.push(alt);
+    }
+    return Alt(alts);
+  }
+
+  return base;
+}
+
+function parseASliceBase(p) {
+  // Base A_SLICE without quantifiers or alternation
+
+  // Parenthesized A_BODY
+  if (p.peek('(')) {
+    // Could be lookahead or grouping
+    if (p.peekAt(1, '?')) {
+      return parseLookahead(p);
+    }
+    p.eat('(');
+    const items = parseABody(p, ')');
+    p.eat(')');
+    // If single item, return it; otherwise wrap in Seq node
+    if (items.length === 1) return items[0];
+    return {type: 'Seq', items};
+  }
+
+  // Slice binding: @x or @x:(...)
+  if (p.peek('@')) {
+    p.eat('@');
+    const name = p.eat('id').v;
+    if (p.maybe(':')) {
+      p.eat('(');
+      const items = parseABody(p, ')');
+      p.eat(')');
+      // If single item, use directly; otherwise create Seq
+      const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
+      return SliceBind(name, pat);
+    }
+    return SliceBind(name, Quant(Any(), '*', 0, Infinity));
+  }
+
+  // Scalar binding: $x or $x:(...)
   if (p.peek('$')) {
     p.eat('$');
     const name = p.eat('id').v;
     if (p.maybe(':')) {
-      const pat = parsePatternExpr(p);
-      return Bind(name, pat);
+      p.eat('(');
+      const items = parseABody(p, ')');
+      p.eat(')');
+      // If single item, use directly; otherwise create Seq
+      const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
+      return SBind(name, pat);
     }
-    return Bind(name, Any());  // bare $x => $x:_
+    return SBind(name, Any());
   }
 
-  if (p.peek('(')) {
-    p.eat('(');
-    // group can also be a lookahead if next token is ?= or ?!
-    if (p.peek('?=', '?!')) {
-      const neg = p.maybe('?!') ? true : (p.eat('?='), false);
-      const pat = parsePatternExpr(p);
-      p.eat(')');
-      return Look(neg, pat);
-    } else {
-      const inner = parsePatternExpr(p);
-      p.eat(')');
-      return inner;
-    }
-  }
-  if (p.peek('[')) return parseArray(p);   // nested arrays allowed as items
-  if (p.peek('{')) return parseObject(p);  // objects as items
-  // default: atom
-  return parseAtom(p);
+  // Otherwise, parse as ITEM
+  return parseItemTerm(p);
 }
 
-// Parse '{m,n}' / '{m}' following an array item
-function maybeQuantifier(p) {
-  if (!p.peek('{')) return null;
-  const m = p.mark();
-  p.eat('{');
-  if (!p.peek('num')) {
-    p.restore(m);
-    return null;
-  } // not a quantifier; could be object start (but we only call here after array item)
-  const lo = p.eat('num').v;
-  let hi = null;
-  if (p.maybe(',')) {
-    if (p.peek('num')) {
-      hi = p.eat('num').v;
-    } else {
-      p.fail('open-ended {m,} not allowed');
-    }
-  } else {
-    hi = lo;
-  }
-  p.eat('}');
-  if (hi < lo) p.fail('quantifier upper < lower');
-  return {m: lo, n: hi};
+function isAQuant(p) {
+  return p.peek('?') || p.peek('??') || p.peek('+') || p.peek('++') ||
+         p.peek('+?') || p.peek('*') || p.peek('*+') || p.peek('*?');
 }
 
-// Object := '{' ( ObjKV (',' ObjKV)* )? (','?) ( '..' ('#{' ... '}')? )?  '}'
-// ObjKV  := KeyPat ( '?=' | '=' ) ValPat
-// KeyPat := Atom
-// ValPat := P               // full pattern in value position
-function parseObject(p) {
+function parseAQuant(p) {
+  // A_QUANT := '?' | '??'
+  //          | '+' | '+?' | '++'
+  //          | '*' | '*?' | '*+'
+  //          | '*{' INTEGER '}'
+  //          | '*{' INTEGER ',' INTEGER? '}'
+  //          | '*{' ',' INTEGER '}'
+
+  if (p.maybe('??')) return {op: '??', min: 0, max: 1};
+  if (p.maybe('?'))  return {op: '?', min: 0, max: 1};
+  if (p.maybe('++')) return {op: '++', min: 1, max: null};
+  if (p.maybe('+?')) return {op: '+?', min: 1, max: null};
+  if (p.maybe('+'))  return {op: '+', min: 1, max: null};
+  if (p.maybe('*+')) return {op: '*+', min: 0, max: null};
+  if (p.maybe('*?')) return {op: '*?', min: 0, max: null};
+
+  if (p.maybe('*')) {
+    if (p.maybe('{')) {
+      // *{m}, *{m,n}, *{m,}, *{,n}
+      let min = null, max = null;
+
+      if (p.maybe(',')) {
+        // *{,n}
+        min = 0;
+        max = p.eat('num').v;
+      } else {
+        min = p.eat('num').v;
+        if (p.maybe(',')) {
+          if (p.peek('num')) {
+            max = p.eat('num').v;
+          } else {
+            max = null;  // unbounded
+          }
+        } else {
+          max = min;  // exact count
+        }
+      }
+
+      p.eat('}');
+      return {op: `*{${min},${max ?? ''}}`, min, max};
+    }
+    return {op: '*', min: 0, max: null};
+  }
+
+  p.fail('expected quantifier');
+}
+
+// ---------- OBJECTS ----------
+
+function parseObj(p) {
+  // OBJ := '{' O_BODY '}'
+  // O_BODY := (O_SLICE (','? O_SLICE)*)?
   p.eat('{');
-  const entries = [];
-  let rest = null;
-  // allow empty object
+  const slices = [];
+  let spread = null;
+
   while (!p.peek('}')) {
-    if (p.peek('..')) {
-      p.eat('..');
-      rest = maybeObjectCount(p);
-      if (!rest) rest = {min: 0, max: null}; // default: 0+ (any)
-      break;
+    const slice = parseOSlice(p);
+    if (slice.type === 'Spread') {
+      spread = slice;
+    } else {
+      slices.push(slice);
     }
-    // KeyPat
-    const keyPat = parseAtom(p);
-    // op
-    let op = null;
-    if (p.maybe('?=')) op = '?=';
-    else if (p.maybe('=')) op = '=';
-    else p.fail('expected = or ?=');
-    // ValPat
-    const val = parsePatternExpr(p);
-    entries.push(ObjEntry(keyPat, op, val));
-    // commas optional between KVs (like in arrays)
     p.maybe(',');
   }
+
   p.eat('}');
-  return Obj(entries, rest);
+  return Obj(slices, spread);
 }
 
-// Parse object count: #{...} or #?
-// Returns {min, max} or null
-function maybeObjectCount(p) {
+function parseOSlice(p) {
+  // O_SLICE := '(' O_BODY ')'
+  //          | S_SLICE
+  //          | S_SLICE ':' '(' O_SLICE* ')'
+  //          | O_TERM
+
+  // Parenthesized O_BODY
+  if (p.peek('(')) {
+    p.eat('(');
+    const slices = [];
+    while (!p.peek(')')) {
+      slices.push(parseOSlice(p));
+      p.maybe(',');
+    }
+    p.eat(')');
+    // Return group - for now just return array of slices
+    return {type: 'OGroup', slices};
+  }
+
+  // S_SLICE: Slice binding @x or @x:(...)
+  if (p.peek('@')) {
+    p.eat('@');
+    const name = p.eat('id').v;
+    if (p.maybe(':')) {
+      p.eat('(');
+      const slices = [];
+      while (!p.peek(')')) {
+        slices.push(parseOSlice(p));
+        p.maybe(',');
+      }
+      p.eat(')');
+      return SliceBind(name, {type: 'OGroup', slices});
+    }
+    // Bare @x in object context means @x:(..)
+    return SliceBind(name, Spread(null));
+  }
+
+  // Otherwise parse O_TERM
+  // O_TERM will parse KEY (including $x:(ITEM) patterns) normally via parseItem
+  return parseOTerm(p);
+}
+
+function parseOTerm(p) {
+  // O_TERM := KEY BREADCRUMB* ('=' | '?=') VALUE O_QUANT?
+  //         | '..' O_QUANT?
+
+  // Handle ..
+  if (p.peek('..')) {
+    p.eat('..');
+    const quant = parseOQuant(p);
+    return Spread(quant);
+  }
+
+  // KEY BREADCRUMB* op VALUE
+  const key = parseItem(p);
+  const breadcrumbs = [];
+
+  // Parse breadcrumbs
+  while (p.peek('.') || p.peek('[') || p.peek('(')) {
+    const bc = parseBreadcrumb(p);
+    if (bc) breadcrumbs.push(bc);
+    else break;
+  }
+
+  // op: = or ?=
+  let op = null;
+  if (p.maybe('?=')) {
+    op = '?=';
+  } else if (p.maybe('=')) {
+    op = '=';
+  } else {
+    p.fail('expected = or ?= in object term');
+  }
+
+  // VALUE
+  const val = parseItem(p);
+
+  // O_QUANT?
+  const quant = parseOQuant(p);
+
+  return OTerm(key, breadcrumbs, op, val, quant);
+}
+
+function parseBreadcrumb(p) {
+  // BREADCRUMB := '.' KEY
+  //             | '[' KEY ']'
+  //             | '(' '.' KEY ')' B_QUANT
+  //             | '[' KEY ']' B_QUANT
+
+  // Quantified breadcrumb: (. KEY) B_QUANT
+  if (p.peek('(')) {
+    const start = p.i;
+    p.eat('(');
+
+    // Must be '.' KEY ')' B_QUANT or '[' KEY ']' B_QUANT
+    let kind = null;
+    if (p.peek('.')) {
+      p.eat('.');
+      kind = 'dot';
+      const key = parseItem(p);
+      p.eat(')');
+      const quant = parseBQuant(p);
+      if (!quant) {
+        // No quantifier, this is just (. KEY) which is weird
+        // Backtrack? Or error?
+        p.fail('expected B_QUANT after (. KEY)');
+      }
+      return Breadcrumb(kind, key, quant);
+    } else if (p.peek('[')) {
+      // ( [ KEY ] ) B_QUANT
+      p.eat('[');
+      kind = 'bracket';
+      const key = parseItem(p);
+      p.eat(']');
+      p.eat(')');
+      const quant = parseBQuant(p);
+      if (!quant) {
+        p.fail('expected B_QUANT after ([ KEY ])');
+      }
+      return Breadcrumb(kind, key, quant);
+    }
+
+    // Not a valid breadcrumb, backtrack
+    p.i = start;
+    return null;
+  }
+
+  // Simple breadcrumb: . KEY
+  if (p.peek('.')) {
+    p.eat('.');
+    const key = parseItem(p);
+    return Breadcrumb('dot', key, null);
+  }
+
+  // [ KEY ] (without paren, check for optional quantifier)
+  if (p.peek('[')) {
+    p.eat('[');
+    const key = parseItem(p);
+    p.eat(']');
+    // Check for optional B_QUANT
+    const quant = parseBQuant(p);
+    return Breadcrumb('bracket', key, quant);
+  }
+
+  return null;
+}
+
+function parseBQuant(p) {
+  // B_QUANT := '?' | '+' | '*'
+  // These must be single-char to avoid conflict with A_QUANT
+  if (p.peek('?') && !p.peekAt(1, '=') && !p.peekAt(1, '!')) {
+    p.eat('?');
+    return {op: '?', min: 0, max: 1};
+  }
+  if (p.peek('+') && !p.peekAt(1, '?') && !p.peekAt(1, '+')) {
+    p.eat('+');
+    return {op: '+', min: 1, max: null};
+  }
+  if (p.peek('*') && !p.peekAt(1, '{') && !p.peekAt(1, '+') && !p.peekAt(1, '?')) {
+    p.eat('*');
+    return {op: '*', min: 0, max: null};
+  }
+  return null;
+}
+
+function parseOQuant(p) {
+  // O_QUANT := '#' ( '?' | '{' INTEGER (',' INTEGER?)? '}' )
   if (!p.peek('#')) return null;
+
   p.eat('#');
   if (p.maybe('?')) {
-    return {min: 0, max: null}; // #{0,∞}
+    return {min: 0, max: null};  // #{0,∞}
   }
+
   if (!p.peek('{')) p.fail('expected { or ? after #');
   p.eat('{');
-  const lo = p.eat('num').v;
-  let hi = null;
+
+  const min = p.eat('num').v;
+  let max = min;
+
   if (p.maybe(',')) {
     if (p.peek('num')) {
-      hi = p.eat('num').v;
+      max = p.eat('num').v;
     } else {
-      hi = null; // open-ended: #{m,}
+      max = null;  // unbounded
     }
-  } else {
-    hi = lo; // exact: #{m}
   }
+
   p.eat('}');
-  if (hi !== null && hi < lo) p.fail('count upper < lower');
-  return {min: lo, max: hi};
+
+  if (max !== null && max < min) p.fail('O_QUANT upper < lower');
+  return {min, max};
 }
 
-// ---------- Alternation helpers ----------
+// ---------- Parser Utilities ----------
 
-// Merge two nodes into an alternation; flatten nested alts
-function mergeAlt(a, b) {
-  const left = (a.type === 'Alt') ? a.alts : [a];
-  const right = (b.type === 'Alt') ? b.alts : [b];
-  return Alt(left.concat(right));
-}
+// Add peekAt helper if not in Parser class
+Parser.prototype.peekAt = function(offset, kind) {
+  const idx = this.i + offset;
+  if (idx >= this.toks.length) return false;
+  return this.toks[idx].k === kind;
+};
 
-// ---------- Exports for engine/tests ----------
+// ---------- Exports ----------
 
 export const AST = {
-  Program, Path,
-  KeyLit, KeyVar, KeyPatVar,
-  IdxAny, IdxLit, IdxVar, IdxVarLit,
-  ValPat, ValVar, ValPatVar,
-  Any, Lit, Re, Alt, Look, Bind,
-  Arr, Spread, Quant,
-  Obj, ObjEntry,
+  // Atoms
+  Any, Lit, Re, Bool, Null,
+  // Bindings
+  SBind, SliceBind,
+  // Containers
+  Arr, Obj,
+  // Operators
+  Alt, Look, Quant,
+  // Object
+  OTerm, Spread, Breadcrumb,
 };

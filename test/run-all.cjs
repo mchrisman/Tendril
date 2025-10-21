@@ -48,7 +48,7 @@ function findTestFiles(dir) {
 
     if (stat.isDirectory() && file !== 'node_modules') {
       testFiles.push(...findTestFiles(filePath));
-    } else if (file.endsWith('.test.js')) {
+    } else if (file.endsWith('.test.js') || file.endsWith('.test.cjs')) {
       testFiles.push(filePath);
     }
   }

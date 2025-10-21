@@ -9,7 +9,7 @@ const __dirname = dirname(__filename);
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8'));
 
 const sharedConfig = {
-  entryPoints: ['src/api.js'],
+  entryPoints: ['src/tendril-api.js'],
   bundle: true,
   sourcemap: true,
   banner: {

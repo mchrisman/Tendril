@@ -155,7 +155,13 @@ In objects, keys and values are scalars; slices contain key–value pairs. For e
 
 ### API at a glance
 
-`Tendril(pattern)` returns a compiled matcher. Call `.solutions(data)` to produce an iterator (or array) of solution environments. Call `.project(fn)` to map solutions to values. Call `.replaceAll(data, replacers)` to transform a deep copy of the input where replacer entries are keyed by variable name and may be values or functions of the environment. The illustrative `~=` and `===` notation is documentation sugar, not part of the API.
+`Tendril(pattern)` returns a compiled matcher. Call `.solutions(data)` to produce an iterator (or array) of solution environments. Call `.project(fn)` to map solutions to values.
+
+**Replacement API**:
+- `.replace(data, fn)` applies transformations using **only the first solution** (which is the longest match due to greedy quantifiers). The function `fn` receives bindings and returns an object mapping variable names to replacement values.
+- `.replaceAll(data, fn)` is a convenience wrapper that replaces the entire match (`$0`).
+
+The illustrative `~=` and `===` notation is documentation sugar, not part of the API.
 
 ---
 
@@ -201,18 +207,22 @@ Paths chain key and index steps: `{ a.b.c = d }` matches `{ a: { b: { c: 'd' } }
 
 ### Quantifiers — arrays
 
-The array quantifier repertoire includes shorthands and counted forms. The cheat-sheet equivalences:
+The array quantifier repertoire includes shorthands and counted forms. **All quantifiers are greedy by default**: when generating solutions, longer matches are emitted before shorter ones. This ensures that `.replace()` operates on the longest/best match.
+
+The cheat-sheet equivalences:
 
 ```
 a*{2,3}   ≡ exactly 2 or 3 repetitions
 a*3       ≡ a*{3,3}
-a*?       ≡ a*{0,}        // not greedy
-a*        ≡ a*{0,}        // greedy
-a*+       ≡ a*{0,}        // greedy, possessive
-a+?, a+, a++ ≡ a*{1,}     // not greedy, greedy, greedy-possessive
-a?        ≡ a*{0,1}
+a*?       ≡ a*{0,}        // lazy (not yet implemented)
+a*        ≡ a*{0,}        // greedy (default)
+a*+       ≡ a*{0,}        // greedy, possessive (not yet implemented)
+a+?, a+, a++ ≡ a*{1,}     // lazy, greedy, possessive
+a?        ≡ a*{0,1}       // greedy (matches before skipping)
 ..        ≡ _*?           // lazy wildcard slice
 ```
+
+**Greedy behavior**: When a quantifier allows multiple match lengths (e.g., `a?`, `a*`, `a{2,5}`), solutions with longer matches are generated first. For example, `[a?]` matching `['a']` produces two solutions: first `{a: 'a'}` (matched), then `{}` (skipped). This makes `.replace()` intuitive: it always uses the first (longest) match.
 
 ### Quantifiers — objects
 
@@ -251,9 +261,9 @@ A_BODY         := (A_SLICE (','? A_SLICE)*)?
 
 A_SLICE        := '(' A_BODY ')'
                | S_SLICE
-               | S_SLICE ':' '(' A_SLICE ')'
+               | S_SLICE ':' '(' A_BODY ')'
                | S_ITEM
-               | S_ITEM ':' '(' A_SLICE ')'
+               | S_ITEM ':' '(' A_BODY ')'
                | ITEM
                | OBJ
                | ARR
@@ -269,7 +279,6 @@ VALUE          := ITEM
 
 O_TERM         := KEY BREADCRUMB* ('=' | '?=') VALUE O_QUANT?
                | '..' O_QUANT?
-               | S_ITEM ':' '(' O_TERM ')'
 
 B_QUANT        := '?' | '+' | '*'
 BREADCRUMB     := '.' KEY
@@ -335,7 +344,28 @@ Bind object slices:
 
 ### API sketch
 
-`Tendril(pattern).solutions(data)` enumerates solution environments. Each environment is a map from variable names to bound values (scalars with `$`, slices with `@`). `project(fn)` maps each environment to a value. `replaceAll(data, replacers)` applies replacements based on bound variables; replacers are of the form `{ name: valueOrFn }` and may rename keys when the variable was bound at a key site. The illustrative `~=` operator in this document is not an API.
+**Query API**:
+- `Tendril(pattern).solutions(data)` returns an iterable of solution environments. Each environment contains:
+  - `.bindings`: map from variable names to bound values (scalars with `$`, slices with `@`)
+  - `.at`: map from variable names to site descriptors (for replacement)
+- `.all(data)` returns all solutions as an array
+- `.match(data)` returns the first solution or null
+- `.project(fn)` maps each solution's bindings through `fn`
+
+**Replacement API**:
+Use `replace` to replace 
+- `.replace(data, fn)` applies transformations using **only the first solution**. The function `fn(bindings)` returns an object like `{varName: newValue}`. Variable names can be with or without the `$`/`@` prefix. Use `$0` to replace the entire match.
+- `.replaceAll(data, fn)` is a convenience: equivalent to `.replace(data, b => ({$0: fn(b)}))`
+
+**Replacing slices**:
+```
+Tendril("[1 @x:(2? 3) 4]").replace([1,3,4], (_)=>)
+
+```
+
+**Greedy matching**: All quantifiers are greedy, meaning longer matches are emitted first. This ensures `.replace()` operates on the longest/best match. To see all alternative matches, use `.all(data)`.
+
+The illustrative `~=` operator in this document is not an API.
 
 ---
 

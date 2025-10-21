@@ -25,17 +25,20 @@ export function lex(input){
     skipWSComments();
     const ch = peek(); if (!ch) break;
 
-    // Lookahead tokens: '(?=' and '(?!'
+    // Lookahead tokens
     if (ch==='(' && input.slice(i, i+3)==='(?=' ){ toks.push({type:'(?=',lexeme:'(?='}); i+=3; continue; }
     if (ch==='(' && input.slice(i, i+3)==='(?!' ){ toks.push({type:'(?!',lexeme:'(?!'}); i+=3; continue; }
 
-    // Symbols with two-char variants
+    // Two-char symbols
     if (input.slice(i,i+2)==='?='){ emit('?=','?='); i+=2; continue; }
     if (input.slice(i,i+2)==='..'){ emit('..','..'); i+=2; continue; }
 
     // Single-char symbols
     const sym = '()[]{}.,|:?=*+#!';
     if (sym.includes(ch)){ emit(ch,ch); adv(); continue; }
+
+    // Wildcard '_'
+    if (ch === '_'){ emit('_','_'); adv(); continue; }
 
     // String
     if (ch==='"' || ch==="'"){
@@ -46,7 +49,7 @@ export function lex(input){
       emit('STR', s, s); continue;
     }
 
-    // Regex literal /.../flags (very small, not handling all corner cases)
+    // Regex literal
     if (ch==='/' && input[i+1] !== '/' && input[i+1] !== '*'){
       adv(); let body=''; let inClass=false;
       for(;;){
@@ -62,13 +65,13 @@ export function lex(input){
       emit('REGEX', `/${body}/${flags}`, rx); continue;
     }
 
-    // Number (int only; decimals easy to add if needed)
+    // Number (int)
     if (isDigit(ch)){
       let s=''; while (isDigit(peek())) s+=adv();
       emit('NUM', s, Number(s)); continue;
     }
 
-    // Identifier / bareword / keywords true/false
+    // Identifier / bareword / keywords
     if (isIdStart(ch)){
       let s=''; while (isId(peek())) s+=adv();
       if (s==='true'||s==='false'){ emit('BOOL', s, s==='true'); continue; }
