@@ -357,7 +357,7 @@ export function extractAll(pattern, input) {
 }
 
 export function replaceAll(pattern, input, builder) {
-  return Tendril(pattern).replaceAll(input, typeof builder === 'function' ? (b => ({0: builder(b)})) : builder);
+  return Tendril(pattern).replaceAll(input, builder);
 }
 
 export function uniqueMatches(pattern, input, ...vars) {
@@ -435,7 +435,8 @@ export class Slice {
 function applyEdits(input, edits) {
   if (edits.length === 0) return input;
 
-  let root = deepClone(input);
+  // Mutate input in-place (except for root replacement which requires returning new value)
+  let result = input;
 
   // Group edits by path
   const editsByPath = new Map();
@@ -455,10 +456,15 @@ function applyEdits(input, edits) {
 
     // Apply scalar sets
     for (const edit of sets) {
-      const current = getAt(root, edit.site.path);
-      // Deep equality check: only replace if current value matches what was matched
+      const current = getAt(result, edit.site.path);
+      // Compare-and-set: only replace if current value matches what was matched
       if (deepEqual(current, edit.site.valueRef)) {
-        root = setAt(root, edit.site.path, edit.to);
+        if (edit.site.path.length === 0) {
+          // Root replacement: return new value (can't mutate primitives)
+          result = edit.to;
+        } else {
+          setAtMutate(result, edit.site.path, edit.to);
+        }
       }
     }
 
@@ -470,19 +476,19 @@ function applyEdits(input, edits) {
 
       // Handle array splices
       if (arraySplices.length > 0) {
-        // Sort by sliceStart ascending (leftmost first - Option C)
+        // Sort by sliceStart ascending (leftmost first)
         arraySplices.sort((a, b) => a.site.sliceStart - b.site.sliceStart);
 
         let offset = 0;
         for (const edit of arraySplices) {
-          const arr = getAt(root, edit.site.path);
+          const arr = getAt(result, edit.site.path);
           if (!Array.isArray(arr)) continue;
 
           // Adjust indices by cumulative offset
           const start = edit.site.sliceStart + offset;
           const end = edit.site.sliceEnd + offset;
 
-          // Deep equality check: verify all elements still match
+          // Compare-and-set: verify all elements still match
           let allMatch = true;
           for (let i = 0; i < edit.site.valueRefs.length; i++) {
             if (!deepEqual(arr[start + i], edit.site.valueRefs[i])) {
@@ -503,7 +509,7 @@ function applyEdits(input, edits) {
             // Extract replacement elements from Slice wrapper
             const elements = edit.to._value;
 
-            // Splice out old, splice in new
+            // Splice out old, splice in new (mutates arr in-place)
             const oldLength = end - start;
             const newLength = elements.length;
             arr.splice(start, oldLength, ...elements);
@@ -514,10 +520,10 @@ function applyEdits(input, edits) {
 
       // Handle object splices
       for (const edit of objectSplices) {
-        const obj = getAt(root, edit.site.path);
+        const obj = getAt(result, edit.site.path);
         if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) continue;
 
-        // Deep equality check: verify all keys/values still match
+        // Compare-and-set: verify all keys/values still match
         let allMatch = true;
         for (const key of edit.site.keys) {
           if (!deepEqual(obj[key], edit.site.valueRefs[key])) {
@@ -535,7 +541,7 @@ function applyEdits(input, edits) {
             );
           }
 
-          // Remove old keys, merge in new properties
+          // Remove old keys, merge in new properties (mutates obj in-place)
           const newProps = edit.to._value;
           for (const key of edit.site.keys) {
             delete obj[key];
@@ -546,7 +552,7 @@ function applyEdits(input, edits) {
     }
   }
 
-  return root;
+  return result;
 }
 
 // Helper: navigate path to get value
@@ -558,26 +564,13 @@ function getAt(root, path) {
   return current;
 }
 
-// Helper: navigate path and set value (immutable-style)
-function setAt(root, path, value) {
-  if (path.length === 0) return value;
-
-  const [head, ...tail] = path;
-  const isArray = Array.isArray(root);
-  const copy = isArray ? [...root] : {...root};
-  copy[head] = setAt(root[head], tail, value);
-  return copy;
-}
-
-// Helper: deep clone
-function deepClone(x) {
-  if (Array.isArray(x)) return x.map(deepClone);
-  if (x && typeof x === 'object') {
-    const o = {};
-    for (const k of Object.keys(x)) o[k] = deepClone(x[k]);
-    return o;
+// Helper: navigate path and set value (mutates in-place)
+function setAtMutate(root, path, value) {
+  let current = root;
+  for (let i = 0; i < path.length - 1; i++) {
+    current = current[path[i]];
   }
-  return x;
+  current[path[path.length - 1]] = value;
 }
 
 // Helper: project bindings by selected vars

@@ -38,7 +38,7 @@ test('pattern validation - bound variable with matching regex pattern', () => {
 
   // Should find 1 solution because "abc123" matches /abc/
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings, {x: 'abc123', y: 'found_it'});
+  assert.deepEqual(result[0].bindings, {'0': data, x: 'abc123', y: 'found_it'});
 });
 
 test('pattern validation - bound variable with literal pattern', () => {
@@ -53,7 +53,7 @@ test('pattern validation - bound variable with literal pattern', () => {
 
   // Should find 1 solution because "b" === "b"
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings, {x: 'b', y: 'value'});
+  assert.deepEqual(result[0].bindings, {'0': data, x: 'b', y: 'value'});
 });
 
 test('pattern validation - bound variable that doesn\'t match literal pattern', () => {
@@ -85,7 +85,7 @@ test('pattern validation - array index pattern validation', () => {
 
   // Should find 1 solution because idx=1 matches pattern (1)
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings, {i: 1, x: 'c'});
+  assert.deepEqual(result[0].bindings, {'0': data, i: 1, x: 'c'});
 });
 
 test('pattern validation - array index that doesn\'t match', () => {

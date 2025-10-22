@@ -23,7 +23,7 @@ test('optimization - simple variable chain', () => {
 
   const result = Tendril('{a=$x $x=$y $y=$z}').all(data);
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings, {x: 'b', y: 'c', z: 'd'});
+  assert.deepEqual(result[0].bindings, {'0': data, x: 'b', y: 'c', z: 'd'});
 });
 
 test('optimization - complex organizational graph', () => {

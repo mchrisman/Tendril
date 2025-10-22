@@ -46,7 +46,7 @@ group('occurrences() - find all matches at any depth', () => {
     const t = Tendril('{tag="foo"}');
     const sols = t.occurrences(data).toArray();
     assert.equal(sols.length, 1, 'Should find nested object');
-    assert.equal(sols[0].bindings[0].tag, 'foo');
+    assert.equal(sols[0].bindings['0'].tag, 'foo');
   });
 
   test('find all matching objects', async () => {
