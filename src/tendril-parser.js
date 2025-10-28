@@ -59,7 +59,7 @@ const OTerm = (key, breadcrumbs, op, val, quant) => ({
   type: 'OTerm',
   key,           // ITEM
   breadcrumbs,   // Breadcrumb[]
-  op,            // '=' or '?='
+  op,            // '=' or '=?'
   val,           // ITEM
   quant          // null or {min, max}
 });
@@ -107,13 +107,13 @@ function parseItemTerm(p) {
   //       | ARR
 
   // Parenthesized item
+  if (p.peek('(?=') || p.peek('(?!')) {
+    // Lookahead: (?= or (?!
+    return parseLookahead(p);
+  }
+
   if (p.peek('(')) {
-    // Could be grouping, lookahead, or binding with parens
-    // Peek ahead to distinguish
-    if (p.peekAt(1, '?')) {
-      // Lookahead: (?= or (?!
-      return parseLookahead(p);
-    }
+    // Could be grouping or binding with parens
     // Just grouping
     p.eat('(');
     const inner = parseItem(p);
@@ -192,19 +192,34 @@ function parseItemTerm(p) {
 
 function parseLookahead(p) {
   // (?= A_SLICE) or (?! A_SLICE)
-  p.eat('(');
   let neg = false;
-  if (p.peek('?=')) {
-    p.eat('?=');
-  } else if (p.peek('?!')) {
-    p.eat('?!');
+  if (p.peek('(?=')) {
+    p.eat('(?=');
+  } else if (p.peek('(?!')) {
+    p.eat('(?!');
     neg = true;
   } else {
-    p.fail('expected ?= or ?! after ( in lookahead');
+    p.fail('expected (?= or (?! for lookahead');
   }
   const pat = parseASlice(p);
   p.eat(')');
   return Look(neg, pat);
+}
+
+function parseObjectLookahead(p) {
+  // (?= O_SLICE) or (?! O_SLICE)
+  let neg = false;
+  if (p.peek('(?=')) {
+    p.eat('(?=');
+  } else if (p.peek('(?!')) {
+    p.eat('(?!');
+    neg = true;
+  } else {
+    p.fail('expected (?= or (?! for object lookahead');
+  }
+  const pat = parseOSlice(p);
+  p.eat(')');
+  return {type: 'OLook', neg, pat};
 }
 
 // ---------- ARRAYS ----------
@@ -277,12 +292,13 @@ function parseASlice(p) {
 function parseASliceBase(p) {
   // Base A_SLICE without quantifiers or alternation
 
+  // Lookahead
+  if (p.peek('(?=') || p.peek('(?!')) {
+    return parseLookahead(p);
+  }
+
   // Parenthesized A_BODY
   if (p.peek('(')) {
-    // Could be lookahead or grouping
-    if (p.peekAt(1, '?')) {
-      return parseLookahead(p);
-    }
     p.eat('(');
     const items = parseABody(p, ')');
     p.eat(')');
@@ -432,9 +448,17 @@ function parseOSlice(p) {
   //          | S_SLICE
   //          | S_SLICE ':' '(' O_SLICE* ')'
   //          | O_TERM
+  //          | '(?=' O_SLICE ')'
+  //          | '(?!' O_SLICE ')'
 
-  // Parenthesized O_BODY
-  if (p.peek('(')) {
+  // Try lookahead first
+  if (p.peek('(?=') || p.peek('(?!')) {
+    return parseObjectLookahead(p);
+  }
+
+  // Try parenthesized O_BODY: '(' O_BODY ')'
+  // Use backtracking because '(' could also be part of O_TERM's key pattern
+  const groupResult = p.backtrack(() => {
     p.eat('(');
     const slices = [];
     while (!p.peek(')')) {
@@ -442,9 +466,9 @@ function parseOSlice(p) {
       p.maybe(',');
     }
     p.eat(')');
-    // Return group - for now just return array of slices
     return {type: 'OGroup', slices};
-  }
+  });
+  if (groupResult) return groupResult;
 
   // S_SLICE: Slice binding @x or @x:(...)
   if (p.peek('@')) {
@@ -477,7 +501,7 @@ function parseOSlice(p) {
 }
 
 function parseOTerm(p) {
-  // O_TERM := KEY BREADCRUMB* ('=' | '?=') VALUE O_QUANT?
+  // O_TERM := KEY BREADCRUMB* ('=' | '=?') VALUE O_QUANT?
   //         | '..' O_QUANT?
   // Note: parseObj will validate that .. only appears at end
 
@@ -499,14 +523,14 @@ function parseOTerm(p) {
     else break;
   }
 
-  // op: = or ?=
+  // op: = or =?
   let op = null;
-  if (p.maybe('?=')) {
-    op = '?=';
+  if (p.maybe('=?')) {
+    op = '=?';
   } else if (p.maybe('=')) {
     op = '=';
   } else {
-    p.fail('expected = or ?= in object term');
+    p.fail('expected = or =? in object term');
   }
 
   // VALUE
@@ -585,7 +609,7 @@ function parseBreadcrumb(p) {
 function parseBQuant(p) {
   // B_QUANT := '?' | '+' | '*'
   // These must be single-char to avoid conflict with A_QUANT
-  if (p.peek('?') && !p.peekAt(1, '=') && !p.peekAt(1, '!')) {
+  if (p.peek('?')) {
     p.eat('?');
     return {op: '?', min: 0, max: 1};
   }

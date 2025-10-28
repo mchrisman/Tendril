@@ -328,6 +328,23 @@ test('replace - in object', () => {
   assert.deepEqual(result, {a: 99});
 });
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // ==================== Greedy Quantifiers ====================
 
 test('greedy quantifiers - optional object emits longest match first', () => {

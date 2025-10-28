@@ -62,11 +62,8 @@ a b c                      // *Three* patterns in sequence (only allowed in an a
 [ a [ b c ]*2 ]  === [a [b c] [b c] ]  // [ ] indicates an Array
 
 a=b c=d e=f                // *Three* unordered key/value assertions
-                           // (only allowed in an object/map context)
+                           // (only allowed in an objectap context)
 { a=b c=d e=f }            // *One* pattern: an object with three assertions
-{ a=b c=d e=f } as Map     // One pattern matching a Map (does not match regular Object)
-
-{{ a b c }}                // pattern matching a Set
 ```
 
 **Precedence (high → low)**:
@@ -83,7 +80,7 @@ p1 & p2                    // conjunction (same value matches both)
 
 ```
 [ a b ]        ~= ["a","b"]
-[ a b ]       !~= ["a","b","c"]
+[ a b ]       !~= ["a","b","c"]       // keys anchored by default
 [ a b .. ]    ~= ["a","b","c"]       // yes, ".." is the actual syntax
 
 { b=_  c=_ }   ~= { b:1, c:2 }        // every kv assertion satisfied
@@ -135,12 +132,12 @@ a*{2,3}?     // lazy
 
 ---
 
-## Quantifiers — Objects and Sets
+## Quantifiers — Objects 
 
 Each object assertion matches a **slice** of key/value pairs, possibly overlapping, no backtracking.
 ```
-{{ pat1=_  $happy:(pat2=_) }}     // bind subset slice
-{{ a=_  b=_  $rest:.. }}      // bind residual slice
+{ pat1=_  $happy:(pat2=_) }     // bind subset slice
+{ a=_  b=_  $rest:(..) }      // bind residual slice
 ```
 
 ---
@@ -152,10 +149,7 @@ k=v #2       === k=v #{2,2}
 k=v #?       === k=v #{0,}      // optional
 k=v          === k=v #{1,}      // default: one or more
 
-..          === _=_ #?         // allow unknown keys
 
-// Multiple ellipsess allowed but redundant
-{ .. a=1 .. b=2 }   // valid; warns about redundancy
 ```
 
 ---
@@ -163,8 +157,8 @@ k=v          === k=v #{1,}      // default: one or more
 ## Assertions
 
 ```
-(?=pattern)   // positive lookahead — must match, no consume
-(?!pattern)   // negative lookahead — must not match
+(?=pattern)   // positive lookahead — must match, no consume (arrays only)
+(?!pattern)   // negative lookahead — must not match (objects and arrays)
 ```
 
 ---
@@ -224,14 +218,6 @@ SYMBOL                  // $[A-Za-z_][A-Za-z0-9_]* (logic variable)
 * Booleans match boolean primitives using strict equality.
 * Strings: quoted or bare (unless keyword), match string primitives using strict equality.
 * Regex: matches strings via JS engine.
-* **Disambiguation** via `as`:
-
-  ```
-  { k=v } as Map              // creates Map pattern (matches Maps only)
-  ```
-
-  Grammar-level feature to distinguish Map patterns from Object patterns. Use `{{ }}` for Sets.
-
 ---
 
 ## Core Grammar (informal EBNF)
@@ -242,8 +228,6 @@ ROOT_PATTERN            := SINGLETON_PATTERN
 SINGLETON_PATTERN       := LITERAL
                          | ARRAY_PATTERN
                          | OBJECT_PATTERN
-                         | MAP_PATTERN
-                         | SET_PATTERN
                          | '(' SINGLETON_PATTERN ')'
                          | LOOKAHEAD_SINGLETON
                          | '_'
@@ -252,8 +236,7 @@ SINGLETON_PATTERN       := LITERAL
 LOOKAHEAD_SINGLETON     := '(?=' SINGLETON_PATTERN ')' SINGLETON_PATTERN
                          | '(?!' SINGLETON_PATTERN ')' SINGLETON_PATTERN
 
-ARRAY_PATTERN           := '[' (ARRAY_SLICE_PATTERN (ARRAY_WS ARRAY_SLICE_PATTERN)*)? ']'
-ARRAY_WS                := single space (array adjacency)
+ARRAY_PATTERN           := '[' ARRAY_SLICE_PATTERN* ']'
 
 ARRAY_SLICE_PATTERN     := '..'                               // == _*? (lazy)
                          | SYMBOL (':' SINGLETON_PATTERN)?
@@ -268,8 +251,6 @@ LOOKAHEAD_ARRAY_SLICE   := '(?=' ARRAY_SLICE_PATTERN ')' ARRAY_SLICE_PATTERN
 ARRAY_QUANT             := '?' | '??' | '+' | '+?' | '*' ('{' (INTEGER (',' INTEGER)?)? '}')?
 
 OBJECT_PATTERN          := '{' OBJECT_ASSERTION* '}'
-MAP_PATTERN             := '{' OBJECT_ASSERTION* '}' 'as' 'Map'
-SET_PATTERN             := '{{' (SINGLETON_PATTERN (WS SINGLETON_PATTERN)*)? '}}'
 
 OBJECT_ASSERTION        := KV_ASSERTION
                          | PATH_ASSERTION
@@ -287,8 +268,6 @@ OBJECT_COUNT            := '#' ( '?' | '{' INTEGER (',' INTEGER?)? '}' )
                          // #{m,}        → #{m,∞}  (m or more, unbounded)
                          // (default: no count means #{1,}, one or more)
 
-// Note: 'as Set' on { } is a parse error
-// Note: 'as' on {{ }} is a parse error
 ```
 
 ---
@@ -370,8 +349,8 @@ Example:
 ### Binding slices
 
 ```
-{ pat1=_  $happy:(pat2=_) }       // bind subset slice to $happy
-{ a=_  b=_  $rest:.. }        // bind residual slice
+{ pat1=_  @happy:(pat2=_) }       // bind subset slice to $happy
+{ a=_  b=_  @rest:(..) }        // bind residual slice
 ```
 
 ### Vertical/path assertions
@@ -386,18 +365,6 @@ Objects are **anchored by default**; `{a=b} !~= {a:b, c=d}`.
 
 ---
 
-## Sets and Maps
-
-```
-{{ a b c }}                // Set pattern (double braces) - matches Sets ONLY
-{ k=v  k2=v2 } as Map      // Map pattern - matches Maps ONLY (not plain objects)
-{ k=v  k2=v2 }             // Object pattern - matches plain objects ONLY (not Maps)
-// Note: '{ } as Set' is a syntax error - use {{ }} for sets
-```
-
-These use similar syntax but create distinct AST nodes with different matching semantics.
-
----
 
 ## Lookahead and Negation
 

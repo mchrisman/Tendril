@@ -61,7 +61,7 @@ pattern = {
             {
                 requestId= $reqId
                 status= ok
-                output= ( $text as string | { type=text content=$text } )
+                output= ( $text:(/.*/) | { type=text content=$text } )
             }
             ..
         ]

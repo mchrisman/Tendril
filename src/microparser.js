@@ -90,13 +90,14 @@ export function tokenize(src) {
       continue;
     }
 
-    // multi-character punctuation/operators (order matters)
+    // multi-character punctuation/operators (order matters - check longer tokens first!)
+    if (c3 === '(?=') { push('(?=', '(?=', 3); continue; }   // positive lookahead
+    if (c3 === '(?!') { push('(?!', '(?!', 3); continue; }   // negative lookahead
     if (c3 === '...') { push('..', '..', 3); continue; }   // tolerate '...' -> treat as '..'
     if (c2 === '..')  { push('..', '..', 2); continue; }
     if (c2 === '>>')  { push('>>', '>>', 2); continue; }
     if (c2 === '<<')  { push('<<', '<<', 2); continue; }
-    if (c2 === '?=')  { push('?=', '?=', 2); continue; }   // positive lookahead token
-    if (c2 === '?!')  { push('?!', '?!', 2); continue; }   // negative lookahead token
+    if (c2 === '=?')  { push('=?', '=?', 2); continue; }   // optional assertion operator
     if (c2 === '??')  { push('??', '??', 2); continue; }   // lazy optional
     if (c2 === '++')  { push('++', '++', 2); continue; }   // possessive plus
     if (c2 === '*+')  { push('*+', '*+', 2); continue; }   // possessive star
@@ -104,7 +105,7 @@ export function tokenize(src) {
     if (c2 === '*?')  { push('*?', '*?', 2); continue; }   // lazy star
 
     // one-character punctuation/operators
-    const single = '[](){}:,.$@=|*+?-#'.includes(c) ? c : null;
+    const single = '[](){}:,.$@=|*+?!-#'.includes(c) ? c : null;
     if (single) { push(single, single, 1); continue; }
 
     throw syntax(`unexpected character '${c}'`, src, i);

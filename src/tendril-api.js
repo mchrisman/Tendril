@@ -18,7 +18,12 @@ function compile(pattern) {
     _cache.set(pattern, hit);
     return hit;
   }
-  const ast = parsePattern(String(pattern));
+  let ast = parsePattern(String(pattern));
+
+  // Wrap AST with $0 binding to capture the entire match
+  // This is simpler than adding $0 post-match and naturally tracks paths correctly
+  ast = {type: 'SBind', name: '0', pat: ast};
+
   _cache.set(pattern, ast);
   if (_cache.size > CACHE_MAX) {
     // evict oldest
