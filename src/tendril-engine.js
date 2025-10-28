@@ -643,11 +643,9 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
             const newTestedKeys = new Set(testedKeys);
             newTestedKeys.add(k);
 
-            if (term.key.type === 'SBind') {
-              if (!bindScalar(s1.env, term.key.name, k)) {
-                continue;
-              }
-              recordScalarSite(s1, term.key.name, path, k);
+            // Bind key variables (handle direct bindings and alternations)
+            if (!bindKeyVariables(term.key, k, s1, path)) {
+              continue;
             }
 
             navigateBreadcrumbs(
@@ -696,12 +694,9 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
         const newTestedKeys = new Set(testedKeys);
         newTestedKeys.add(k);
 
-        // Bind key if pattern has a variable
-        if (term.key.type === 'SBind') {
-          if (!bindScalar(s1.env, term.key.name, k)) {
-            continue; // Binding failed (variable already bound to different value)
-          }
-          recordScalarSite(s1, term.key.name, path, k);
+        // Bind key variables (handle direct bindings and alternations)
+        if (!bindKeyVariables(term.key, k, s1, path)) {
+          continue; // Binding failed
         }
 
         // Navigate breadcrumbs from obj[k], then match value pattern
@@ -1019,6 +1014,34 @@ function keyMatches(pat, key) {
       return pat.alts.some(alt => keyMatches(alt, key));
     default:
       return false;
+  }
+}
+
+// Bind variables from a key pattern (handles SBind and alternations)
+// Returns true if binding succeeded, false if it failed
+function bindKeyVariables(keyPat, key, sol, path) {
+  switch (keyPat.type) {
+    case 'SBind':
+      // Direct binding: $x or $x:(pattern)
+      if (!bindScalar(sol.env, keyPat.name, key)) {
+        return false;
+      }
+      recordScalarSite(sol, keyPat.name, path, key);
+      return true;
+
+    case 'Alt':
+      // Alternation: try each alternative, bind variables from the one that matches
+      for (const alt of keyPat.alts) {
+        if (keyMatches(alt, key)) {
+          // This alternative matches - bind any variables it contains
+          return bindKeyVariables(alt, key, sol, path);
+        }
+      }
+      return false; // No alternative matched
+
+    default:
+      // No variables to bind (Lit, Re, Any, etc.)
+      return true;
   }
 }
 
