@@ -12,9 +12,9 @@ try {
   console.log('✗ Error:', e.message);
 }
 
-console.log('\nTest 2: Valid - anonymous spread {k=$v ..}\n');
+console.log('\nTest 2: Valid - remainder assertion {k=$v remainder}\n');
 try {
-  const t2 = Tendril('{k=$v ..}');
+  const t2 = Tendril('{k=$v remainder}');
   const r = t2.match({k: 1, extra: 2});
   console.log('✓ Parsed successfully');
   console.log('Match {k:1, extra:2}:', r ? 'matched' : 'no match');
@@ -22,9 +22,9 @@ try {
   console.log('✗ Error:', e.message);
 }
 
-console.log('\nTest 3: Valid - slice binding {k=$v @rest:(..)}\n');
+console.log('\nTest 3: Valid - slice binding {k=$v @rest:(remainder)}\n');
 try {
-  const t3 = Tendril('{k=$v @rest:(..)}');
+  const t3 = Tendril('{k=$v @rest:(remainder)}');
   const r = t3.match({k: 1, extra: 2});
   console.log('✓ Parsed successfully');
   console.log('Match {k:1, extra:2}:', r ? 'matched' : 'no match');
@@ -35,18 +35,18 @@ try {
   console.log('✗ Error:', e.message);
 }
 
-console.log('\nTest 4: Invalid - spread at beginning {.. k=$v}\n');
+console.log('\nTest 4: Invalid - remainder at beginning {remainder k=$v}\n');
 try {
-  const t4 = Tendril('{.. k=$v}');
+  const t4 = Tendril('{remainder k=$v}');
   t4.match({});  // Trigger compilation
   console.log('✗ Should have failed to parse');
 } catch (e) {
   console.log('✓ Got expected error:', e.message);
 }
 
-console.log('\nTest 5: Invalid - spread in middle {k=$v .. m=$n}\n');
+console.log('\nTest 5: Invalid - remainder in middle {k=$v remainder m=$n}\n');
 try {
-  const t5 = Tendril('{k=$v .. m=$n}');
+  const t5 = Tendril('{k=$v remainder m=$n}');
   t5.match({});  // Trigger compilation
   console.log('✗ Should have failed to parse');
 } catch (e) {

@@ -37,8 +37,8 @@ const test3 = [
 const pattern3 = Tendril(`[
   ..
   @whenelse:(
-    {tag = /^[Ww]hen$/, @attrs:(attrs./(a:)?test/=_), children = $then, @other:(..)}
-    {tag = /^[Ee]lse$/, children = $else, ..}?
+    {tag = /^[Ww]hen$/, @attrs:(attrs./(a:)?test/=_), children = $then, @other:(remainder)}
+    {tag = /^[Ee]lse$/, children = $else, remainder}?
   )
   ..
 ]`);

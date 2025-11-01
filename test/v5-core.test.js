@@ -126,28 +126,28 @@ test('array nested', () => {
 test('empty object', () => {
   assert.ok(matches('{}', {}));
   assert.ok(matches('{}', {a: 1})); // no assertions = all assertions satisfied
-  assert.ok(!matches('{..#{0}}', {a: 1})); // explicitly forbid keys with ..#{0}
+  assert.ok(!matches('{(?!remainder)}', {a: 1})); // explicitly forbid keys with (?!remainder)
 });
 
 test('object single property', () => {
   assert.ok(matches('{a=1}', {a: 1}));
   assert.ok(!matches('{a=1}', {}));
   assert.ok(!matches('{a=1}', {a: 2}));
-  assert.ok(matches('{a=1}', {a: 1, b: 2})); // extra keys allowed without ..
-  assert.ok(!matches('{a=1 ..#{0}}', {a: 1, b: 2})); // ..#{0} forbids extra keys
+  assert.ok(matches('{a=1}', {a: 1, b: 2})); // extra keys allowed without remainder
+  assert.ok(!matches('{a=1 (?!remainder)}', {a: 1, b: 2})); // (?!remainder) forbids extra keys
 });
 
 test('object multiple properties', () => {
   assert.ok(matches('{a=1 b=2}', {a: 1, b: 2}));
   assert.ok(!matches('{a=1 b=2}', {a: 1}));
   assert.ok(matches('{a=1 b=2}', {a: 1, b: 2, c: 3})); // extra keys allowed
-  assert.ok(!matches('{a=1 b=2 ..#{0}}', {a: 1, b: 2, c: 3})); // ..#{0} forbids extras
+  assert.ok(!matches('{a=1 b=2 (?!remainder)}', {a: 1, b: 2, c: 3})); // (?!remainder) forbids extras
 });
 
-test('object with spread', () => {
-  assert.ok(matches('{a=1 ..}', {a: 1}));
-  assert.ok(matches('{a=1 ..}', {a: 1, b: 2, c: 3}));
-  assert.ok(!matches('{a=1 ..}', {b: 2}));
+test('object with remainder binding', () => {
+  assert.ok(matches('{a=1 @x:(remainder)}', {a: 1}));
+  assert.ok(matches('{a=1 @x:(remainder)}', {a: 1, b: 2, c: 3}));
+  assert.ok(!matches('{a=1 @x:(remainder)}', {b: 2}));
 });
 
 test('object wildcard key', () => {
@@ -356,8 +356,8 @@ test('greedy quantifiers - optional object emits longest match first', () => {
   ];
 
   const pattern = `[.. @whenelse:(
-    {tag=/^when$/i @otherProps:(..)}
-    {tag=/^else$/i children=$else ..}?
+    {tag=/^when$/i @otherProps:(remainder)}
+    {tag=/^else$/i children=$else remainder}?
   ) ..]`;
 
   const solutions = Tendril(pattern).all(input);
@@ -383,8 +383,8 @@ test('replace uses first solution only (longest match)', () => {
   ];
 
   const pattern = `[.. @whenelse:(
-    {tag=/^when$/i @otherProps:(..)}
-    {tag=/^else$/i children=$else ..}?
+    {tag=/^when$/i @otherProps:(remainder)}
+    {tag=/^else$/i children=$else remainder}?
   ) ..]`;
 
   const result = Tendril(pattern).replace(input, v => ({

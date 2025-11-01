@@ -48,12 +48,12 @@ test('negative assertion with already-bound variable - fails when present', () =
 });
 
 test('closed object assertion - no residual keys', () => {
-  const result = Tendril('{a=1 (?!..)}').all({a: 1});
+  const result = Tendril('{a=1 (?!remainder)}').all({a: 1});
   assert.equal(result.length, 1);
 });
 
 test('closed object assertion - fails with extra keys', () => {
-  const result = Tendril('{a=1 (?!..)}').all({a: 1, b: 2});
+  const result = Tendril('{a=1 (?!remainder)}').all({a: 1, b: 2});
   assert.equal(result.length, 0);
 });
 
@@ -63,7 +63,7 @@ test('multiple negative assertions', () => {
 });
 
 test('negative assertion does not leak bindings', () => {
-  // Variables bound inside (?!...) should not escape
+  // Variables bound inside (?!remainder) should not escape
   const result = Tendril('{(?!$x=1) a=2}').all({a: 2});
   assert.equal(result.length, 1);
   assert.equal(result[0].bindings.x, undefined); // x should not be bound
@@ -135,13 +135,13 @@ test('array slice binding with pattern - any elements', () => {
 // ============================================================================
 
 test('object slice binding - residual keys', () => {
-  const result = Tendril('{a=1 @x:(..)}').all({a: 1, b: 2, c: 3});
+  const result = Tendril('{a=1 @x:(remainder)}').all({a: 1, b: 2, c: 3});
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].bindings.x, Slice.object({b: 2, c: 3}));
 });
 
 test('object slice binding - empty residual', () => {
-  const result = Tendril('{a=1 @x:(..)}').all({a: 1});
+  const result = Tendril('{a=1 @x:(remainder)}').all({a: 1});
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].bindings.x, Slice.object({}));
 });

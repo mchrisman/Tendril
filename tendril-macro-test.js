@@ -45,8 +45,8 @@ console.log('Input:', JSON.stringify(test1, null, 2));
 try {
   // Try matching the pattern
   const pattern1 = Tendril(`[
-    {tag = "When", attrs = {$testKey = $testAttr, ..}, children = $then, srcId = $id, ..}
-    {tag = "Else", children = $else, ..}?
+    {tag = "When", attrs = {$testKey = $testAttr, remainder}, children = $then, srcId = $id, remainder}
+    {tag = "Else", children = $else, remainder}?
   ]`);
 
   const solutions = pattern1.solutions(test1);
@@ -63,8 +63,8 @@ try {
   // Test 2: Try with case-insensitive tag match
   console.log('Test 2: Case-insensitive tag match');
   const pattern2 = Tendril(`[
-    {tag = /^[Ww]hen$/, attrs = $attrs, children = $then, srcId = $id, ..}
-    {tag = /^[Ee]lse$/, children = $else, ..}?
+    {tag = /^[Ww]hen$/, attrs = $attrs, children = $then, srcId = $id, remainder}
+    {tag = /^[Ee]lse$/, children = $else, remainder}?
   ]`);
 
   const sol2 = pattern2.solutions(test1).first();
@@ -94,8 +94,8 @@ try {
   const pattern3 = Tendril(`[
     ..
     @whenelse:(
-      {tag = /^[Ww]hen$/, @attrs:(attrs=_), children = $then, @other:(..)}
-      {tag = /^[Ee]lse$/, children = $else, ..}?
+      {tag = /^[Ww]hen$/, @attrs:(attrs=_), children = $then, @other:(remainder)}
+      {tag = /^[Ee]lse$/, children = $else, remainder}?
     )
     ..
   ]`);
@@ -114,7 +114,7 @@ try {
     try {
       const result = pattern3.replaceAll(test3, $ => {
         // Exclude 'children' from attrs since we're renaming it to thenChildren
-//        const {children: _, ...attrsRest} = $.attrs || {};
+//        const {children: _, remainder.attrsRest} = $.attrs || {};
         return {
           whenelse: Slice.array({
             tag: 'If',

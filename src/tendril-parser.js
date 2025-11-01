@@ -59,7 +59,7 @@ const OTerm = (key, breadcrumbs, op, val, quant) => ({
   type: 'OTerm',
   key,           // ITEM
   breadcrumbs,   // Breadcrumb[]
-  op,            // '=' or '=?'
+  op,            // '=' or '?='
   val,           // ITEM
   quant          // null or {min, max}
 });
@@ -396,51 +396,74 @@ function parseAQuant(p) {
 // ---------- OBJECTS ----------
 
 function parseObj(p) {
-  // OBJ := '{' O_TERM* SPREAD_TERM? '}'
-  // SPREAD_TERM := S_SLICE ':' '(' '..' ')' | '..'
-  // Restriction: spread must appear at END only
+  // OBJ := '{' O_BODY O_REMNANT? '}'
+  // O_REMNANT := S_SLICE ':' '(' 'remainder' ')'
+  //            | '(?!' 'remainder' ')'
+  //            | 'remainder'
   p.eat('{');
-  const allSlices = [];
+  const terms = [];
 
-  // Parse all slices
-  while (!p.peek('}')) {
-    const slice = parseOSlice(p);
-    allSlices.push(slice);
-    p.maybe(',');
+  // Parse O_BODY: greedily parse O_SLICEs until we can't
+  while (true) {
+    const slice = p.backtrack(() => {
+      if (p.peek('}')) return null;
+      const s = parseOSlice(p);
+      p.maybe(',');
+      return s;
+    });
+    if (!slice) break;
+    terms.push(slice);
   }
+
+  // Now try to parse optional O_REMNANT
+  const remnant = parseORemnant(p);
 
   p.eat('}');
+  return Obj(terms, remnant);
+}
 
-  // Check if last slice is a spread
-  let spread = null;
-  let terms = allSlices;
+function parseORemnant(p) {
+  // O_REMNANT := S_SLICE ':' '(' 'remainder' ')'
+  //            | '(?!' 'remainder' ')'
+  //            | 'remainder'
 
-  if (allSlices.length > 0) {
-    const last = allSlices[allSlices.length - 1];
+  // Try @x:(remainder)
+  const bindRemnant = p.backtrack(() => {
+    if (!p.peek('@')) return null;
+    p.eat('@');
+    const name = p.eat('id').v;
+    if (!p.maybe(':')) return null;
+    p.eat('(');
+    if (!(p.peek('id') && p.peek().v === 'remainder')) return null;
+    p.eat('id');
+    p.eat(')');
+    p.maybe(',');
+    return SliceBind(name, Spread(null));
+  });
+  if (bindRemnant) return bindRemnant;
 
-    // Check if last slice is a spread
-    if (last.type === 'Spread') {
-      spread = last;
-      terms = allSlices.slice(0, -1);
-    } else if (last.type === 'SliceBind' && last.pat.type === 'Spread') {
-      // @rest:(..) - slice binding with spread pattern
-      spread = last;
-      terms = allSlices.slice(0, -1);
-    }
+  // Try bare 'remainder'
+  const bareRemnant = p.backtrack(() => {
+    if (!(p.peek('id') && p.peek().v === 'remainder')) return null;
+    p.eat('id');
+    p.maybe(',');
+    return Spread(null);
+  });
+  if (bareRemnant) return bareRemnant;
 
-    // Error if spread appears anywhere but the end
-    for (let i = 0; i < terms.length; i++) {
-      const slice = terms[i];
-      if (slice.type === 'Spread') {
-        p.fail('object spread (..) must appear at end of object pattern, not in middle');
-      }
-      if (slice.type === 'SliceBind' && slice.pat.type === 'Spread') {
-        p.fail('object spread (@var:(..)) must appear at end of object pattern, not in middle');
-      }
-    }
-  }
+  // Try (?!remainder)
+  const negRemnant = p.backtrack(() => {
+    if (!p.peek('(?!')) return null;
+    p.eat('(?!');
+    if (!(p.peek('id') && p.peek().v === 'remainder')) return null;
+    p.eat('id');
+    p.eat(')');
+    p.maybe(',');
+    return {type: 'OLook', neg: true, pat: Spread(null)};
+  });
+  if (negRemnant) return negRemnant;
 
-  return Obj(terms, spread);
+  return null;
 }
 
 function parseOSlice(p) {
@@ -470,19 +493,13 @@ function parseOSlice(p) {
   });
   if (groupResult) return groupResult;
 
-  // S_SLICE: Slice binding @x or @x:(...)
+  // S_SLICE: Slice binding @x:(O_BODY)
   if (p.peek('@')) {
     p.eat('@');
     const name = p.eat('id').v;
     if (p.maybe(':')) {
       p.eat('(');
-      // Check for special case: @x:(..)
-      if (p.peek('..')) {
-        p.eat('..');
-        p.eat(')');
-        return SliceBind(name, Spread(null));
-      }
-      // Otherwise parse O_BODY: @x:(pattern)
+      // Parse O_BODY: @x:(pattern)
       const slices = [];
       while (!p.peek(')')) {
         slices.push(parseOSlice(p));
@@ -491,8 +508,13 @@ function parseOSlice(p) {
       p.eat(')');
       return SliceBind(name, {type: 'OGroup', slices});
     }
-    // Bare @x in object context means @x:(..)
-    return SliceBind(name, Spread(null));
+    // Bare @x in object context is not allowed
+    p.fail('bare @x not allowed in objects; use @x:(remainder) to bind residual keys');
+  }
+
+  // Reject bare '..' in object context (use 'remainder' instead)
+  if (p.peek('..')) {
+    p.fail('bare ".." not allowed in objects; use "remainder" or "@x:(remainder)" instead');
   }
 
   // Otherwise parse O_TERM
@@ -501,16 +523,7 @@ function parseOSlice(p) {
 }
 
 function parseOTerm(p) {
-  // O_TERM := KEY BREADCRUMB* ('=' | '=?') VALUE O_QUANT?
-  //         | '..' O_QUANT?
-  // Note: parseObj will validate that .. only appears at end
-
-  // Handle ..
-  if (p.peek('..')) {
-    p.eat('..');
-    const quant = parseOQuant(p);
-    return Spread(quant);
-  }
+  // O_TERM := KEY BREADCRUMB* '?'? ('=' | '?=') VALUE O_QUANT?
 
   // KEY BREADCRUMB* op VALUE
   const key = parseItem(p);
@@ -523,14 +536,25 @@ function parseOTerm(p) {
     else break;
   }
 
-  // op: = or =?
+  // '?'? ('=' | '?=') → canonicalize to '?='
+  // Try longer patterns first: '? ?=', '? =', '?=', '='
   let op = null;
-  if (p.maybe('=?')) {
-    op = '=?';
+
+  // Try '? ?=' or '? ='
+  const questOp = p.backtrack(() => {
+    if (!p.maybe('?')) return null;
+    if (p.maybe('?=')) return '?=';
+    if (p.maybe('=')) return '?='; // canonicalize '? =' to '?='
+    return null;
+  });
+  if (questOp) {
+    op = questOp;
+  } else if (p.maybe('?=')) {
+    op = '?=';
   } else if (p.maybe('=')) {
     op = '=';
   } else {
-    p.fail('expected = or =? in object term');
+    p.fail('expected = or ?= in object term');
   }
 
   // VALUE

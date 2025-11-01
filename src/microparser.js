@@ -93,11 +93,8 @@ export function tokenize(src) {
     // multi-character punctuation/operators (order matters - check longer tokens first!)
     if (c3 === '(?=') { push('(?=', '(?=', 3); continue; }   // positive lookahead
     if (c3 === '(?!') { push('(?!', '(?!', 3); continue; }   // negative lookahead
-    if (c3 === '...') { push('..', '..', 3); continue; }   // tolerate '...' -> treat as '..'
     if (c2 === '..')  { push('..', '..', 2); continue; }
-    if (c2 === '>>')  { push('>>', '>>', 2); continue; }
-    if (c2 === '<<')  { push('<<', '<<', 2); continue; }
-    if (c2 === '=?')  { push('=?', '=?', 2); continue; }   // optional assertion operator
+    if (c2 === '?=')  { push('?=', '?=', 2); continue; }   // optional assertion operator
     if (c2 === '??')  { push('??', '??', 2); continue; }   // lazy optional
     if (c2 === '++')  { push('++', '++', 2); continue; }   // possessive plus
     if (c2 === '*+')  { push('*+', '*+', 2); continue; }   // possessive star

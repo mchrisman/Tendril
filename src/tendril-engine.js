@@ -485,7 +485,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
   if (DEBUG) console.log(`[matchObject] obj keys:`, Object.keys(obj), `terms:`, terms.length);
 
   for (const term of terms) {
-    // Handle slice bindings: @var:(pattern) or @var:(..)
+    // Handle slice bindings: @var:(pattern) or @var:(remainder)
     if (term.type === 'SliceBind') {
       const isSpread = term.pat.type === 'Spread';
       const next = [];
@@ -493,7 +493,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       for (const state of solutions) {
         const {sol: s0, testedKeys} = state;
         if (isSpread) {
-          // @var:(..) - capture residual keys
+          // @var:(remainder) - capture residual keys
           const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
           const residualObj = {};
           for (const k of residualKeys) {
@@ -629,8 +629,8 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       throw new Error(`Expected OTerm, SliceBind, OLook, or OGroup, got ${term.type}`);
     }
 
-    // Handle K=?V desugaring: K=?V → (K=V | (?!K=_))
-    if (term.op === '=?') {
+    // Handle K?=V desugaring: K?=V → (K=V | (?!K=_))
+    if (term.op === '?=') {
       const next = [];
       for (const state of solutions) {
         const {sol: s0, testedKeys} = state;
@@ -722,10 +722,31 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     if (!solutions.length) break;
   }
 
-  // Handle spread: bare '..' or '@var:(..)'
+  // Handle spread: bare 'remainder' or '@var:(remainder)' or '(?!remainder)'
   if (spread && solutions.length > 0) {
-    if (spread.type === 'SliceBind') {
-      // @var:(..) - bind residual keys to slice variable
+    if (spread.type === 'OLook') {
+      // (?!remainder) - assert no residual keys
+      const next = [];
+      for (const state of solutions) {
+        const {sol: s0, testedKeys} = state;
+
+        // Special case: (?!remainder) means "no residual keys" (closed object assertion)
+        if (spread.neg && spread.pat.type === 'Spread') {
+          const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
+          const noResiduals = residualKeys.length === 0;
+          if (noResiduals) {
+            // No residual keys - negative lookahead succeeds
+            next.push({sol: cloneSolution(s0), testedKeys: new Set(testedKeys)});
+          }
+          // If there are residuals, negative lookahead fails (don't push to next)
+        } else {
+          // General lookahead on remainder (not yet fully implemented)
+          throw new Error('General lookahead on remainder not yet implemented');
+        }
+      }
+      solutions = next;
+    } else if (spread.type === 'SliceBind') {
+      // @var:(remainder) - bind residual keys to slice variable
       const next = [];
       for (const state of solutions) {
         const {sol: s0, testedKeys} = state;
@@ -755,7 +776,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       }
       solutions = next;
     } else {
-      // Bare '..' - just check count per branch
+      // Bare 'remainder' - just check count per branch
       const next = [];
       for (const state of solutions) {
         const {sol: s0, testedKeys} = state;
