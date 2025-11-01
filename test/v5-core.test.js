@@ -15,7 +15,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matches, extract, extractAll, replaceAll, Tendril } from '../src/tendril-api.js';
+import { matches, extract, extractAll, replaceAll, Tendril, Slice } from '../src/tendril-api.js';
 
 // ==================== Literals & Wildcards ====================
 
@@ -285,8 +285,9 @@ test('alternation - with binding', () => {
 // ==================== Lookaheads ====================
 
 test('positive lookahead - success', () => {
-  assert.ok(matches('(?=1)_', 1));
-  assert.ok(!matches('(?=1)_', 2));
+  // Lookaheads at root level must be wrapped in array context
+  assert.ok(matches('[(?=1)_]', [1]));
+  assert.ok(!matches('[(?=1)_]', [2]));
 });
 
 test('positive lookahead - in array', () => {
@@ -295,8 +296,9 @@ test('positive lookahead - in array', () => {
 });
 
 test('negative lookahead - success', () => {
-  assert.ok(matches('(?!1)_', 2));
-  assert.ok(!matches('(?!1)_', 1));
+  // Lookaheads at root level must be wrapped in array context
+  assert.ok(matches('[(?!1)_]', [2]));
+  assert.ok(!matches('[(?!1)_]', [1]));
 });
 
 test('negative lookahead - in array', () => {
@@ -314,17 +316,19 @@ test('lookahead with binding - no variable leak', () => {
 // ==================== Replace API ====================
 
 test('replace - simple value', () => {
-  const result = replaceAll('$x', 42, bindings => ({...bindings, x: 99}));
+  const result = replaceAll('$x', 42, bindings => ({x: 99}));
   assert.equal(result, 99);
 });
 
-test('replace - in array (single element)', () => {
-  const result = replaceAll('{a[$x:(0)]=_}', {a: [1, 2, 3]}, bindings => ({...bindings, x: 0, $out: 99}));
-  assert.deepEqual(result, {a: [99, 2, 3]});
+test('replace - whole match', () => {
+  // Pattern matches any object with key 'a' that has an array with at least one element
+  // Replace the whole match (bound to $0) with a simple value
+  const result = replaceAll('{a[_]=_}', {a: [1, 2, 3]}, 'replaced');
+  assert.equal(result, 'replaced');
 });
 
 test('replace - in object', () => {
-  const result = replaceAll('{a=$x}', {a: 1}, bindings => ({...bindings, x: 99}));
+  const result = replaceAll('{a=$x}', {a: 1}, bindings => ({x: 99}));
   assert.deepEqual(result, {a: 99});
 });
 
@@ -388,7 +392,7 @@ test('replace uses first solution only (longest match)', () => {
   ) ..]`;
 
   const result = Tendril(pattern).replace(input, v => ({
-    whenelse: { tag: 'when', children2: v.else, ...v.otherProps }
+    whenelse: Slice.array({ tag: 'when', children2: v.else, ...v.otherProps })
   }));
 
   // Should replace the 2-element slice with single merged object

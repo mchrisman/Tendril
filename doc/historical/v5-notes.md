@@ -250,6 +250,8 @@ After some discussion, my recommendations:
 This can actually be read two ways: as an '?=' operator, or as a '?' quantifier, `{ x? = (a|b) }`. That works out fine because both readings yield the same sensible interpretation. But as far as the parser is concerned, it should replace `k?=v`
 
 4. change *{m,n} to {m,n}
+   There is no ambiguity here because {m,n} cannot be interpreted as an OBJ.
+
 
 The expressions need to work for array elements as well as object values. How about:
 

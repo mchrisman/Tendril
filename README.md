@@ -323,10 +323,10 @@ OBJ            := '{' O_BODY O_REMNANT? '}'
 A_QUANT        := '?' | '??'
                | '+' | '+?' | '++'
                | '*' | '*?' | '*+'
-               | '*{' INTEGER '}'
-               | '*{' INTEGER ',' INTEGER '}'
-               | '*{' INTEGER ',' '}'
-               | '*{' ',' INTEGER '}'
+               | '{' INTEGER '}'
+               | '{' INTEGER ',' INTEGER '}'
+               | '{' INTEGER ',' '}'
+               | '{' ',' INTEGER '}'
 
 ```
 

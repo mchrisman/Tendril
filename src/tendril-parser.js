@@ -260,15 +260,15 @@ function parseASlice(p) {
   if (p.peek('..')) {
     p.eat('..');
     // .. in array context is a Spread, optionally followed by quantifier
-    const quant = isAQuant(p) ? parseAQuant(p) : null;
+    const quant = p.backtrack(() => parseAQuant(p));
     return Spread(quant ? `${quant.op}` : null);
   }
 
   let base = parseASliceBase(p);
 
   // Handle quantifier
-  if (isAQuant(p)) {
-    const q = parseAQuant(p);
+  const q = p.backtrack(() => parseAQuant(p));
+  if (q) {
     base = Quant(base, q.op, q.min, q.max);
   }
 
@@ -277,8 +277,8 @@ function parseASlice(p) {
     const alts = [base];
     while (p.maybe('|')) {
       let alt = parseASliceBase(p);
-      if (isAQuant(p)) {
-        const q = parseAQuant(p);
+      const q = p.backtrack(() => parseAQuant(p));
+      if (q) {
         alt = Quant(alt, q.op, q.min, q.max);
       }
       alts.push(alt);
@@ -341,18 +341,15 @@ function parseASliceBase(p) {
   return parseItemTerm(p);
 }
 
-function isAQuant(p) {
-  return p.peek('?') || p.peek('??') || p.peek('+') || p.peek('++') ||
-         p.peek('+?') || p.peek('*') || p.peek('*+') || p.peek('*?');
-}
+// isAQuant removed - use backtracking with parseAQuant instead
 
 function parseAQuant(p) {
   // A_QUANT := '?' | '??'
   //          | '+' | '+?' | '++'
   //          | '*' | '*?' | '*+'
-  //          | '*{' INTEGER '}'
-  //          | '*{' INTEGER ',' INTEGER? '}'
-  //          | '*{' ',' INTEGER '}'
+  //          | '{' INTEGER '}'
+  //          | '{' INTEGER ',' INTEGER? '}'
+  //          | '{' ',' INTEGER '}'
 
   if (p.maybe('??')) return {op: '??', min: 0, max: 1};
   if (p.maybe('?'))  return {op: '?', min: 0, max: 1};
@@ -361,33 +358,31 @@ function parseAQuant(p) {
   if (p.maybe('+'))  return {op: '+', min: 1, max: null};
   if (p.maybe('*+')) return {op: '*+', min: 0, max: null};
   if (p.maybe('*?')) return {op: '*?', min: 0, max: null};
+  if (p.maybe('*'))  return {op: '*', min: 0, max: null};
 
-  if (p.maybe('*')) {
-    if (p.maybe('{')) {
-      // *{m}, *{m,n}, *{m,}, *{,n}
-      let min = null, max = null;
+  // {m}, {m,n}, {m,}, {,n}
+  if (p.maybe('{')) {
+    let min = null, max = null;
 
+    if (p.maybe(',')) {
+      // {,n}
+      min = 0;
+      max = p.eat('num').v;
+    } else {
+      min = p.eat('num').v;
       if (p.maybe(',')) {
-        // *{,n}
-        min = 0;
-        max = p.eat('num').v;
-      } else {
-        min = p.eat('num').v;
-        if (p.maybe(',')) {
-          if (p.peek('num')) {
-            max = p.eat('num').v;
-          } else {
-            max = null;  // unbounded
-          }
+        if (p.peek('num')) {
+          max = p.eat('num').v;
         } else {
-          max = min;  // exact count
+          max = null;  // unbounded
         }
+      } else {
+        max = min;  // exact count
       }
-
-      p.eat('}');
-      return {op: `*{${min},${max ?? ''}}`, min, max};
     }
-    return {op: '*', min: 0, max: null};
+
+    p.eat('}');
+    return {op: `{${min},${max ?? ''}}`, min, max};
   }
 
   p.fail('expected quantifier');
