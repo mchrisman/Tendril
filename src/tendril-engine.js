@@ -841,17 +841,17 @@ function navigateBreadcrumbs(breadcrumbs, startNode, basePath, sol, emit, ctx) {
   const bc = breadcrumbs[0];
   const rest = breadcrumbs.slice(1);
 
-  if (bc.quant) {
-    // Breadcrumb with quantifier: (.key){m,n} or ([idx])*
-    navigateBreadcrumbWithQuant(bc, rest, startNode, basePath, sol, emit, ctx);
-  } else {
-    // Simple breadcrumb without quantifier
-    navigateSingleBreadcrumb(bc, rest, startNode, basePath, sol, emit, ctx);
-  }
+  // Navigate the breadcrumb (no quantifiers in v5)
+  navigateSingleBreadcrumb(bc, rest, startNode, basePath, sol, emit, ctx);
 }
 
 function navigateSingleBreadcrumb(bc, restBreadcrumbs, node, path, sol, emit, ctx) {
-  if (bc.kind === 'dot') {
+  if (bc.kind === 'skip') {
+    // ..key navigation - skip any number of levels to find key
+    if (!isObject(node)) return;
+
+    navigateSkipLevels(bc.key, restBreadcrumbs, node, path, sol, emit, ctx);
+  } else if (bc.kind === 'dot') {
     // .key navigation on objects
     if (!isObject(node)) return;
 
@@ -940,37 +940,52 @@ function navigateSingleBreadcrumb(bc, restBreadcrumbs, node, path, sol, emit, ct
   }
 }
 
-function navigateBreadcrumbWithQuant(bc, restBreadcrumbs, node, path, sol, emit, ctx) {
-  // Breadcrumb quantifier: repeat navigation {m,n} times
-  const {min, max} = parseQuantRange(bc.quant);
+function navigateSkipLevels(keyPattern, restBreadcrumbs, node, path, sol, emit, ctx) {
+  // ..key navigation: recursively search through object tree to find matching keys at any depth
+  guard(ctx);
 
-  // Navigate bc.quant times, then continue with restBreadcrumbs
-  function repeatNav(reps, currentNode, currentPath, currentSol) {
-    guard(ctx);
+  if (!isObject(node)) return;
 
-    if (reps >= min) {
-      // Can stop here and continue with rest
-      navigateBreadcrumbs(restBreadcrumbs, currentNode, currentPath, currentSol, emit, ctx);
+  // Try to match key at current level
+  // Handle $name binding in key position
+  if (keyPattern.type === 'SBind') {
+    const fast = fastBoundKey(keyPattern, sol.env, keyMatches, k => node.hasOwnProperty(k));
+
+    if (fast !== undefined) {
+      // Fast path: variable already bound, use its value
+      if (fast.length > 0) {
+        const boundKey = fast[0];
+        if (node.hasOwnProperty(boundKey)) {
+          navigateBreadcrumbs(restBreadcrumbs, node[boundKey], [...path, boundKey], sol, emit, ctx);
+        }
+      }
+    } else {
+      // Not bound yet - enumerate all matching keys and try to bind
+      const pattern = keyPattern.pat;
+      for (const k of Object.keys(node)) {
+        if (!keyMatches(pattern, k)) continue;
+        const s2 = cloneSolution(sol);
+        if (bindScalar(s2.env, keyPattern.name, k)) {
+          recordScalarSite(s2, keyPattern.name, path, k);
+          navigateBreadcrumbs(restBreadcrumbs, node[k], [...path, k], s2, emit, ctx);
+        }
+      }
     }
-
-    if (reps >= max) return;
-
-    // Try one more navigation
-    const bcWithoutQuant = {...bc, quant: null};
-    navigateSingleBreadcrumb(
-      bcWithoutQuant,
-      [],
-      currentNode,
-      currentPath,
-      currentSol,
-      (nextNode, nextPath, nextSol) => {
-        repeatNav(reps + 1, nextNode, nextPath, nextSol);
-      },
-      ctx
-    );
+  } else {
+    // Regular key pattern (no variable binding)
+    const keys = objectKeysMatching(node, keyPattern, sol.env);
+    for (const k of keys) {
+      navigateBreadcrumbs(restBreadcrumbs, node[k], [...path, k], sol, emit, ctx);
+    }
   }
 
-  repeatNav(0, node, path, sol);
+  // Recurse into nested objects to find key at deeper levels
+  for (const k of Object.keys(node)) {
+    const child = node[k];
+    if (isObject(child)) {
+      navigateSkipLevels(keyPattern, restBreadcrumbs, child, [...path, k], sol, emit, ctx);
+    }
+  }
 }
 
 // ------------- Helpers -------------

@@ -524,8 +524,8 @@ function parseOTerm(p) {
   const key = parseItem(p);
   const breadcrumbs = [];
 
-  // Parse breadcrumbs
-  while (p.peek('.') || p.peek('[') || p.peek('(')) {
+  // Parse breadcrumbs (. .. or [)
+  while (p.peek('.') || p.peek('..') || p.peek('[')) {
     const bc = parseBreadcrumb(p);
     if (bc) breadcrumbs.push(bc);
     else break;
@@ -562,86 +562,36 @@ function parseOTerm(p) {
 }
 
 function parseBreadcrumb(p) {
-  // BREADCRUMB := '.' KEY
-  //             | '[' KEY ']'
-  //             | '(' '.' KEY ')' B_QUANT
-  //             | '[' KEY ']' B_QUANT
+  // BREADCRUMB := '..' KEY          // skip levels
+  //             | '.' KEY            // single level
+  //             | '[' KEY ']'        // array index
 
-  // Quantified breadcrumb: (. KEY) B_QUANT
-  if (p.peek('(')) {
-    const start = p.i;
-    p.eat('(');
-
-    // Must be '.' KEY ')' B_QUANT or '[' KEY ']' B_QUANT
-    let kind = null;
-    if (p.peek('.')) {
-      p.eat('.');
-      kind = 'dot';
-      const key = parseItem(p);
-      p.eat(')');
-      const quant = parseBQuant(p);
-      if (!quant) {
-        // No quantifier, this is just (. KEY) which is weird
-        // Backtrack? Or error?
-        p.fail('expected B_QUANT after (. KEY)');
-      }
-      return Breadcrumb(kind, key, quant);
-    } else if (p.peek('[')) {
-      // ( [ KEY ] ) B_QUANT
-      p.eat('[');
-      kind = 'bracket';
-      const key = parseItem(p);
-      p.eat(']');
-      p.eat(')');
-      const quant = parseBQuant(p);
-      if (!quant) {
-        p.fail('expected B_QUANT after ([ KEY ])');
-      }
-      return Breadcrumb(kind, key, quant);
-    }
-
-    // Not a valid breadcrumb, backtrack
-    p.i = start;
-    return null;
+  // Skip levels: .. KEY
+  if (p.peek('..')) {
+    p.eat('..');
+    const key = parseItem(p);
+    return Breadcrumb('skip', key, null);
   }
 
-  // Simple breadcrumb: . KEY
+  // Dot notation: . KEY
   if (p.peek('.')) {
     p.eat('.');
     const key = parseItem(p);
     return Breadcrumb('dot', key, null);
   }
 
-  // [ KEY ] (without paren, check for optional quantifier)
+  // Bracket notation: [ KEY ]
   if (p.peek('[')) {
     p.eat('[');
     const key = parseItem(p);
     p.eat(']');
-    // Check for optional B_QUANT
-    const quant = parseBQuant(p);
-    return Breadcrumb('bracket', key, quant);
+    return Breadcrumb('bracket', key, null);
   }
 
   return null;
 }
 
-function parseBQuant(p) {
-  // B_QUANT := '?' | '+' | '*'
-  // These must be single-char to avoid conflict with A_QUANT
-  if (p.peek('?')) {
-    p.eat('?');
-    return {op: '?', min: 0, max: 1};
-  }
-  if (p.peek('+') && !p.peekAt(1, '?') && !p.peekAt(1, '+')) {
-    p.eat('+');
-    return {op: '+', min: 1, max: null};
-  }
-  if (p.peek('*') && !p.peekAt(1, '{') && !p.peekAt(1, '+') && !p.peekAt(1, '?')) {
-    p.eat('*');
-    return {op: '*', min: 0, max: null};
-  }
-  return null;
-}
+// parseBQuant removed - breadcrumbs no longer support quantifiers in v5
 
 function parseOQuant(p) {
   // O_QUANT := '#' ( '?' | '{' INTEGER (',' INTEGER?)? '}' )

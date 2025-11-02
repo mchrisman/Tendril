@@ -302,10 +302,10 @@ A_SLICE        := '(' A_BODY ')'                          // [^6]
 ARR            := '[' A_BODY ']'
 KEY            := ITEM                                   // [^13]
 VALUE          := ITEM
-B_QUANT        := '?' | '+' | '*'                        // [^11]
-BREADCRUMB     := '.' KEY                                // [^12]
-               | '(' '.' KEY ')' B_QUANT                 // [^11]
-               | '[' KEY ']' B_QUANT?                    // [^11]
+BREADCRUMB     := '..' KEY   // skip any number of levels between the current position and the key. 
+               | '.' KEY                                 // [^11], [^12]
+               | '[' KEY ']'                             // [^11]
+               
 
 O_TERM         := KEY BREADCRUMB* '?'? ('=' | '?=') VALUE      // [^10]
 O_BODY         := (O_SLICE (','? O_SLICE)*)?              // [^5]
@@ -350,15 +350,8 @@ Notes:
 
 [^9] In object context, (?! Q) succeeds iff Q has no solutions under the current bindings. Variables occurring in Q are treated as follows: already-bound variables constrain Q; unbound variables are existentially scoped within the check. Bindings produced inside the negation do not escape.
 [^10] The optional operator is `?=` which can appear as a single token (`K?=V`) or with whitespace (`K ?= V` or even `K ? = V`). There is no ambiguity with lookaheads `(?=P)` since lookaheads have `(` before the `?`.
-[^11] 
-`foo(.bar)+=baz` (at least one repetition of .bar) would match {foo:{bar:{bar:baz}}}.
-`foo(.bar)*=baz` would aditionally, match zero repetitions, i.e. foo=baz.
-`foo(.bar)?=baz` means zero or one repetitions of .bar, thus `foo=baz | foo.bar=baz`.
-But: `foo.bar?=baz` means `foo.bar=baz | (?!foo.bar=_)`.
-Both + and * are greedy.
-[] is quantified similarly.
-The quantifier applies only to the immediately preceding breadcrumb.
-[^12] The difference between foo.bar and foo[bar] is that the latter also asserts `foo` to be an array and `bar` to be numeric (or else the match will fail).
+[^11] The `..` breadcrumb skips any number of intermediate levels. For example, `foo..bar=1` matches `{foo: {bar: 1}}`, `{foo: {x: {bar: 1}}}`, `{foo: {x: {y: {bar: 1}}}}`, etc. It navigates through object properties at any depth to find a matching key.
+[^12] The difference between `foo.bar` and `foo[bar]` is that the latter also asserts `foo` to be an array and `bar` to be numeric (or else the match will fail).
 [^13] I'm using ITEM because the possibilities are complex, including negative assertions, alternations, bindings, etc. But note that Object keys are strings, so unless the item describes a string, it can't match.
 
 
