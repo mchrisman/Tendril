@@ -51,20 +51,32 @@ export function tokenize(src) {
 
     // regex literal: /.../flags  (no division in this DSL; treat leading / as regex)
     if (c === '/' && src[i + 1] !== '/') {
-      let j = i + 1, body = '';
-      while (j < src.length && src[j] !== '/') {
-        if (src[j] === '\\') {
-          // keep raw escape content in body; consumer will build RegExp
-          body += src[j] + (src[j + 1] ?? ''); j += 2;
-        } else {
-          body += src[j++];
+      // Parse regex by trying each '/' as potential terminator, validating with RegExp constructor
+      let found = false;
+      for (let j = i + 1; j < src.length && !found; ) {
+        j = src.indexOf('/', j);
+        if (j < 0) break; // no more '/' found
+
+        // Capture flags after this potential terminator
+        let k = j + 1;
+        while (k < src.length && /[a-z]/i.test(src[k])) k++;
+
+        const pattern = src.slice(i + 1, j);
+        const flags = src.slice(j + 1, k);
+
+        // Try to construct RegExp to validate this is a valid endpoint
+        try {
+          new RegExp(pattern, flags);
+          // Valid! This is the correct endpoint
+          push('re', { source: pattern, flags: flags }, k - i);
+          found = true;
+        } catch {
+          // Invalid regex, try next '/'
+          j++;
         }
       }
-      if (src[j] !== '/') throw syntax(`unterminated regex`, src, i);
-      // flags
-      let f = '', k = j + 1;
-      while (k < src.length && /[a-z]/i.test(src[k])) { f += src[k++]; }
-      push('re', { source: body, flags: f }, (k) - i);
+
+      if (!found) throw syntax(`unterminated or invalid regex`, src, i);
       continue;
     }
 
