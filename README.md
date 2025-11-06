@@ -65,31 +65,31 @@ An **atom** is a number, boolean, string (quoted or bareword), regex `/.../flags
 
 **Objects** are written with `{...}` and contain key–value **assertions** of the form `K = V` or `K ?= V`. 
 ```
-    { b=_  c=_ }   ~= { b:1, c:2 }  // every key-value assertion satisfied
-    { b=_      }   ~= { b:1, c:2 }  // every key-value assertion satisfied
-    { b=_  c=_ }  !~= { b:1 }       // unsatisfied assertion
-    { b=_  c?=_ }  ~= { b:1 }       // optional assertion
+    { b:_  c:_ }   ~= { b:1, c:2 }  // every key-value assertion satisfied
+    { b:_      }   ~= { b:1, c:2 }  // every key-value assertion satisfied
+    { b:_  c:_ }  !~= { b:1 }       // unsatisfied assertion
+    { b:_  c?:_ }  ~= { b:1 }       // optional assertion
 ```
 In objects, the **residual** is the set of key-value pairs whose keys didn't match any of the key patterns in the assertions. It can be bound to a slice variable using the `remainder` keyword.
 ```
-    { /[a-z]/=3 @x:(remainder) } ~= { a:3, b:3, foo:3 } => @x is bound to {foo:3}
+    { /[a-z]/=3 @x=(remainder) } ~= { a:3, b:3, foo:3 } => @x is bound to {foo:3}
 ```
 
-**Paths** (“breadcrumbs”) chain through objects and arrays: `.k` descends into an object key, `[i]` descends into an array index, and these can be composed: `{ a.b.c = d }`, `{ a[3].c = d }`.
+**Paths** (“breadcrumbs”) chain through objects and arrays: `.k` descends into an object key, `[i]` descends into an array index, and these can be composed: `{ a.b.c : d }`, `{ a[3].c : d }`.
 ```
-    { a(.b.a)*.c=d } ~= {a:{b:{a:{b:{a:{b:{a:{c:"d"}}}}}}}}
+    { a(.b.a)*.c:d } ~= {a:{b:{a:{b:{a:{b:{a:{c:"d"}}}}}}}}
 ```
 
 ### Binding and unification
 
-Variables beginning with `$` bind **scalars** (exactly one value per solution). Variables beginning with `@` bind **slices** (zero or more items for arrays; sets of key–value pairs for objects). A bare `$x` is sugar for `$x:(_)`. A bare `@x` is sugar for `@x:(_*)` in arrays (not defined for objects).
+Variables beginning with `$` bind **scalars** (exactly one value per solution). Variables beginning with `@` bind **slices** (zero or more items for arrays; sets of key–value pairs for objects). A bare `$x` is sugar for `$x=(_)`. A bare `@x` is sugar for `$x=(_*)` in arrays (not defined for objects).
 
 Bindings are Prolog-style. If the same variable appears multiple times, the matched values must be equal (deep structural equality where relevant); this is called **unification**. 
 
-A scalar binder `$x:(P)` succeeds exactly when the data matches P at that point AND the matched value is a single value AND unification succeeds. 
+A scalar binder `$x=(P)` succeeds exactly when the data matches P at that point AND the matched value is a single value AND unification succeeds. 
 ```
     [ 1? 2? ]         matches any of  [], [1], [2], [1,2]
-    [ $x:(1? 2?) ]    matches only [1], [2], because $x must bind to a scalar.
+    [ $x=(1? 2?) ]    matches only [1], [2], because $x must bind to a scalar.
 ```
 
 ### Alternation, lookahead, and quantifiers
@@ -105,15 +105,15 @@ Array items may be quantified with `{m,n}`, with `?`, `+`, and `*` as shorthands
 [ a b ]        !~= ["a","b","c"]
 [ a b .. ]      ~= ["a","b","c"]
 
-{ b=_  c=_ }    ~= { b:1, c:2 }
-{ b=_ }         ~= { b:1, c:2 }
-{ b=_  c=_ }   !~= { b:1 }
-{ b=_  c?=_ }   ~= { b:1 }
+{ b:_  c:_ }    ~= { b:1, c:2 }
+{ b:_ }         ~= { b:1, c:2 }
+{ b:_  c:_ }   !~= { b:1 }
+{ b:_  c?:_ }   ~= { b:1 }
 
 { /[ab]/=_  /[ad]/=_ }   ~= { a:1 }    // overlapping predicates are fine
 { /[ab]/=_  /[ad]/=_ }  !~= { d:1 }
 
-{ b=_  @s:(remainder) }   ~= { a:1, c:2, Z:1 }  // @s is the residual slice
+{ b:_  @s=(remainder) }   ~= { a:1, c:2, Z:1 }  // @s is the residual slice
 ```
 
 ### Scalar vs. slice in arrays and objects
@@ -129,26 +129,26 @@ A scalar captures exactly one value even in an array context. A slice captures z
 [ @x @y ]    ~= [[1,2],[3,4]] // multiple solutions by different splits
 ```
 
-In objects, keys and values are scalars; slices contain key–value pairs. For example, `{ @rest:(remainder) }` binds the residual set. The names `$x` and `@x` must not collide.
+In objects, keys and values are scalars; slices contain key–value pairs. For example, `{ @rest=(remainder) }` binds the residual set. The names `$x` and `@x` must not collide.
 
 ### Test cases that document intent
 
 * `[ $x y $x? ]` matches `[ 1, "y", 1 ]`.
-* `[ $x y ($x:(_))? ]` matches `[ 1, "y", 1 ]` (the binder exists only on the taken branch).
-* `[ $x y $x:(_?) ]` matches `[ 1, "y", 1 ]` (the node is concrete; `?` cannot accept “nothing” here).
-* `[ [($x:(_))? ..] $x ]` matches `[ [1], 1 ]`.
-* `[ [$x:(_?) ..] $x ]` matches `[ [1], 1 ]`.
-* `[ [($x:(_))? ..] $x ]` matches `[ [1], 2 ]`.
-* `[ [$x:(_?) ..] $x ]` does **not** match `[ [1], 2 ]` (the inner binder would force `$x=1`).
-* `[ [($x:(_))? ..] ($x:(_))? ..]` matches `[ [1], 2 ]`.
-* `[ [$x:(_?) ..] $x:(_?) .]` does **not** match `[ [1], 2 ]` (and note the trailing `.` inside an array is invalid; `.` is the breadcrumb operator for objects, not an array element).
-* `[ [($x:(_))? ..] $x ]` matches `[ [1], null ]`.
-* `[ [$x:(_?) ..] $x ]` does **not** match `[ [], null ]`.
-* `[ [($x:(_))? ..] $x ]` does not match `[ [1] ]`.
-* `[ [$x:(_?) ..] $x ]` does not match `[ [1] ]`.
-* `[ ($x:(_))? $x .. ]` matches `[ 1, "y" ]`.
-* `[ $x:(_?) $x .. ]` does not match `[ 1, "y" ]`.
-* `[ [$x:(1? 2?)] $x ]` matches `[ [1], 1 ]`. This illustrates why we do not attempt to prove “scalar-ness” of patterns at compile time; runtime acceptance on the concrete node suffices.
+* `[ $x y ($x=(_))? ]` matches `[ 1, "y", 1 ]` (the binder exists only on the taken branch).
+* `[ $x y $x=(_?) ]` matches `[ 1, "y", 1 ]` (the node is concrete; `?` cannot accept “nothing” here).
+* `[ [($x=(_))? ..] $x ]` matches `[ [1], 1 ]`.
+* `[ [$x=(_?) ..] $x ]` matches `[ [1], 1 ]`.
+* `[ [($x=(_))? ..] $x ]` matches `[ [1], 2 ]`.
+* `[ [$x=(_?) ..] $x ]` does **not** match `[ [1], 2 ]` (the inner binder would force `$x=1`).
+* `[ [($x=(_))? ..] ($x=(_))? ..]` matches `[ [1], 2 ]`.
+* `[ [$x=(_?) ..] $x=(_?) .]` does **not** match `[ [1], 2 ]` (and note the trailing `.` inside an array is invalid; `.` is the breadcrumb operator for objects, not an array element).
+* `[ [($x=(_))? ..] $x ]` matches `[ [1], null ]`.
+* `[ [$x=(_?) ..] $x ]` does **not** match `[ [], null ]`.
+* `[ [($x=(_))? ..] $x ]` does not match `[ [1] ]`.
+* `[ [$x=(_?) ..] $x ]` does not match `[ [1] ]`.
+* `[ ($x=(_))? $x .. ]` matches `[ 1, "y" ]`.
+* `[ $x=(_?) $x .. ]` does not match `[ 1, "y" ]`.
+* `[ [$x=(1? 2?)] $x ]` matches `[ [1], 1 ]`. This illustrates why we do not attempt to prove “scalar-ness” of patterns at compile time; runtime acceptance on the concrete node suffices.
 
 ### API at a glance
 
@@ -170,7 +170,7 @@ Numbers and booleans match by strict equality. Strings (quoted or barewords that
 
 ### Operators and constructs
 
-Use `|` for alternation. Use `.` and `[]` to descend through objects and arrays. Array quantifiers include `?`, `+`, `*`, and `{m,n}` forms; `..` is a lazy slice equivalent to a non-greedy `_` repetition. Object assertions use `=` and `?=` and may be given optional count suffixes to require that a predicate match a certain number of keys. Lookaheads `( ?= P )` and `( ?! P )` assert without consuming; positive lookaheads may bind variables.
+Use `|` for alternation. Use `.` and `[]` to descend through objects and arrays. Array quantifiers include `?`, `+`, `*`, and `{m,n}` forms; `..` is a lazy slice equivalent to a non-greedy `_` repetition. Object assertions use `:` and `?:` and may be given optional count suffixes to require that a predicate match a certain number of keys. Lookaheads `( ?= P )` and `( ?! P )` assert without consuming; positive lookaheads may bind variables.
 
 ### Arrays
 
@@ -180,13 +180,13 @@ Quantifier shorthands follow the grammar. For example, `a?` is zero-or-one, `a+`
 
 ### Objects and object slices
 
-Each key–value assertion evaluates over all entries whose keys match the key pattern, and each such value must satisfy the value pattern. For `K = V` at least one such entry must exist; for `K ?= V` existence is not required. Assertions may overlap. The `remainder` keyword denotes the set of entries whose keys match none of the key patterns in the object. You can bind that set to a slice variable: `{ … @rest:(remainder) }`. Unconstrained keys may exist unless you explicitly demand otherwise by using `(?!remainder)`.
+Each key–value assertion evaluates over all entries whose keys match the key pattern, and each such value must satisfy the value pattern. For `K = V` at least one such entry must exist; for `K ?= V` existence is not required. Assertions may overlap. The `remainder` keyword denotes the set of entries whose keys match none of the key patterns in the object. You can bind that set to a slice variable: `{ … @rest=(remainder) }`. Unconstrained keys may exist unless you explicitly demand otherwise by using `(?!remainder)`.
 
 Object-level count quantifiers (e.g., `k=v #{2,4}`) count how many keys matched that assertion and impose bounds without backtracking. These counts are assertion-local.
 
 ### Binding and unification
 
-`$name:(pattern)` matches the node against `pattern` and binds `$name` to that single value. A bare `$name` is sugar for `$name:(_)`. If `$name` appears again, its matched value must unify (deep structural equality where relevant). `@name:(slice-pattern)` binds a slice: for arrays, a sequence of items; for objects, a set of key–value pairs. Bare `@name` is sugar for `@name:(_*)` in arrays (not defined for objects). `$name` and `@name` must not collide.
+`$name=(pattern)` matches the node against `pattern` and binds `$name` to that single value. A bare `$name` is sugar for `$name=(_)`. If `$name` appears again, its matched value must unify (deep structural equality where relevant). `@name=(slice-pattern)` binds a slice: for arrays, a sequence of items; for objects, a set of key–value pairs. Bare `@name` is sugar for `@name=(_*)` in arrays (not defined for objects). `$name` and `@name` must not collide.
 
 Unification occurs after each binder has independently matched its own pattern. The sequence `[ $x $x:(/[ab]/) $y ]` matches `['a','a','y']` but not `['a','b','y']`. Deep equality is required where values are composite.
 
@@ -197,7 +197,7 @@ Unification occurs after each binder has independently matched its own pattern. 
 
 ### Path assertions
 
-Paths chain key and index steps: `{ a.b.c = d }` matches `{ a: { b: { c: 'd' } } }`. `{ a[3].c = d }` expects an array at `a` and a `c` within the fourth element. 
+Paths chain key and index steps: `{ a.b.c : d }` matches `{ a: { b: { c: 'd' } } }`. `{ a[3].c : d }` expects an array at `a` and a `c` within the fourth element. 
 
 ### Quantifiers — arrays
 
@@ -220,20 +220,20 @@ a?        ≡ a*{0,1}       // greedy optional (matches before skipping)
 
 **A bound name must be the same across repetitions.**
 ```
-[ $x:(_)+ ] matches        [ "a", "a", "a" ]
-[ $x:(_)+ ] does not match [ "a", "b", "c" ]
+[ $x=(_)+ ] matches        [ "a", "a", "a" ]
+[ $x=(_)+ ] does not match [ "a", "b", "c" ]
 
-[ @x:(_+) [@x]] matches        [ "a", "b", "c" ["a", "b", "c"]]
-[ @x:(_+) [@x]] does not match [ "a", "b", "c", ["d", "e", "f"]]
+[ @x=(_+) [@x]] matches        [ "a", "b", "c" ["a", "b", "c"]]
+[ @x=(_+) [@x]] does not match [ "a", "b", "c", ["d", "e", "f"]]
 
-[ @x:(_ _)+ ] matches        [ "a", "b", "a", "b", "a", "b" ]
-[ @x:(_ _)+ ] does not match [ "a", "b", "c", "d", "e", "f" ]
+[ @x=(_ _)+ ] matches        [ "a", "b", "a", "b", "a", "b" ]
+[ @x=(_ _)+ ] does not match [ "a", "b", "c", "d", "e", "f" ]
 
 The same applies to * and ? variants.
 Zero-length matches of @x* unify @x with an empty slice.
 
-As bare `$x` is short for `$x:(_)`, so `$x+` is short for $x:(_)+.
-As bare `@x` is short for `@x:(_*)`, so `@x+` is short for @x:(_)+.
+As bare `$x` is short for `$x=(_)`, so `$x+` is short for $x=(_)+.
+As bare `@x` is short for `$x=(_*)`, so `@x+` is short for @x:(_)+.
 ```
 
 ### Quantifiers — objects
@@ -277,7 +277,7 @@ S_SLICE        := '@' IDENT                   // [^6]
 
 ITEM           := '(' ITEM ')'
                | S_ITEM                       // [^8]
-               | S_ITEM ':' '(' ITEM ')'      // [^7]
+               | S_ITEM '=' '(' ITEM ')'      // [^7]
                | '_'
                | LITERAL
                | OBJ
@@ -288,9 +288,9 @@ A_BODY         := (A_SLICE (','? A_SLICE)*)?              // [^5]
 
 A_SLICE        := '(' A_BODY ')'                          // [^6]
                | S_SLICE                              // [^8]
-               | S_SLICE ':' '(' A_BODY ')'           // [^7]
+               | S_SLICE '=' '(' A_BODY ')'           // [^7]
                | S_ITEM
-               | S_ITEM ':' '(' A_BODY ')'
+               | S_ITEM '=' '(' A_BODY ')'
                | ITEM
                | OBJ
                | ARR
@@ -302,19 +302,19 @@ A_SLICE        := '(' A_BODY ')'                          // [^6]
 ARR            := '[' A_BODY ']'
 KEY            := ITEM                                   // [^13]
 VALUE          := ITEM
-BREADCRUMB     := '..' KEY   // skip any number of levels between the current position and the key. 
+BREADCRUMB     := '..' KEY   // skip any number of levels between the current position and the key.
                | '.' KEY                                 // [^11], [^12]
                | '[' KEY ']'                             // [^11]
-               
 
-O_TERM         := KEY BREADCRUMB* '?'? ('=' | '?=') VALUE      // [^10]
+
+O_TERM         := KEY BREADCRUMB* '?'? (':' | '?:') VALUE      // [^10]
 O_BODY         := (O_SLICE (','? O_SLICE)*)?              // [^5]
 O_SLICE        := '(' O_BODY ')'                          // [^1], [^6]
                | '(?!' O_BODY ')'                         // [^9]
-               | S_SLICE ':' '(' O_BODY ')'               // [^7]
+               | S_SLICE '=' '(' O_BODY ')'               // [^7]
                | O_TERM
 
-O_REMNANT      := S_SLICE ':' '(' 'remainder' ')'  // [^2] bind residual keys to a slice variable
+O_REMNANT      := S_SLICE '=' '(' 'remainder' ')'  // [^2] bind residual keys to a slice variable
                | '(?!' 'remainder' ')'              // [^4] assert no residual keys
                | 'remainder'                               assert residual keys exist
                
@@ -334,9 +334,9 @@ A_QUANT        := '?' | '??'
 The notations `~=` and `===` appear only in this document.
 
 Notes:
-[^1] Parentheses allow grouping, but they do not change the semantics. { k1=v1 k2=v2 k3=v3 } and { k1=v1 (k2=v2 k3=v3) } are equivalent conjunctions.
+[^1] Parentheses allow grouping, but they do not change the semantics. { k1:v1 k2:v2 k3:v3 } and { k1:v1 (k2:v2 k3:v3) } are equivalent conjunctions.
 
-[^2] In objects, residual keys (those not matching any assertion) are allowed by default. To bind them, use `@x:(remainder)`. To assert their existence without binding, use bare `remainder`. To forbid them, use `(?!remainder)`. Note: Unlike arrays where `..` means "unanchored matching", objects use the explicit `remainder` keyword to avoid confusion between different semantics.
+[^2] In objects, residual keys (those not matching any assertion) are allowed by default. To bind them, use `@x=(remainder)`. To assert their existence without binding, use bare `remainder`. To forbid them, use `(?!remainder)`. Note: Unlike arrays where `..` means "unanchored matching", objects use the explicit `remainder` keyword to avoid confusion between different semantics.
 
 [^3] You know what I mean. Apply the usual recursive constructs.
 
@@ -346,11 +346,11 @@ Notes:
 
 [^6] A "slice" is a contiguous subsequence of an array, or a subset of the unordered key/value pairs of an object. Parentheses are used to delineate slices.
 
-[^7], [^8] `$foo` is short for `$foo:(_)`. `@foo` is short for `@foo:(_*)` in arrays (bare `@foo` is not defined in objects; use explicit `@foo:(..)` instead). When ":" is used, the rhs must be in parentheses.
+[^7], [^8] `$foo` is short for `$foo=(_)`. `@foo` is short for `@foo=(_*)` in arrays (bare `@foo` is not defined in objects; use explicit `@foo=(..)` instead). When "=" is used for binding, the rhs must be in parentheses.
 
 [^9] In object context, (?! Q) succeeds iff Q has no solutions under the current bindings. Variables occurring in Q are treated as follows: already-bound variables constrain Q; unbound variables are existentially scoped within the check. Bindings produced inside the negation do not escape.
-[^10] The optional operator is `?=` which can appear as a single token (`K?=V`) or with whitespace (`K ?= V` or even `K ? = V`). There is no ambiguity with lookaheads `(?=P)` since lookaheads have `(` before the `?`.
-[^11] The `..` breadcrumb skips any number of intermediate levels. For example, `foo..bar=1` matches `{foo: {bar: 1}}`, `{foo: {x: {bar: 1}}}`, `{foo: {x: {y: {bar: 1}}}}`, etc. It navigates through object properties at any depth to find a matching key.
+[^10] The optional operator is `?:` which can appear as a single token (`K?:V`) or with whitespace (`K ?: V` or even `K ? : V`). There is no ambiguity with lookaheads `(?:P)` since lookaheads have `(` before the `?`.
+[^11] The `..` breadcrumb skips any number of intermediate levels. For example, `foo..bar:1` matches `{foo: {bar: 1}}`, `{foo: {x: {bar: 1}}}`, `{foo: {x: {y: {bar: 1}}}}`, etc. It navigates through object properties at any depth to find a matching key.
 [^12] The difference between `foo.bar` and `foo[bar]` is that the latter also asserts `foo` to be an array and `bar` to be numeric (or else the match will fail).
 [^13] I'm using ITEM because the possibilities are complex, including negative assertions, alternations, bindings, etc. But note that Object keys are strings, so unless the item describes a string, it can't match.
 
@@ -374,14 +374,14 @@ Tendril(`{
 Redact sensitive fields:
 
 ```js
-Tendril("{ _(._)*.password = $value }")
+Tendril("{ _(._)*.password : $value }")
   .replaceAll(input, vars => ({ value: "REDACTED" }));
 ```
 
 Bind object slices:
 
 ```
-{ /user.*/=_  $contacts:(/contact.*/=_)  @rest:(remainder) }
+{ /user.*/=_  $contacts=(/contact.*/=_)  @rest=(remainder) }
 ```
 
 ### API sketch
@@ -398,7 +398,7 @@ Each solution or occurrence returns a map of bound variables, including:
 $ — scalar variables
 @ — slice variables (wrapped in Slice objects)
 ```
-    firstResult = Tendril("[ $x:(1) @y:(2 3) { k=$k @z:(remainder) }]")
+    firstResult = Tendril("[ $x=(1) @y=(2 3) { k:$k @z=(remainder) }]")
            .solutions([1, 2, 3, {k:"value", p:true, q:false}]).first()
 
     firstResult.bindings ==
@@ -431,7 +431,7 @@ const input = [
   { light: "kitchen", switch: "off" }
 ];
 
-Tendril("[{ @s:(switch=_) }*]")
+Tendril("[{ @s=(switch=_) }*]")
   .replaceAll(input, vars => ({ s: Slice.object({ switch: "auto" }) }));
 
 // => [
@@ -481,7 +481,7 @@ pattern = {
             {
                 requestId= $reqId
                 status= ok
-                output= ( $text:(/.*/) | { type=text content=$text } )
+                output= ( $text=(/.*/) | { type:text content:$text } )
             }
             ..
         ]
@@ -528,7 +528,7 @@ Tendril(pattern).solutions(data).map((m)=>`${m.$first}: ${m.$text}`)
 <table>
 <tr><th>Tendril</th><th>Plain JavaScript</th><th>Lodash</th></tr>
 <tr><td><pre>
-Tendril("{ _(._)*.password = $p }").replaceAll(input, vars => ({ p: 'REDACTED' }))
+Tendril("{ _(._)*.password : $p }").replaceAll(input, vars => ({ p: 'REDACTED' }))
 </pre></td><td><pre>
 function redactPasswords(obj) {
   if (typeof obj !== 'object' || obj === null) {

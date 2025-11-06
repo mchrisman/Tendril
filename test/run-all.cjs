@@ -4,10 +4,11 @@
  * Test runner that executes all test files in the test directory
  *
  * Usage:
- *   node test/run-all.js
- *   node test/run-all.js --filter "pattern"
- *   node test/run-all.js --group "groupName"
- *   node test/run-all.js --file "example.test.js"
+ *   ./run-all
+ *   ./run-all -v
+ *   ./run-all --filter "pattern"
+ *   ./run-all --group "groupName"
+ *   ./run-all --file "example.test.js"
  */
 
 const fs = require('fs');
@@ -21,7 +22,8 @@ const args = process.argv.slice(2);
 const options = {
   filter: null,
   group: null,
-  file: null
+  file: null,
+  verbose: false
 };
 
 for (let i = 0; i < args.length; i++) {
@@ -34,6 +36,8 @@ for (let i = 0; i < args.length; i++) {
   } else if (args[i] === '--file' && args[i + 1]) {
     options.file = args[i + 1];
     i++;
+  } else if (args[i] === '-v' || args[i] === '--verbose') {
+    options.verbose = true;
   }
 }
 
@@ -56,7 +60,60 @@ function findTestFiles(dir) {
   return testFiles;
 }
 
-// Run a single test file
+// Parse test output to extract test results
+function parseTestOutput(output) {
+  const lines = output.split('\n');
+  const tests = [];
+  let totalTests = 0;
+  let passedTests = 0;
+  let failedTests = 0;
+  let skippedTests = 0;
+
+  for (const line of lines) {
+    // Parse individual test results
+    if (line.match(/^✔/)) {
+      const match = line.match(/^✔ (.+?) \(/);
+      if (match) {
+        tests.push({ name: match[1], status: 'passed' });
+      }
+    } else if (line.match(/^✖/)) {
+      const match = line.match(/^✖ (.+?) \(/);
+      if (match) {
+        tests.push({ name: match[1], status: 'failed' });
+      }
+    } else if (line.match(/^﹣/)) {
+      const match = line.match(/^﹣ (.+?) \(/);
+      if (match) {
+        tests.push({ name: match[1], status: 'skipped' });
+      }
+    }
+
+    // Parse aggregate statistics
+    if (line.match(/^ℹ tests/)) {
+      const match = line.match(/^ℹ tests (\d+)/);
+      if (match) totalTests = parseInt(match[1]);
+    } else if (line.match(/^ℹ pass/)) {
+      const match = line.match(/^ℹ pass (\d+)/);
+      if (match) passedTests = parseInt(match[1]);
+    } else if (line.match(/^ℹ fail/)) {
+      const match = line.match(/^ℹ fail (\d+)/);
+      if (match) failedTests = parseInt(match[1]);
+    } else if (line.match(/^ℹ skipped/)) {
+      const match = line.match(/^ℹ skipped (\d+)/);
+      if (match) skippedTests = parseInt(match[1]);
+    }
+  }
+
+  return {
+    tests,
+    total: totalTests,
+    passed: passedTests,
+    failed: failedTests,
+    skipped: skippedTests
+  };
+}
+
+// Run a single test file and capture output
 function runTestFile(filePath, opts) {
   return new Promise((resolve, reject) => {
     const args = [];
@@ -67,13 +124,28 @@ function runTestFile(filePath, opts) {
       args.push('--group', opts.group);
     }
 
+    let stdout = '';
+    let stderr = '';
+
     const proc = spawn('node', [filePath, ...args], {
-      stdio: 'inherit',
       cwd: process.cwd()
     });
 
+    proc.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
     proc.on('close', (code) => {
-      resolve({ file: filePath, exitCode: code });
+      const parsed = parseTestOutput(stdout + stderr);
+      resolve({
+        file: path.relative(testDir, filePath),
+        exitCode: code,
+        ...parsed
+      });
     });
 
     proc.on('error', (error) => {
@@ -84,14 +156,12 @@ function runTestFile(filePath, opts) {
 
 // Main
 async function main() {
-  console.log('🚀 Tendril Test Suite\n');
-
   let testFiles = findTestFiles(testDir);
 
   // Exclude framework and runner files
   testFiles = testFiles.filter(f => {
     const basename = path.basename(f);
-    return basename !== 'framework.js' && basename !== 'run-all.js';
+    return basename !== 'framework.js' && basename !== 'run-all.js' && basename !== 'run-all.cjs';
   });
 
   // Filter by file if specified
@@ -100,13 +170,11 @@ async function main() {
   }
 
   if (testFiles.length === 0) {
-    console.log('No test files found.');
+    console.log(JSON.stringify({
+      error: 'No test files found'
+    }, null, 2));
     process.exit(0);
   }
-
-  console.log(`Found ${testFiles.length} test file(s):\n`);
-  testFiles.forEach(f => console.log(`  - ${path.relative(testDir, f)}`));
-  console.log();
 
   const results = [];
   let allPassed = true;
@@ -120,26 +188,57 @@ async function main() {
     }
   }
 
-  console.log('\n' + '='.repeat(60));
-  console.log('\n📊 Overall Summary\n');
-  console.log(`Total test files: ${testFiles.length}`);
-  console.log(`✓ Passed: ${results.filter(r => r.exitCode === 0).length}`);
-  console.log(`✗ Failed: ${results.filter(r => r.exitCode !== 0).length}\n`);
+  // Calculate aggregate statistics
+  const aggregate = {
+    totalFiles: testFiles.length,
+    passedFiles: results.filter(r => r.exitCode === 0).length,
+    failedFiles: results.filter(r => r.exitCode !== 0).length,
+    totalTests: results.reduce((sum, r) => sum + r.total, 0),
+    passedTests: results.reduce((sum, r) => sum + r.passed, 0),
+    failedTests: results.reduce((sum, r) => sum + r.failed, 0),
+    skippedTests: results.reduce((sum, r) => sum + r.skipped, 0)
+  };
 
-  if (allPassed) {
-    console.log('✨ All test files passed!\n');
-    process.exit(0);
-  } else {
-    console.log('💥 Some test files failed:\n');
-    results
-      .filter(r => r.exitCode !== 0)
-      .forEach(r => console.log(`  - ${path.relative(testDir, r.file)}`));
-    console.log();
-    process.exit(1);
+  // Extract failing tests
+  const failingTests = [];
+  for (const result of results) {
+    const failed = result.tests.filter(t => t.status === 'failed');
+    for (const test of failed) {
+      failingTests.push({
+        file: result.file,
+        test: test.name
+      });
+    }
   }
+
+  // Build output
+  const output = {
+    aggregate,
+    failingTests
+  };
+
+  // Add detail section if verbose
+  if (options.verbose) {
+    output.detail = results.map(r => ({
+      file: r.file,
+      exitCode: r.exitCode,
+      total: r.total,
+      passed: r.passed,
+      failed: r.failed,
+      skipped: r.skipped,
+      tests: r.tests
+    }));
+  }
+
+  console.log(JSON.stringify(output, null, 2));
+
+  process.exit(allPassed ? 0 : 1);
 }
 
 main().catch(error => {
-  console.error('Error running tests:', error);
+  console.error(JSON.stringify({
+    error: 'Error running tests',
+    message: error.message
+  }, null, 2));
   process.exit(1);
 });

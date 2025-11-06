@@ -23,16 +23,6 @@ Tendril is a declarative pattern matching and transformation engine for JSON-lik
 
 ## Design Philosophy
 
-- Adopting some of the principles of regexes:
-    - Patterns should look like the data they model.
-    - Concise code is important.
-- As with regex and Sql, Tendril a
-
-
-
-
-
-
 
 - 
 Tendril occupies a unique position between simpler and more complex alternatives:

@@ -35,7 +35,7 @@ group('replaceAll() - replace all occurrences', () => {
       {type: 'A', val: 3}
     ];
 
-    const t = Tendril('{type="A"}');
+    const t = Tendril('{type:"A"}');
     const result = t.replaceAll(data, ($) => ({0: {type: 'A', val: 0}}));
 
     assert.equal(result[0].val, 0);

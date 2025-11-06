@@ -485,7 +485,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
   if (DEBUG) console.log(`[matchObject] obj keys:`, Object.keys(obj), `terms:`, terms.length);
 
   for (const term of terms) {
-    // Handle slice bindings: @var:(pattern) or @var:(remainder)
+    // Handle slice bindings: @var=(pattern) or @var=(remainder)
     if (term.type === 'SliceBind') {
       const isSpread = term.pat.type === 'Spread';
       const next = [];
@@ -493,7 +493,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       for (const state of solutions) {
         const {sol: s0, testedKeys} = state;
         if (isSpread) {
-          // @var:(remainder) - capture residual keys
+          // @var=(remainder) - capture residual keys
           const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
           const residualObj = {};
           for (const k of residualKeys) {
@@ -519,7 +519,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
             next.push({sol: s2, testedKeys: new Set(testedKeys)});
           }
         } else {
-          // @var:(pattern) - recursively match pattern, collect matched keys
+          // @var=(pattern) - recursively match pattern, collect matched keys
           if (term.pat.type !== 'OGroup') {
             throw new Error(`SliceBind in object context expects OGroup or Spread pattern, got ${term.pat.type}`);
           }
@@ -629,8 +629,8 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       throw new Error(`Expected OTerm, SliceBind, OLook, or OGroup, got ${term.type}`);
     }
 
-    // Handle K?=V desugaring: K?=V → (K=V | (?!K=_))
-    if (term.op === '?=') {
+    // Handle K?:V desugaring: K?:V → (K:V | (?!K:_))
+    if (term.op === '?:') {
       const next = [];
       for (const state of solutions) {
         const {sol: s0, testedKeys} = state;
@@ -679,8 +679,8 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       const keys = objectKeysMatching(obj, term.key, s0.env);
       if (DEBUG) console.log(`[matchObject] term.key:`, term.key, `matched keys:`, keys);
 
-      // For '=' operator, require at least one key to match
-      if (term.op === '=' && keys.length === 0) {
+      // For ':' operator, require at least one key to match
+      if (term.op === ':' && keys.length === 0) {
         continue; // Skip this solution
       }
 
@@ -722,7 +722,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     if (!solutions.length) break;
   }
 
-  // Handle spread: bare 'remainder' or '@var:(remainder)' or '(?!remainder)'
+  // Handle spread: bare 'remainder' or '@var=(remainder)' or '(?!remainder)'
   if (spread && solutions.length > 0) {
     if (spread.type === 'OLook') {
       // (?!remainder) - assert no residual keys
@@ -746,7 +746,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       }
       solutions = next;
     } else if (spread.type === 'SliceBind') {
-      // @var:(remainder) - bind residual keys to slice variable
+      // @var=(remainder) - bind residual keys to slice variable
       const next = [];
       for (const state of solutions) {
         const {sol: s0, testedKeys} = state;
@@ -811,13 +811,13 @@ function matchObjectSlice(slice, obj, path, sol, emit, ctx, testedKeys = new Set
 
   // Handle different slice types
   if (slice.type === 'OTerm') {
-    // Single object term K=V or K?=V
+    // Single object term K:V or K?:V
     matchObject([slice], null, obj, path, sol, emit, ctx, testedKeys);
   } else if (slice.type === 'OGroup') {
-    // Group of slices (K1=V1 K2=V2 ...)
+    // Group of slices (K1:V1 K2:V2 ...)
     matchObject(slice.slices, null, obj, path, sol, emit, ctx, testedKeys);
   } else if (slice.type === 'SliceBind') {
-    // @var:(pattern)
+    // @var=(pattern)
     matchObject([slice], null, obj, path, sol, emit, ctx, testedKeys);
   } else if (slice.type === 'OLook') {
     // Nested lookahead

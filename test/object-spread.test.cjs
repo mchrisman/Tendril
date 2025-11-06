@@ -18,16 +18,16 @@ async function loadAPI() {
 setSourceFile('object-spread.test.cjs');
 
 group('Object spread restrictions', () => {
-  test('valid: remainder at end {k=$v remainder}', async () => {
+  test('valid: remainder at end {k:$v remainder}', async () => {
     await loadAPI();
-    const t = Tendril('{k=$v remainder}');
+    const t = Tendril('{k:$v remainder}');
     const result = t.match({k: 1, extra: 2});
     assert.ok(result, 'Should match with extra keys');
   });
 
-  test('valid: slice binding at end {k=$v @rest:(remainder)}', async () => {
+  test('valid: slice binding at end {k:$v @rest=(remainder)}', async () => {
     await loadAPI();
-    const t = Tendril('{k=$v @rest:(remainder)}');
+    const t = Tendril('{k:$v @rest=(remainder)}');
     const result = t.match({k: 1, extra: 2});
     assert.ok(result, 'Should match');
     assert.deepEqual(result.bindings.rest, Slice.object({extra: 2}));
@@ -36,7 +36,7 @@ group('Object spread restrictions', () => {
   test('invalid: remainder at beginning throws', async () => {
     await loadAPI();
     try {
-      const t = Tendril('{remainder k=$v}');
+      const t = Tendril('{remainder k:$v}');
       t.match({});  // Trigger compilation
       assert.fail('Should have thrown parse error');
     } catch (e) {
@@ -47,7 +47,7 @@ group('Object spread restrictions', () => {
   test('invalid: remainder in middle throws', async () => {
     await loadAPI();
     try {
-      const t = Tendril('{k=$v remainder m=$n}');
+      const t = Tendril('{k:$v remainder m:$n}');
       t.match({});  // Trigger compilation
       assert.fail('Should have thrown parse error');
     } catch (e) {
@@ -57,7 +57,7 @@ group('Object spread restrictions', () => {
 
   test('slice binding captures residual keys', async () => {
     await loadAPI();
-    const t = Tendril('{a=$x @rest:(remainder)}');
+    const t = Tendril('{a:$x @rest=(remainder)}');
     const result = t.match({a: 1, b: 2, c: 3});
     assert.equal(result.bindings.x, 1);
     assert.deepEqual(result.bindings.rest, Slice.object({b: 2, c: 3}));
@@ -65,7 +65,7 @@ group('Object spread restrictions', () => {
 
   test('slice bindings with patterns match whole object, can overlap', async () => {
     await loadAPI();
-    const t = Tendril('{@a:(/[ab]/=_) @b:(/[bc]/=_) @c:(remainder)}');
+    const t = Tendril('{@a=(/[ab]/:_) @b=(/[bc]/:_) @c=(remainder)}');
     const result = t.match({b: 1, x: 2});
     assert.ok(result, 'Should match');
     assert.deepEqual(result.bindings.a, Slice.object({b: 1}));
@@ -75,7 +75,7 @@ group('Object spread restrictions', () => {
 
   test('nested slice bindings', async () => {
     await loadAPI();
-    const t = Tendril('{@x:(a=_ @y:(c=_))}');
+    const t = Tendril('{@x=(a:_ @y=(c:_))}');
     const result = t.match({a: 'A', c: 'C', d: 'D'});
     assert.ok(result, 'Should match');
     assert.deepEqual(result.bindings.x, Slice.object({a: 'A', c: 'C'}));

@@ -36,8 +36,8 @@ const Bool = (v) => ({type: 'Bool', value: v});
 const Null = () => ({type: 'Null'});
 
 // Bindings
-const SBind = (name, pat) => ({type: 'SBind', name, pat});  // $x:(pat)
-const SliceBind = (name, pat) => ({type: 'SliceBind', name, pat});  // @x:(pat)
+const SBind = (name, pat) => ({type: 'SBind', name, pat});  // $x=(pat)
+const SliceBind = (name, pat) => ({type: 'SliceBind', name, pat});  // @x=(pat)
 
 // Containers
 const Arr = (items) => ({type: 'Arr', items});
@@ -100,7 +100,7 @@ function parseItem(p) {
 function parseItemTerm(p) {
   // ITEM := '(' ITEM ')'
   //       | S_ITEM
-  //       | S_ITEM ':' '(' ITEM ')'
+  //       | S_ITEM '=' '(' ITEM ')'
   //       | '_'
   //       | LITERAL
   //       | OBJ
@@ -121,31 +121,31 @@ function parseItemTerm(p) {
     return inner;
   }
 
-  // Scalar binding: $x or $x:(...)
+  // Scalar binding: $x or $x=(...)
   if (p.peek('$')) {
     p.eat('$');
     const name = p.eat('id').v;
-    if (p.maybe(':')) {
+    if (p.maybe('=')) {
       p.eat('(');
       const pat = parseItem(p);
       p.eat(')');
       return SBind(name, pat);
     }
-    // Bare $x means $x:(_)
+    // Bare $x means $x=(_)
     return SBind(name, Any());
   }
 
-  // Slice binding: @x or @x:(...)
+  // Slice binding: @x or @x=(...)
   if (p.peek('@')) {
     p.eat('@');
     const name = p.eat('id').v;
-    if (p.maybe(':')) {
+    if (p.maybe('=')) {
       p.eat('(');
       const pat = parseASlice(p);
       p.eat(')');
       return SliceBind(name, pat);
     }
-    // Bare @x means @x:(_*)
+    // Bare @x means @x=(_*)
     return SliceBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
@@ -245,9 +245,9 @@ function parseArr(p) {
 function parseASlice(p) {
   // A_SLICE := '(' A_BODY ')'
   //          | S_SLICE
-  //          | S_SLICE ':' '(' A_BODY ')'
+  //          | S_SLICE '=' '(' A_BODY ')'
   //          | S_ITEM
-  //          | S_ITEM ':' '(' A_BODY ')'
+  //          | S_ITEM '=' '(' A_BODY ')'
   //          | ITEM
   //          | OBJ
   //          | ARR
@@ -307,11 +307,11 @@ function parseASliceBase(p) {
     return {type: 'Seq', items};
   }
 
-  // Slice binding: @x or @x:(...)
+  // Slice binding: @x or @x=(...)
   if (p.peek('@')) {
     p.eat('@');
     const name = p.eat('id').v;
-    if (p.maybe(':')) {
+    if (p.maybe('=')) {
       p.eat('(');
       const items = parseABody(p, ')');
       p.eat(')');
@@ -322,11 +322,11 @@ function parseASliceBase(p) {
     return SliceBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
-  // Scalar binding: $x or $x:(...)
+  // Scalar binding: $x or $x=(...)
   if (p.peek('$')) {
     p.eat('$');
     const name = p.eat('id').v;
-    if (p.maybe(':')) {
+    if (p.maybe('=')) {
       p.eat('(');
       const items = parseABody(p, ')');
       p.eat(')');
@@ -418,16 +418,16 @@ function parseObj(p) {
 }
 
 function parseORemnant(p) {
-  // O_REMNANT := S_SLICE ':' '(' 'remainder' ')'
+  // O_REMNANT := S_SLICE '=' '(' 'remainder' ')'
   //            | '(?!' 'remainder' ')'
   //            | 'remainder'
 
-  // Try @x:(remainder)
+  // Try @x=(remainder)
   const bindRemnant = p.backtrack(() => {
     if (!p.peek('@')) return null;
     p.eat('@');
     const name = p.eat('id').v;
-    if (!p.maybe(':')) return null;
+    if (!p.maybe('=')) return null;
     p.eat('(');
     if (!(p.peek('id') && p.peek().v === 'remainder')) return null;
     p.eat('id');
@@ -464,7 +464,7 @@ function parseORemnant(p) {
 function parseOSlice(p) {
   // O_SLICE := '(' O_BODY ')'
   //          | S_SLICE
-  //          | S_SLICE ':' '(' O_SLICE* ')'
+  //          | S_SLICE '=' '(' O_SLICE* ')'
   //          | O_TERM
   //          | '(?=' O_SLICE ')'
   //          | '(?!' O_SLICE ')'
@@ -488,13 +488,13 @@ function parseOSlice(p) {
   });
   if (groupResult) return groupResult;
 
-  // S_SLICE: Slice binding @x:(O_BODY)
+  // S_SLICE: Slice binding @x=(O_BODY)
   if (p.peek('@')) {
     p.eat('@');
     const name = p.eat('id').v;
-    if (p.maybe(':')) {
+    if (p.maybe('=')) {
       p.eat('(');
-      // Parse O_BODY: @x:(pattern)
+      // Parse O_BODY: @x=(pattern)
       const slices = [];
       while (!p.peek(')')) {
         slices.push(parseOSlice(p));
@@ -504,21 +504,21 @@ function parseOSlice(p) {
       return SliceBind(name, {type: 'OGroup', slices});
     }
     // Bare @x in object context is not allowed
-    p.fail('bare @x not allowed in objects; use @x:(remainder) to bind residual keys');
+    p.fail('bare @x not allowed in objects; use @x=(remainder) to bind residual keys');
   }
 
   // Reject bare '..' in object context (use 'remainder' instead)
   if (p.peek('..')) {
-    p.fail('bare ".." not allowed in objects; use "remainder" or "@x:(remainder)" instead');
+    p.fail('bare ".." not allowed in objects; use "remainder" or "@x=(remainder)" instead');
   }
 
   // Otherwise parse O_TERM
-  // O_TERM will parse KEY (including $x:(ITEM) patterns) normally via parseItem
+  // O_TERM will parse KEY (including $x=(ITEM) patterns) normally via parseItem
   return parseOTerm(p);
 }
 
 function parseOTerm(p) {
-  // O_TERM := KEY BREADCRUMB* '?'? ('=' | '?=') VALUE O_QUANT?
+  // O_TERM := KEY BREADCRUMB* '?'? (':' | '?:') VALUE O_QUANT?
 
   // KEY BREADCRUMB* op VALUE
   const key = parseItem(p);
@@ -531,25 +531,25 @@ function parseOTerm(p) {
     else break;
   }
 
-  // '?'? ('=' | '?=') → canonicalize to '?='
-  // Try longer patterns first: '? ?=', '? =', '?=', '='
+  // '?'? (':' | '?:') → canonicalize to '?:'
+  // Try longer patterns first: '? ?:', '? :', '?:', ':'
   let op = null;
 
-  // Try '? ?=' or '? ='
+  // Try '? ?:' or '? :'
   const questOp = p.backtrack(() => {
     if (!p.maybe('?')) return null;
-    if (p.maybe('?=')) return '?=';
-    if (p.maybe('=')) return '?='; // canonicalize '? =' to '?='
+    if (p.maybe('?:')) return '?:';
+    if (p.maybe(':')) return '?:'; // canonicalize '? :' to '?:'
     return null;
   });
   if (questOp) {
     op = questOp;
-  } else if (p.maybe('?=')) {
-    op = '?=';
-  } else if (p.maybe('=')) {
-    op = '=';
+  } else if (p.maybe('?:')) {
+    op = '?:';
+  } else if (p.maybe(':')) {
+    op = ':';
   } else {
-    p.fail('expected = or ?= in object term');
+    p.fail('expected : or ?: in object term');
   }
 
   // VALUE

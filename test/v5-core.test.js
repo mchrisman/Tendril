@@ -4,7 +4,7 @@
  * Tests for the rewritten V5 architecture covering:
  * - Basic literals and wildcards
  * - Arrays with quantifiers and spread
- * - Objects with K=V / K?=V
+ * - Objects with K=V / K?:V
  * - Breadcrumbs (path navigation)
  * - Scalar binding ($x) and unification
  * - Alternation (|)
@@ -130,77 +130,77 @@ test('empty object', () => {
 });
 
 test('object single property', () => {
-  assert.ok(matches('{a=1}', {a: 1}));
-  assert.ok(!matches('{a=1}', {}));
-  assert.ok(!matches('{a=1}', {a: 2}));
-  assert.ok(matches('{a=1}', {a: 1, b: 2})); // extra keys allowed without remainder
-  assert.ok(!matches('{a=1 (?!remainder)}', {a: 1, b: 2})); // (?!remainder) forbids extra keys
+  assert.ok(matches('{a:1}', {a: 1}));
+  assert.ok(!matches('{a:1}', {}));
+  assert.ok(!matches('{a:1}', {a: 2}));
+  assert.ok(matches('{a:1}', {a: 1, b: 2})); // extra keys allowed without remainder
+  assert.ok(!matches('{a:1 (?!remainder)}', {a: 1, b: 2})); // (?!remainder) forbids extra keys
 });
 
 test('object multiple properties', () => {
-  assert.ok(matches('{a=1 b=2}', {a: 1, b: 2}));
-  assert.ok(!matches('{a=1 b=2}', {a: 1}));
-  assert.ok(matches('{a=1 b=2}', {a: 1, b: 2, c: 3})); // extra keys allowed
-  assert.ok(!matches('{a=1 b=2 (?!remainder)}', {a: 1, b: 2, c: 3})); // (?!remainder) forbids extras
+  assert.ok(matches('{a:1 b:2}', {a: 1, b: 2}));
+  assert.ok(!matches('{a:1 b:2}', {a: 1}));
+  assert.ok(matches('{a:1 b:2}', {a: 1, b: 2, c: 3})); // extra keys allowed
+  assert.ok(!matches('{a:1 b:2 (?!remainder)}', {a: 1, b: 2, c: 3})); // (?!remainder) forbids extras
 });
 
 test('object with remainder binding', () => {
-  assert.ok(matches('{a=1 @x:(remainder)}', {a: 1}));
-  assert.ok(matches('{a=1 @x:(remainder)}', {a: 1, b: 2, c: 3}));
-  assert.ok(!matches('{a=1 @x:(remainder)}', {b: 2}));
+  assert.ok(matches('{a:1 @x=(remainder)}', {a: 1}));
+  assert.ok(matches('{a:1 @x=(remainder)}', {a: 1, b: 2, c: 3}));
+  assert.ok(!matches('{a:1 @x=(remainder)}', {b: 2}));
 });
 
 test('object wildcard key', () => {
-  assert.ok(matches('{_=1}', {a: 1}));
-  assert.ok(matches('{_=1}', {b: 1}));
-  assert.ok(!matches('{_=1}', {a: 2}));
+  assert.ok(matches('{_:1}', {a: 1}));
+  assert.ok(matches('{_:1}', {b: 1}));
+  assert.ok(!matches('{_:1}', {a: 2}));
 });
 
 test('object regex key', () => {
-  assert.ok(matches('{/foo.*/=1}', {foobar: 1}));
-  assert.ok(matches('{/foo.*/=1}', {foo: 1}));
-  assert.ok(!matches('{/foo.*/=1}', {bar: 1}));
+  assert.ok(matches('{/foo.*/:1}', {foobar: 1}));
+  assert.ok(matches('{/foo.*/:1}', {foo: 1}));
+  assert.ok(!matches('{/foo.*/:1}', {bar: 1}));
 });
 
 test('object nested', () => {
-  assert.ok(matches('{a={b=1}}', {a: {b: 1}}));
-  assert.ok(!matches('{a={b=1}}', {a: {b: 2}}));
+  assert.ok(matches('{a:{b:1}}', {a: {b: 1}}));
+  assert.ok(!matches('{a:{b:1}}', {a: {b: 2}}));
 });
 
 // ==================== Breadcrumbs (Path Navigation) ====================
 
 test('breadcrumb - single key', () => {
-  assert.ok(matches('{a=1}', {a: 1}));
-  assert.ok(!matches('{a=1}', {a: 2}));
-  assert.ok(!matches('{a=1}', {b: 1}));
+  assert.ok(matches('{a:1}', {a: 1}));
+  assert.ok(!matches('{a:1}', {a: 2}));
+  assert.ok(!matches('{a:1}', {b: 1}));
 });
 
 test('breadcrumb - nested keys', () => {
-  assert.ok(matches('{a.b=1}', {a: {b: 1}}));
-  assert.ok(!matches('{a.b=1}', {a: {b: 2}}));
-  assert.ok(!matches('{a.b=1}', {a: {c: 1}}));
+  assert.ok(matches('{a.b:1}', {a: {b: 1}}));
+  assert.ok(!matches('{a.b:1}', {a: {b: 2}}));
+  assert.ok(!matches('{a.b:1}', {a: {c: 1}}));
 });
 
 test('breadcrumb - deeper nesting', () => {
-  assert.ok(matches('{a.b.c=1}', {a: {b: {c: 1}}}));
-  assert.ok(!matches('{a.b.c=1}', {a: {b: {c: 2}}}));
+  assert.ok(matches('{a.b.c:1}', {a: {b: {c: 1}}}));
+  assert.ok(!matches('{a.b.c:1}', {a: {b: {c: 2}}}));
 });
 
 test('breadcrumb - array index literal', () => {
-  assert.ok(matches('{a[0]=1}', {a: [1, 2, 3]}));
-  assert.ok(matches('{a[2]=3}', {a: [1, 2, 3]}));
-  assert.ok(!matches('{a[0]=2}', {a: [1, 2, 3]}));
+  assert.ok(matches('{a[0]:1}', {a: [1, 2, 3]}));
+  assert.ok(matches('{a[2]:3}', {a: [1, 2, 3]}));
+  assert.ok(!matches('{a[0]:2}', {a: [1, 2, 3]}));
 });
 
 test('breadcrumb - array index wildcard', () => {
-  assert.ok(matches('{a[_]=1}', {a: [1]}));
-  assert.ok(matches('{a[_]=2}', {a: [1, 2, 3]}));
-  assert.ok(matches('{a[_]=3}', {a: [1, 2, 3]}));
+  assert.ok(matches('{a[_]:1}', {a: [1]}));
+  assert.ok(matches('{a[_]:2}', {a: [1, 2, 3]}));
+  assert.ok(matches('{a[_]:3}', {a: [1, 2, 3]}));
 });
 
 test('breadcrumb - mixed key and index', () => {
-  assert.ok(matches('{a[0]=1}', {a: [1, 2]}));
-  assert.ok(matches('{a[1].b=2}', {a: [{b: 1}, {b: 2}]}));
+  assert.ok(matches('{a[0]:1}', {a: [1, 2]}));
+  assert.ok(matches('{a[1].b:2}', {a: [{b: 1}, {b: 2}]}));
 });
 
 // ==================== Scalar Binding ($x) ====================
@@ -231,7 +231,7 @@ test('binding - unification failure', () => {
 });
 
 test('binding - with pattern constraint', () => {
-  const result = extractAll('[$x:(1) $y]', [1, 2]);
+  const result = extractAll('[$x=(1) $y]', [1, 2]);
   assert.equal(result.length, 1);
   assert.equal(result[0].x, 1);
   assert.equal(result[0].y, 2);
@@ -246,19 +246,19 @@ test('binding - with spread', () => {
 });
 
 test('binding - in object key', () => {
-  const results = extractAll('{$x=_}', {a: 1, b: 2});
+  const results = extractAll('{$x:_}', {a: 1, b: 2});
   assert.ok(results.length >= 2);
   assert.ok(results.some(r => r.x === 'a'));
   assert.ok(results.some(r => r.x === 'b'));
 });
 
 test('binding - in object value', () => {
-  const result = extract('{a=$x}', {a: 42});
+  const result = extract('{a:$x}', {a: 42});
   assert.deepEqual(result, {x: 42});
 });
 
 test('binding - breadcrumb traversal', () => {
-  const result = extract('{a.b.c=$x}', {a: {b: {c: 42}}});
+  const result = extract('{a.b.c:$x}', {a: {b: {c: 42}}});
   assert.deepEqual(result, {x: 42});
 });
 
@@ -277,7 +277,7 @@ test('alternation - in array', () => {
 });
 
 test('alternation - with binding', () => {
-  const results = extractAll('$x:(1|2)', 1);
+  const results = extractAll('$x=(1|2)', 1);
   assert.equal(results.length, 1);
   assert.equal(results[0].x, 1);
 });
@@ -323,12 +323,12 @@ test('replace - simple value', () => {
 test('replace - whole match', () => {
   // Pattern matches any object with key 'a' that has an array with at least one element
   // Replace the whole match (bound to $0) with a simple value
-  const result = replaceAll('{a[_]=_}', {a: [1, 2, 3]}, 'replaced');
+  const result = replaceAll('{a[_]:_}', {a: [1, 2, 3]}, 'replaced');
   assert.equal(result, 'replaced');
 });
 
 test('replace - in object', () => {
-  const result = replaceAll('{a=$x}', {a: 1}, bindings => ({x: 99}));
+  const result = replaceAll('{a:$x}', {a: 1}, bindings => ({x: 99}));
   assert.deepEqual(result, {a: 99});
 });
 
@@ -359,9 +359,9 @@ test('greedy quantifiers - optional object emits longest match first', () => {
     {tag: 'span', children: 'after'}
   ];
 
-  const pattern = `[.. @whenelse:(
-    {tag=/^when$/i @otherProps:(remainder)}
-    {tag=/^else$/i children=$else remainder}?
+  const pattern = `[.. @whenelse=(
+    {tag:/^when$/i @otherProps=(remainder)}
+    {tag:/^else$/i children:$else remainder}?
   ) ..]`;
 
   const solutions = Tendril(pattern).all(input);
@@ -386,9 +386,9 @@ test('replace uses first solution only (longest match)', () => {
     {tag: 'span', children: 'after'}
   ];
 
-  const pattern = `[.. @whenelse:(
-    {tag=/^when$/i @otherProps:(remainder)}
-    {tag=/^else$/i children=$else remainder}?
+  const pattern = `[.. @whenelse=(
+    {tag:/^when$/i @otherProps=(remainder)}
+    {tag:/^else$/i children:$else remainder}?
   ) ..]`;
 
   const result = Tendril(pattern).replace(input, v => ({
@@ -423,7 +423,7 @@ test('nested arrays', () => {
 });
 
 test('deeply nested objects', () => {
-  assert.ok(matches('{a={b={c={d={e=1}}}}}', {a: {b: {c: {d: {e: 1}}}}}));
+  assert.ok(matches('{a:{b:{c:{d:{e:1}}}}}', {a: {b: {c: {d: {e: 1}}}}}));
 });
 
 console.log('\n✓ All core tests defined\n');

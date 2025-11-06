@@ -43,7 +43,7 @@ group('occurrences() - find all matches at any depth', () => {
       ]
     };
 
-    const t = Tendril('{tag="foo"}');
+    const t = Tendril('{tag:"foo"}');
     const sols = t.occurrences(data).toArray();
     assert.equal(sols.length, 1, 'Should find nested object');
     assert.equal(sols[0].bindings['0'].tag, 'foo');
@@ -57,7 +57,7 @@ group('occurrences() - find all matches at any depth', () => {
       {type: 'user', name: 'Charlie'}
     ];
 
-    const t = Tendril('{type="user" name=$n}');
+    const t = Tendril('{type:"user" name:$n}');
     const sols = t.occurrences(data).toArray();
     assert.equal(sols.length, 2, 'Should find 2 users');
   });

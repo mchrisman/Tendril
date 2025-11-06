@@ -29,25 +29,25 @@ group('extract() - basic matching', () => {
 
   test('extract scalar in object', async () => {
     await loadAPI();
-    const result = extract('{b=$x}', {a: 1, b: 2});
+    const result = extract('{b:$x}', {a: 1, b: 2});
     assert.deepEqual(result, {x: 2});
   });
 
   test('extract multiple scalars', async () => {
     await loadAPI();
-    const result = extract('{a=$x b=$y}', {a: 1, b: 2});
+    const result = extract('{a:$x b:$y}', {a: 1, b: 2});
     assert.deepEqual(result, {x: 1, y: 2});
   });
 
   test('extract with breadcrumbs', async () => {
     await loadAPI();
-    const result = extract('{a.b=$x c[2]=$y}', {a: {b: 1}, c: [1, 2, 3]});
+    const result = extract('{a.b:$x c[2]:$y}', {a: {b: 1}, c: [1, 2, 3]});
     assert.deepEqual(result, {x: 1, y: 3});
   });
 
   test('returns null when no match', async () => {
     await loadAPI();
-    const result = extract('{c=$x}', {a: 1, b: 2});
+    const result = extract('{c:$x}', {a: 1, b: 2});
     assert.equal(result, null);
   });
 });
@@ -73,7 +73,7 @@ group('Tendril class - solutions', () => {
 
   test('all() returns array of solutions', async () => {
     await loadAPI();
-    const t = Tendril('{a=$x}');
+    const t = Tendril('{a:$x}');
     const sols = t.all({a: 1});
     assert.equal(sols.length, 1);
     assert.deepEqual(sols[0].bindings, {0: {a: 1}, x: 1});
@@ -104,14 +104,14 @@ group('Tendril.replace() - scalar replacement', () => {
 
   test('replace scalar in object', async () => {
     await loadAPI();
-    const t = Tendril('{b=$x}');
+    const t = Tendril('{b:$x}');
     const result = t.replace({a: 1, b: 2}, () => ({x: 99}));
     assert.deepEqual(result, {a: 1, b: 99});
   });
 
   test('swap values using function', async () => {
     await loadAPI();
-    const t = Tendril('{x=$a y=$b}');
+    const t = Tendril('{x:$a y:$b}');
     const result = t.replace({x: 3, y: 4}, (v) => ({a: v.b, b: v.a}));
     assert.deepEqual(result, {x: 4, y: 3});
   });
@@ -120,7 +120,7 @@ group('Tendril.replace() - scalar replacement', () => {
 group('extractAll() - multiple solutions', () => {
   test('extract all matches', async () => {
     await loadAPI();
-    const results = extractAll('{a=$x}', {a: 1});
+    const results = extractAll('{a:$x}', {a: 1});
     assert.equal(results.length, 1);
     assert.deepEqual(results[0], {x: 1});
   });
@@ -134,7 +134,7 @@ group('matches() - boolean test', () => {
 
   test('returns false for no match', async () => {
     await loadAPI();
-    assert.ok(!matches('{c=$x}', {a: 1}));
+    assert.ok(!matches('{c:$x}', {a: 1}));
   });
 });
 
@@ -151,9 +151,9 @@ group('Complex patterns - When/Else matching', () => {
 
     const pattern3 = Tendril(`[
       ..
-      @whenelse:(
-        {tag = /^[Ww]hen$/, attrs = $attrs, children = $then, srcId = $id, ..}
-        {tag = /^[Ee]lse$/, children = $else, ..}?
+      @whenelse=(
+        {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, ..}
+        {tag: /^[Ee]lse$/, children: $else, ..}?
       )
       ..
     ]`);
@@ -174,7 +174,7 @@ group('Complex patterns - When/Else matching', () => {
     const data = [1, 2, 3];
 
     // $x is scalar, so $x:(a b) is invalid - should not match
-    const pattern = Tendril('[$x:(1 2)]');
+    const pattern = Tendril('[$x=(1 2)]');
     const sol = pattern.solutions(data).first();
 
     assert.equal(sol, null, 'Scalar binding with sequence should not match');
@@ -192,9 +192,9 @@ group('Complex patterns - When/Else matching', () => {
 
     const pattern4 = Tendril(`[
       ..
-      @whenelse:(
-        {tag = /^[Ww]hen$/, attrs = $attrs, children = $then, srcId = $id, ..}
-        {tag = /^[Ee]lse$/, children = $else, ..}?
+      @whenelse=(
+        {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, ..}
+        {tag: /^[Ee]lse$/, children: $else, ..}?
       )
       ..
     ]`);
