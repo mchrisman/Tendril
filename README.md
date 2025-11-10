@@ -1,15 +1,19 @@
-# Tendril — v5 
+# **Tendril: Pattern Matching and Transformation for Tree Structures**
 
-Tendril is a small declarative language for structural pattern matching and relational logic over JSON-like graphs. It combines expressive pattern syntax, Prolog-style unification, and generator-style iteration to **match** and **replace** data.
+## 1. Overview
 
-This document is the cleaned, integrated v5 README. It is divided into a **pedagogical guide** and a **reference**. Examples are executable. Notation like `foo ~= bar` is for exposition only and is not part of the API. When something in the design appears inconsistent or incomplete, it is called out explicitly rather than modified.
+**Tendril** is a small declarative language for **structural matching, transforming, extracting, or joining** JSON-like tree data (objects, arrays, primitives).
 
----
+Tendril is:
 
-## Part I — A Short Guide
+* **Regex**, but on **trees** instead of strings
+* **Prolog-style unification**, without requiring logic programming knowledge
+* **Right between** JSONPath/jq and Prolog in both power and ease.
 
-### A first taste
+Patterns resemble the data they match, with minimal extra syntax, and with syntax familiar to Regex and JSON users.
+
 ```
+// "Hello, worlds"
 const data = {
   planets: {
     Jupiter: {size: "big"},
@@ -19,31 +23,24 @@ const data = {
   aka: [
     ["Jupiter", "Jove", "Zeus"],
     ["Earth", "Terra"],
-    ["Ceres", "Demeter"]]
-};
+    ["Ceres", "Demeter"]
+  ]
+}
 
-// Here's one way to describe the data, very visual, looks like the data
 const pattern = `{
-  planets = {
-      $name = {size = $size}
-  }
-  aka = [ .. 
-           [(?=$name) .. $alias ..]
-        .. ] 
-}`;
-
-// Here's an equivalent way, very concise. Both work equally well.
-const pattern = `{
-  planets.$name.size=$size
-  aka[$idx][_]=$alias
-  aka[$idx][0]=$name
-}`;
+  planets: { $name: { size: $size } }
+  aka: [
+    ..
+    [ (?=$name) .. $alias .. ]
+    ..
+  ]
+}`
 
 Tendril(pattern)
-.solutions(data)
-.map($ => `Hello, ${$.size} world ${$.alias}`);
+  .solutions(data)
+  .map(solution => `Hello, ${solution.size} world ${solution.alias}`)
 
-// Output
+// output  
 [
   "Hello, big world Jupiter",
   "Hello, big world Jove",
@@ -51,524 +48,340 @@ Tendril(pattern)
   "Hello, small world Earth",
   "Hello, small world Terra",
   "Hello, tiny world Ceres",
-  "Hello, tiny world Demeter",
+  "Hello, tiny world Demeter"
 ]
 ```
 
-The pattern is a conjunction of constraints over the same input graph. Each variable is a logic symbol that either introduces a new binding or must unify with a prior binding.
-
-### What patterns look like
-
-An **atom** is a number, boolean, string (quoted or bareword), regex `/.../flags`, or wildcard `_` which matches any single value.
-
-**Arrays** are written with `[...]` and describe sequences. Inside arrays, space denotes sequencing, parentheses group, and `..` denotes a lazy slice (a possibly empty run of items).
-
-**Objects** are written with `{...}` and contain key–value **assertions** of the form `K = V` or `K ?= V`. 
-```
-    { b:_  c:_ }   ~= { b:1, c:2 }  // every key-value assertion satisfied
-    { b:_      }   ~= { b:1, c:2 }  // every key-value assertion satisfied
-    { b:_  c:_ }  !~= { b:1 }       // unsatisfied assertion
-    { b:_  c?:_ }  ~= { b:1 }       // optional assertion
-```
-In objects, the **residual** is the set of key-value pairs whose keys didn't match any of the key patterns in the assertions. It can be bound to a slice variable using the `remainder` keyword.
-```
-    { /[a-z]/=3 @x=(remainder) } ~= { a:3, b:3, foo:3 } => @x is bound to {foo:3}
-```
-
-**Paths** (“breadcrumbs”) chain through objects and arrays: `.k` descends into an object key, `[i]` descends into an array index, and these can be composed: `{ a.b.c : d }`, `{ a[3].c : d }`.
-```
-    { a(.b.a)*.c:d } ~= {a:{b:{a:{b:{a:{b:{a:{c:"d"}}}}}}}}
-```
-
-### Binding and unification
-
-Variables beginning with `$` bind **scalars** (exactly one value per solution). Variables beginning with `@` bind **slices** (zero or more items for arrays; sets of key–value pairs for objects). A bare `$x` is sugar for `$x=(_)`. A bare `@x` is sugar for `$x=(_*)` in arrays (not defined for objects).
-
-Bindings are Prolog-style. If the same variable appears multiple times, the matched values must be equal (deep structural equality where relevant); this is called **unification**. 
-
-A scalar binder `$x=(P)` succeeds exactly when the data matches P at that point AND the matched value is a single value AND unification succeeds. 
-```
-    [ 1? 2? ]         matches any of  [], [1], [2], [1,2]
-    [ $x=(1? 2?) ]    matches only [1], [2], because $x must bind to a scalar.
-```
-
-### Alternation, lookahead, and quantifiers
-
-Use `|` for alternation. Use `(?= P)` for positive lookahead and `(?! P)` for negative lookahead. Lookaheads are zero-width assertions. Positive lookaheads may introduce bindings that escape to the outer scope; negative lookaheads discard any bindings made during the check.
-
-Array items may be quantified with `{m,n}`, with `?`, `+`, and `*` as shorthands. `..` is equivalent to a lazy `_` slice. Open-ended bounds on arrays are allowed where the grammar states so; object-level counts, where used, are counted by key–value matches per assertion.
-
-### A few concrete truths
-
-```
-[ a b ]         ~= ["a","b"]
-[ a b ]        !~= ["a","b","c"]
-[ a b .. ]      ~= ["a","b","c"]
-
-{ b:_  c:_ }    ~= { b:1, c:2 }
-{ b:_ }         ~= { b:1, c:2 }
-{ b:_  c:_ }   !~= { b:1 }
-{ b:_  c?:_ }   ~= { b:1 }
-
-{ /[ab]/=_  /[ad]/=_ }   ~= { a:1 }    // overlapping predicates are fine
-{ /[ab]/=_  /[ad]/=_ }  !~= { d:1 }
-
-{ b:_  @s=(remainder) }   ~= { a:1, c:2, Z:1 }  // @s is the residual slice
-```
-
-### Scalar vs. slice in arrays and objects
-
-A scalar captures exactly one value even in an array context. A slice captures zero or more items. This distinction is visible in results:
-
-```
-[ .. $x .. ] ~= ['a','b']   // multiple solutions, each with one scalar x: [{x:'a'},{x:'b'}]
-[ $x .. ]    ~= ['a','b']   // single solution per slice of array elements: [{x:'a'}]
-[ @x .. ]    ~= ['a','b']   // solutions: [{x:[]},{x:['a']},{x:['a','b']}]
-[ $x @y ]    ~= [[1,2],[3,4]] // solutions: {x:[1], y:Slice(3,4)},
- {x:[2], y:Slice(3,4)}
-[ @x @y ]    ~= [[1,2],[3,4]] // multiple solutions by different splits
-```
-
-In objects, keys and values are scalars; slices contain key–value pairs. For example, `{ @rest=(remainder) }` binds the residual set. The names `$x` and `@x` must not collide.
-
-### Test cases that document intent
-
-* `[ $x y $x? ]` matches `[ 1, "y", 1 ]`.
-* `[ $x y ($x=(_))? ]` matches `[ 1, "y", 1 ]` (the binder exists only on the taken branch).
-* `[ $x y $x=(_?) ]` matches `[ 1, "y", 1 ]` (the node is concrete; `?` cannot accept “nothing” here).
-* `[ [($x=(_))? ..] $x ]` matches `[ [1], 1 ]`.
-* `[ [$x=(_?) ..] $x ]` matches `[ [1], 1 ]`.
-* `[ [($x=(_))? ..] $x ]` matches `[ [1], 2 ]`.
-* `[ [$x=(_?) ..] $x ]` does **not** match `[ [1], 2 ]` (the inner binder would force `$x=1`).
-* `[ [($x=(_))? ..] ($x=(_))? ..]` matches `[ [1], 2 ]`.
-* `[ [$x=(_?) ..] $x=(_?) .]` does **not** match `[ [1], 2 ]` (and note the trailing `.` inside an array is invalid; `.` is the breadcrumb operator for objects, not an array element).
-* `[ [($x=(_))? ..] $x ]` matches `[ [1], null ]`.
-* `[ [$x=(_?) ..] $x ]` does **not** match `[ [], null ]`.
-* `[ [($x=(_))? ..] $x ]` does not match `[ [1] ]`.
-* `[ [$x=(_?) ..] $x ]` does not match `[ [1] ]`.
-* `[ ($x=(_))? $x .. ]` matches `[ 1, "y" ]`.
-* `[ $x=(_?) $x .. ]` does not match `[ 1, "y" ]`.
-* `[ [$x=(1? 2?)] $x ]` matches `[ [1], 1 ]`. This illustrates why we do not attempt to prove “scalar-ness” of patterns at compile time; runtime acceptance on the concrete node suffices.
-
-### API at a glance
-
-`Tendril(pattern)` returns a compiled matcher. Call `.solutions(data)` to produce an iterator (or array) of solution environments. Call `.project(fn)` to map solutions to values.
-
-**Replacement API**:
-- `.replace(data, fn)` applies transformations using **only the first solution** (which is the longest match due to greedy quantifiers). The function `fn` receives bindings and returns an object mapping variable names to replacement values.
-- `.replaceAll(data, fn)` finds **all non-overlapping occurrences** in the input and applies replacements to each. Like `.replace()`, `fn` receives bindings and returns an object mapping variable names to replacement values.
-
-The illustrative `~=` and `===` notation is documentation sugar, not part of the API.
-
 ---
 
-## Part II — Language Reference
+## Core Concepts
 
-### Literals and matching
+### Primitives
 
-Numbers and booleans match by strict equality. Strings (quoted or barewords that are not keywords) match by strict equality. Regex literals use the JavaScript engine and match strings. `_` matches any single value.
+```
+foo                    // matches the exact string "foo" (bare identifier)
+"foo bar"              // quoted strings match strings containing spaces or punctuation
 
-### Operators and constructs
+/foo/                  // regex matches *any substring* — "seafood" matches (contains "foo")
+/foo/i                 // case-insensitive substring match — "FOOdish", "seaFOOd" both match
+/^[A-Z]{2,}$/          // regex anchors to whole string — matches "NASA", "OK", but not "Ok!"
 
-Use `|` for alternation. Use `.` and `[]` to descend through objects and arrays. Array quantifiers include `?`, `+`, `*`, and `{m,n}` forms; `..` is a lazy slice equivalent to a non-greedy `_` repetition. Object assertions use `:` and `?:` and may be given optional count suffixes to require that a predicate match a certain number of keys. Lookaheads `( ?= P )` and `( ?! P )` assert without consuming; positive lookaheads may bind variables.
+123                    // matches numeric value 123 (123 and 123.0 equivalent)
+
+true                   // matches Boolean true only
+false                  // matches Boolean false only
+null                   // matches null only
+```
 
 ### Arrays
 
-Sequencing is written by adjacency inside `[...]`. Nested quantifiers apply via grouping. Arrays behave like anchored sequences: `[a b]` does not match `[a b c]` unless `..` is present. Multiple `..` are allowed: `[ a .. b .. c ]` matches `[ a, x, y, b, z, c ]`.
-
-Quantifier shorthands follow the grammar. For example, `a?` is zero-or-one, `a+` is one-or-more, and `a*` is zero-or-more. Possessive and lazy variants appear in the grammar. `..` is equivalent to a lazy `_` slice.
-
-### Objects and object slices
-
-Each key–value assertion evaluates over all entries whose keys match the key pattern, and each such value must satisfy the value pattern. For `K = V` at least one such entry must exist; for `K ?= V` existence is not required. Assertions may overlap. The `remainder` keyword denotes the set of entries whose keys match none of the key patterns in the object. You can bind that set to a slice variable: `{ … @rest=(remainder) }`. Unconstrained keys may exist unless you explicitly demand otherwise by using `(?!remainder)`.
-
-Object-level count quantifiers (e.g., `k=v #{2,4}`) count how many keys matched that assertion and impose bounds without backtracking. These counts are assertion-local.
-
-### Binding and unification
-
-`$name=(pattern)` matches the node against `pattern` and binds `$name` to that single value. A bare `$name` is sugar for `$name=(_)`. If `$name` appears again, its matched value must unify (deep structural equality where relevant). `@name=(slice-pattern)` binds a slice: for arrays, a sequence of items; for objects, a set of key–value pairs. Bare `@name` is sugar for `@name=(_*)` in arrays (not defined for objects). `$name` and `@name` must not collide.
-
-Unification occurs after each binder has independently matched its own pattern. The sequence `[ $x $x:(/[ab]/) $y ]` matches `['a','a','y']` but not `['a','b','y']`. Deep equality is required where values are composite.
-
-
-### Lookahead and negation
-
-`(?= P)` asserts that `P` would match at this position; `(?! P)` asserts that it would not. Lookaheads are zero-width (do not consume input). Positive lookaheads may introduce bindings that escape to the outer scope; negative lookaheads discard any bindings made during the check. They compose with array items and value patterns through grouping.
-
-### Path assertions
-
-Paths chain key and index steps: `{ a.b.c : d }` matches `{ a: { b: { c: 'd' } } }`. `{ a[3].c : d }` expects an array at `a` and a `c` within the fourth element. 
-
-### Quantifiers — arrays
-
-The array quantifier repertoire includes shorthands and counted forms. **All quantifiers are greedy by default**: when generating solutions, longer matches are emitted before shorter ones. This ensures that `.replace()` operates on the longest/best match.
-
-The cheat-sheet equivalences:
-
 ```
-a*{2,3}   ≡ exactly 2 or 3 repetitions
-a*3       ≡ a*{3,3}
-a*?       ≡ a*{0,}        // lazy
-a*        ≡ a*{0,}        // greedy (default)
-a*+       ≡ a*{0,}        // greedy, possessive
-a+?, a+, a++ ≡ a*{1,}     // lazy, greedy, possessive
-a??       ≡ a*{0,1}       // lazy optional
-a?        ≡ a*{0,1}       // greedy optional (matches before skipping)
-```
+[1,2,3]        // matches [1,2,3]
+[1 2 3]        // matches [1,2,3]. Commas are optional.
+[1 2]          // ❌does not match [1,2,3].
+[1 2 _]        // matches [1,2,3]. Wildcard _ matches a single item
+[1 _]          // ❌does not match [1,2,3]. Wildcard _ does not match multiple items
+[1 ..]         // matches [1,2,3]. Wildcard '..' matches any subsequence (a more readable equivalent to `_*?`).
+[.. 1 2 3 ..]  // matches [1,2,3]. '..' can even match zero-length subsequences.
 
-**Greedy behavior**: When a quantifier allows multiple match lengths (e.g., `a?`, `a*`, `a{2,5}`), solutions with longer matches are generated first. For example, `[a?]` matching `['a']` produces two solutions: first `{a: 'a'}` (matched), then `{}` (skipped). This makes `.replace()` intuitive: it always uses the first (longest) match.
-
-**A bound name must be the same across repetitions.**
-```
-[ $x=(_)+ ] matches        [ "a", "a", "a" ]
-[ $x=(_)+ ] does not match [ "a", "b", "c" ]
-
-[ @x=(_+) [@x]] matches        [ "a", "b", "c" ["a", "b", "c"]]
-[ @x=(_+) [@x]] does not match [ "a", "b", "c", ["d", "e", "f"]]
-
-[ @x=(_ _)+ ] matches        [ "a", "b", "a", "b", "a", "b" ]
-[ @x=(_ _)+ ] does not match [ "a", "b", "c", "d", "e", "f" ]
-
-The same applies to * and ? variants.
-Zero-length matches of @x* unify @x with an empty slice.
-
-As bare `$x` is short for `$x=(_)`, so `$x+` is short for $x=(_)+.
-As bare `@x` is short for `$x=(_*)`, so `@x+` is short for @x:(_)+.
-```
-
-### Quantifiers — objects
-
-Object assertions may include count qualifiers: `k=v #{2,4}`, `k=v #{0}`, `.. #{0}`. Each applies to the number of matched keys for that predicate within the same object. Matching is by counting, not by backtracking across subsets.
-
-
-### Grammar (informal EBNF)
-
-> **Callout:** The following is intentionally faithful to the draft. If something appears inconsistent or ambiguous, it is flagged in comments, not corrected.
-
-```ebnf
-
-// General note: whitespace is interpreted by the lexer as a token boundary, and 
-// otherwise is only significant within quoted strings. The lexer also recognizes
-// C-style comments.  
-
-// precedence from higher to lower:
-   binding `:
-   optional `?`,  quantifiers
-   breadcrumb operators  `.` and `[]`
-   adjacency/commas inside arrays and objects
-   `|`
-   `=`, `?=`
-   Parentheses override precedence. Lookaheads always require parentheses.
-
-ROOT_PATTERN   := ITEM
-
-INTEGER        := decimal integer
-BOOLEAN        := true | false
-QUOTED_STRING  := quoted string literal
-REGEX          := /pattern/flags              // JS regex literal
-BAREWORD       := [A-Za-z_][A-Za-z0-9_]*      // unless a keyword
-_              := singleton wildcard
-
-LITERAL        := INTEGER | BOOLEAN | QUOTED_STRING | REGEX | BAREWORD
-IDENT          := /[a-zA-Z]\w*/               // logic variable name
-
-S_ITEM         := '$' IDENT                   // [^6]
-S_SLICE        := '@' IDENT                   // [^6]
-
-ITEM           := '(' ITEM ')'
-               | S_ITEM                       // [^8]
-               | S_ITEM '=' '(' ITEM ')'      // [^7]
-               | '_'
-               | LITERAL
-               | OBJ
-               | ARR
-               | ITEM '|' ITEM                            // [^3]
-
-A_BODY         := (A_SLICE (','? A_SLICE)*)?              // [^5]
-
-A_SLICE        := '(' A_BODY ')'                          // [^6]
-               | S_SLICE                              // [^8]
-               | S_SLICE '=' '(' A_BODY ')'           // [^7]
-               | S_ITEM
-               | S_ITEM '=' '(' A_BODY ')'
-               | ITEM
-               | OBJ
-               | ARR
-               | A_SLICE A_QUANT                         // [^3]
-               | A_SLICE '|' A_SLICE                     // [^3]
-               | '(?=' A_SLICE ')'
-               | '(?!' A_SLICE ')'
-
-ARR            := '[' A_BODY ']'
-KEY            := ITEM                                   // [^13]
-VALUE          := ITEM
-BREADCRUMB     := '..' KEY   // skip any number of levels between the current position and the key.
-               | '.' KEY                                 // [^11], [^12]
-               | '[' KEY ']'                             // [^11]
-
-
-O_TERM         := KEY BREADCRUMB* '?'? (':' | '?:') VALUE      // [^10]
-O_BODY         := (O_SLICE (','? O_SLICE)*)?              // [^5]
-O_SLICE        := '(' O_BODY ')'                          // [^1], [^6]
-               | '(?!' O_BODY ')'                         // [^9]
-               | S_SLICE '=' '(' O_BODY ')'               // [^7]
-               | O_TERM
-
-O_REMNANT      := S_SLICE '=' '(' 'remainder' ')'  // [^2] bind residual keys to a slice variable
-               | '(?!' 'remainder' ')'              // [^4] assert no residual keys
-               | 'remainder'                               assert residual keys exist
-               
-OBJ            := '{' O_BODY O_REMNANT? '}'
-
-A_QUANT        := '?' | '??'
-               | '+' | '+?' | '++'
-               | '*' | '*?' | '*+'
-               | '{' INTEGER '}'
-               | '{' INTEGER ',' INTEGER '}'
-               | '{' INTEGER ',' '}'
-               | '{' ',' INTEGER '}'
+// Whitespace is insignificant, *except* as a token delimiter.
+[ foobar ]     // matches ["foobar"], ❌does not match ["foo","bar"]
+[ foo bar ]    // matches ["foo","bar"], ❌does not match ["foo bar"]
 
 ```
 
-**Conventions.** Whitespace and `//` / `/* … */` comments are allowed between tokens. Whitespace is ignored except where adjacency inside arrays denotes sequencing.  
-The notations `~=` and `===` appear only in this document.
+### Objects
 
-Notes:
-[^1] Parentheses allow grouping, but they do not change the semantics. { k1:v1 k2:v2 k3:v3 } and { k1:v1 (k2:v2 k3:v3) } are equivalent conjunctions.
+An object pattern is an unordered set of predicates, each of the form
 
-[^2] In objects, residual keys (those not matching any assertion) are allowed by default. To bind them, use `@x=(remainder)`. To assert their existence without binding, use bare `remainder`. To forbid them, use `(?!remainder)`. Note: Unlike arrays where `..` means "unanchored matching", objects use the explicit `remainder` keyword to avoid confusion between different semantics.
-
-[^3] You know what I mean. Apply the usual recursive constructs.
-
-[^4] `(?!remainder)` is semantically defined as a conjunction of negative assertions, but the actual implementation would need to optimize this by remembering which assertions succeeded. Perhaps simply memoizing those tests would suffice.
-
-[^5] Commas are optional. 
-
-[^6] A "slice" is a contiguous subsequence of an array, or a subset of the unordered key/value pairs of an object. Parentheses are used to delineate slices.
-
-[^7], [^8] `$foo` is short for `$foo=(_)`. `@foo` is short for `@foo=(_*)` in arrays (bare `@foo` is not defined in objects; use explicit `@foo=(..)` instead). When "=" is used for binding, the rhs must be in parentheses.
-
-[^9] In object context, (?! Q) succeeds iff Q has no solutions under the current bindings. Variables occurring in Q are treated as follows: already-bound variables constrain Q; unbound variables are existentially scoped within the check. Bindings produced inside the negation do not escape.
-[^10] The optional operator is `?:` which can appear as a single token (`K?:V`) or with whitespace (`K ?: V` or even `K ? : V`). There is no ambiguity with lookaheads `(?:P)` since lookaheads have `(` before the `?`.
-[^11] The `..` breadcrumb skips any number of intermediate levels. For example, `foo..bar:1` matches `{foo: {bar: 1}}`, `{foo: {x: {bar: 1}}}`, `{foo: {x: {y: {bar: 1}}}}`, etc. It navigates through object properties at any depth to find a matching key.
-[^12] The difference between `foo.bar` and `foo[bar]` is that the latter also asserts `foo` to be an array and `bar` to be numeric (or else the match will fail).
-[^13] I'm using ITEM because the possibilities are complex, including negative assertions, alternations, bindings, etc. But note that Object keys are strings, so unless the item describes a string, it can't match.
-
-
-### Examples
-
-Find and join relational facts:
-
-```js
-Tendril(`{
-  users.$userId.contact = [$userName _ _ $userPhone]
-  users.$userId.managerId = $managerId
-  users.$managerId.phone = $managerPhone
-  projects.$projectId.assigneeId = $userId
-  projects.$projectId.name = $projectName
-}`)
-  .solutions(input)
-  .forEach($ => console.log($.projectName, $.userName, $.userPhone, $.managerPhone));
-```
-
-Redact sensitive fields:
-
-```js
-Tendril("{ _(._)*.password : $value }")
-  .replaceAll(input, vars => ({ value: "REDACTED" }));
-```
-
-Bind object slices:
+- `K?:V`, which means for all key/value properties in the object, if the key matches K then the value must match V;
+- `K:V`, which means the same thing **and** that there exists at least one key matching K.
 
 ```
-{ /user.*/=_  $contacts=(/contact.*/=_)  @rest=(remainder) }
+{ /[ab]/:/[cd]/ }   // matches object {"a":"c"}. Does not match any array or string.
+{ a:b, c:d }    // matches {"a":"b", "c":"d", "e":"f"}.  All predicates are satisfied.
+{ a:b, x:y }    // ❌does not match {"a":"b", "c":"d", "e":"f"}.  `x:y` not satisfied.
+{ a:b, x?:y }   // matches {"a":"b", "c":"d", "e":"f"}.  `x?:y` is trivially satisfied.
+{ a:b, x?:y }   // ❌does not match {"a":"b", "c":"d", "x":"w"}. `x?:y` not satisfied.
+
+{ /a|b/:/x/  /b|c/:/y/ }  // matches {"a":"x", "b":"y"}. Commas are optional.
+
+Every predicate must be satisfied by at least one key-value pair, but the same key-value pair may satisfy multiple predicates:
+
+{ /a|b/:/x/  /b|c/:/y/ }  //matches { b: "xy" }
+{ /a|b/:/x/ /b|c/:/y/ }  // does not match {"b":"x"}. 
+
+
 ```
 
-### API sketch
+The keyword `remainder` signifies the set of key/value properties whose keys didn't match any of the predicates' conditions.
 
-**Query API**:
-
-Several convenience methods are provided (todo, list them), covering the primary API which is more complex and powerful.
 ```
-    Tendril(pattern).solutions(data)
-    Tendril(pattern).occurrences(data)
-```    
-**Bound variables**
-Each solution or occurrence returns a map of bound variables, including:
-$ — scalar variables
-@ — slice variables (wrapped in Slice objects)
-```
-    firstResult = Tendril("[ $x=(1) @y=(2 3) { k:$k @z=(remainder) }]")
-           .solutions([1, 2, 3, {k:"value", p:true, q:false}]).first()
+{ a:b }           // matches {"a":"c", "b":"c", "e":"f"}. Remainder is {"b":"c", "e":"f"}.
 
-    firstResult.bindings ==
-    {
-        x:1,
-        y:Slice.array(2,3) // Representing a contiguous subsequence of an array,
-                           // not a complete array.
-        k:"value"
-        z:Slice.object({p:true, q:false}) // Representing a subset of an object's properties,
-                                   // not a complete object.
-    }                  
-```
-**Replacement**
-The Replacement API lets you specify a function that generates replacements.
-
-Replace the entire input:
-```
-// swap x and y
-Tendril("[$x $y]").replace([3,4], var => [ var.y, var.x ])  // [4,3]
-
-// swap slices; use the familiar spreading operator
-Tendril("[@x 99 @y]").replace([1,2,99,4], var => [...var.y, 99, ...var.x])  // [4,3,99,2]
+{ a:b remainder }         // ❌does not match {"a":"b"}. The `remainder` asserts a nonempty remainder.
+{ a:b (?!remainder) }     // ❌does not match {"a":"b", "c":"d"}. The '(?!remainder)' asserts an empty remainder.
+{ a:b @rest=(remainder) } // @rest binds to a nonempty remainder
+{ a:b @rest=(remainder?) } // @rest binds to a nonempty or empty remainder
+{ a:_ (?!remainder) } // matches iff 'a' is the only key
+{ a:_ remainder } // matches iff 'a' is not the only key
 ```
 
-Or replace just the matched parts (bound variables):  
+### Operators in arrays
+
+In arrays, all operators borrow their familiar meanings from regexes:
+
 ```
-// replace all occurrences of slice variables
-const input = [
-  { light: "entry", switch: "on" },
-  { light: "kitchen", switch: "off" }
-];
+[a c* d]           // matches ['a', 'c', 'c', 'c', 'd']
+                   // The * repeats the item 'c', not characters within a string
+[a c* d]           // ❌does not match ['a', 'ccc', 'd']
+                   // 'ccc' is a different item (a single string), not three 'c' items
+[a /c*/ d]         // ✓ matches ['a', 'ccc', 'd']
+                   // Regex /c*/ matches the string 'ccc'
+ 
+?, ??, ?+          // Optional greedy, optional nongreedy, optional greedy posessive
+*, *?, *+          // zero or more greedy, zero or more nongreedy, zero or more greedy posessive
++, +?, ++          // one or more greedy, one or more nongreedy, one or more greedy posessive
 
-Tendril("[{ @s=(switch=_) }*]")
-  .replaceAll(input, vars => ({ s: Slice.object({ switch: "auto" }) }));
+{m,n}, {m,}, {,n}, {m}   // Specific numbers of repetitions, greedy
 
-// => [
-//      { light: "entry", switch: "auto" },
-//      { light: "kitchen", switch: "auto" }
-//    ]
+(?=PATTERN)        // lookahead
+(?!PATTERN)        // negative lookahead
 ```
 
-Note: Replacements modify the original data in place.
-If you want to preserve it, deep-clone your input first.
+Use parentheses to apply operators to groups.
 
+```
+[1 (2 3)*]         // matches [1, 2, 3, 2, 3, 2, 3]
+[(3 (4|5)?)*]      // matches [3 4 3 5 3 3 3 5 3 4]
+[1 2 (3 4|5 6)]    // matches [1, 2, 5, 6]  
+[(?! .. 3 4) ..]   // matches [4, 3, 2, 1] but not [1, 2, 3, 4]
+                   // (matches arrays *not* containing the subsequence [3,4])
+```
+
+### Operators on key/value predicates
+
+You can use the alternation operator on individual key patterns or value patterns.
+
+```
+{ (a|b):c }        // matches if the key is 'a' or 'b', and the value is 'c'
+{ a:(b|c) }        // matches if the key is 'a', and the value is 'b' or 'c'
+```
+
+You can use the alternation or optional operators on K:V predicates:
+
+```
+{ a:b | c:d }     // matches either one
+
+{ (a:b)? }        // matches any object including {"a":"c"}
+                  // (useful only if you add a binding);
+{ a?:b }          // In contrast, does not match {"a":"c"}
+```
+
+You can negate one or more K:V predicates: `(?! pattern )` means the pattern must NOT match.
+
+```
+{ (?! a:1) }          // a:1 must not exist
+
+{ (?! a:1 b:2) }      // Can't have both a:1 and b:2
+                      // (having just one is OK)
+
+{ (?! a:1) (?! b:2) } // Can't have a:1, can't have b:2
+                      // (can't have either one)
+
+{ a:1 (?! remainder) }    // Matches exactly {'a':1} and nothing else. ('remainder' also represents a group, the properties that didn't match any predicate.)
+
+```
+
+### Precedence
+
+**High to low**:
+binding `=`
+optional `?`, quantifiers `+`, etc.
+breadcrumb operators  `.` and `[]`
+adjacency/commas inside arrays and objects
+`|`
+`:`, `?:`
+Parentheses override precedence. Lookaheads always require parentheses.
+
+### Variables: Scalars and groups
+
+Tendril has two kinds of variables, similar to named groups or backreferences in regex.
+
+**Scalars** capture exactly one item (a single primitive, or a single array or object reference):
+
+- In arrays: one array entry
+- In objects: one key, or one value
+- Syntax: `$name`
+
+**groups** capture zero or more items (scoped using parentheses):
+
+- In arrays: a subsequence
+- In objects: a subset of key-value pairs
+- Syntax: `@name`
+
+**Multiple solutions example**
+[ .. $x .. ] applied to ["a","b"]
+
+produces two solutions:
+{ x: "a" }
+{ x: "b" }
+
+Because `$x` must bind to a *single* item, and each possible binding
+yields a distinct solution.
+
+"**Unification**": If the same variable appears twice, it asserts that the value in each position is the same.
+
+```
+[ $x .. $x ]  // matches ["a", "some", "other", "stuff", "a"]
+              // $x unifies to "a" (appears twice, must be equal)
+
+[ @x @x @y ]     // matches [5, 5, 5, 5, 5]
+              // Multiple solutions by different splits:
+              // {x:Slice(5, 5), y:Slice(5)}
+              // {x:Slice(5), y:Slice(5, 5, 5)}
+              // {x:Slice(), y:Slice(5, 5, 5, 5, 5)}
+```
+
+A scalar binder `$x:(P)` succeeds exactly when the data matches P at that point AND the matched value is a single value AND unification succeeds.
+
+```
+    [ 1? 2? ]         matches any of  [], [1], [2], [1,2]
+    [ $x:(1? 2?) ]    matches only [1], [2], because $x must bind to a scalar.
+```
+
+### Paths
+
+In objects, the K:V assertions generalize to paths, chains of more than one key or index:
+
+```
+
+    { a.b.c : d }              // Descend through nested objects
+    { a[3].c : d }             // Array index then object key
+
+    { a.b.c[3].e:f }  // satisfied iff `object?.a?.b?.c?[3]?.e=="f"`
+                      // equivalent to the pattern `{a:{b:{c:[_ _ _ {e:f} ..]}}}`
+```
+
+Use '..' to express arbitrary depth.
+
+```
+    {a.b..c:d}  // matches {'a': {'b': {'p':[{} {} {'q':{'r':{'c':'d'}}}]}}}
+```
+
+## API Overview
+
+**Query API:**
+
+```javascript
+const matcher = Tendril(pattern);
+
+// Get all solutions
+matcher.solutions(data)  // Returns array of binding objects
+
+// Example
+Tendril("{ users.$id.name:$name }")
+.solutions(data)
+.forEach($ => console.log($.id, $.name));
+```
+
+**Transformation API:**
+
+Replacements modify the input structure in place; clone the data first if immutability is desired.
+
+```javascript
+// Replace entire input using first (longest) match
+matcher.replace(data, vars => newValue)
+
+// Replace all non-overlapping occurrences
+matcher.replaceAll(data, vars => ({varName: newValue}))
+```
+
+**Replacement examples:**
+
+```javascript
+// Swap array elements
+Tendril("[$x $y]").replace([3, 4], $ => [$.y, $.x])
+// Result: [4, 3]
+
+// Replace group variables
+Tendril("[@x 99 @y]").replace([1, 2, 99, 4], $ => [...$.y, 99, ...$.x])
+// Result: [4, 99, 2]
+
+// Transform object structures
+Tendril("{ _(._)*.password : $p }")
+.replaceAll(data, $ => ({p: "REDACTED"}))
+// Redacts all password fields at any depth
+```
 
 ---
 
-# Examples
+## When to Use Tendril
 
-## API decoding comparison
+### ✅ **Perfect fit (10%):**
 
-<table><tr><td colspan="2"><pre>
-<b>Data</b>
-    {
-        "requests": {
-            "87499"  : { "user": { "name": ["John", "T.", "Doe"],           }, "query": "gardening" },
-            "1818872": { "user": { "name": ["Jane", "Doe"],                 }, "query": "houses" },
-            "384122" : { "user": { "name": ["Mary", "Sue", "Ellen", "Doe"], }, "query": "medicine" },
-        },
-        "responses": [
-            { "requestId": "1818872", "status": "ok", "output": "2 houses available" },
-            { "requestId": "20097",   "status": "fail"},
-            { "requestId": "384122",  "status": "ok", "output": {"type":"text", "content":"Here is your medicine info" }},
-        ]
-    }
+**1. Structural tree transformations (AST/VDOM manipulation)**
 
-<b>Desired output</b>
+```javascript
+// Macro expansion: <When>/<Else> → If node
+Tendril(`[
+  ..
+  @whenelse:(
+    {tag : /^when$/i, children : $then}
+    {tag : /^else$/i, children : $else}?
+  )
+  ..
+]`).replaceAll(vdom, $ => ({
+  whenelse: group.array({
+    tag: 'If',
+    thenChildren: $.then,
+    elseChildren: $.else || []
+  })
+}))
+```
 
-    Jane: 2 houses available
-    Mary: Here is your medicine info
+**2. Relational queries joining data across paths**
 
-</pre></td></tr><tr><td><pre>
-<b>// using Tendril</b>
-pattern = {
-        requests= {
-            $reqId.user.name= [$first .. $last]
-        }
-        responses= [
-            ..
-            {
-                requestId= $reqId
-                status= ok
-                output= ( $text=(/.*/) | { type:text content:$text } )
-            }
-            ..
-        ]
-    }
-Tendril(pattern).solutions(data).map((m)=>`${m.$first}: ${m.$text}`)
-</pre></td><td><pre>
-<b>// using plain JS</b>
-    const results = data.responses
-    .filter(r => r.status === "ok" && data.requests[r.requestId])
-    .map(r => {
-        const request = data.requests[r.requestId];
-        const name = request.user.name;
-        const first = name[0];
-        const last = name[name.length - 1];
-        let text;
-        if (typeof r.output === 'string') {
-            text = r.output;
-        } else if (r.output?.type === 'text') {
-            text = r.output.content;
-        }
-        return text ? `${first}: ${text}` : null;
-    })
-    .filter(Boolean);
-    console.log(results.join('\n'));
+```javascript
+// Join users with their projects by ID
+Tendril(`{
+  users.$userId.name : $userName
+  users.$userId.managerId : $managerId  
+  projects.$projectId.assigneeId : $userId
+  projects.$projectId.name : $projectName
+}`).solutions(data)
+```
 
-</pre></td><td><pre>
-<b>// using Lodash</b>
-    const results = _(data.responses)
-        .filter({ status: 'ok' })
-        .map(r => {
-            const request = data.requests[r.requestId];
-            if (!request) return null;
-            const name = request.user.name;
-            const text = _.isString(r.output) ? r.output : r.output?.content;
-            return text ? `${_.first(name)}: ${text}` : null;
-        })
-        .compact()
-        .value();
-    console.log(results.join('\n'));
-</pre></td></tr></table>
+**3. Deep search-and-replace with structural awareness**
 
-## Password Redaction Comparison
+```javascript
+// Redact sensitive fields at any nesting level
+Tendril("{ _..password : $value }")
+.replaceAll(data, $ => ({value: "REDACTED"}))
+```
 
-<table>
-<tr><th>Tendril</th><th>Plain JavaScript</th><th>Lodash</th></tr>
-<tr><td><pre>
-Tendril("{ _(._)*.password : $p }").replaceAll(input, vars => ({ p: 'REDACTED' }))
-</pre></td><td><pre>
-function redactPasswords(obj) {
-  if (typeof obj !== 'object' || obj === null) {
-    return obj;
-  }
+#### ⚠️ **Works adequately (40%):**
 
-if (Array.isArray(obj)) {
-return obj.map(redactPasswords);
-}
+- Complex validation ("does this data match this schema?")
+- Data extraction from semi-structured formats
+- Tree walking with pattern-based filtering
+- Structural refactoring of configuration files
 
-const result = {};
-for (const [key, value] of Object.entries(obj)) {
-if (key === 'password') {
-result[key] = 'REDACTED';
-} else {
-result[key] = redactPasswords(value);
-}
-}
-return result;
-}
+#### ❌ **Wrong tool (50%):**
 
-const redacted = redactPasswords(data);
-</pre></td><td><pre>
-function redactPasswords(obj) {
-  return _.cloneDeepWith(obj, (value, key) => {
-    if (key === 'password') {
-      return 'REDACTED';
-    }
-  });
-}
+- **Simple path queries** - Use JSONPath/Lodash instead
+- **Statistical analysis** - Use dedicated data libraries
+- **Graph traversal** - Use graph databases
+- **Performance-critical operations** - Backtracking can be expensive
+- **Dynamic patterns** - Patterns must be known at "compile time"
 
-const redacted = redactPasswords(data);
-</pre></td></tr>
-</table>
+---
 
+## Advanced examples
 
+Alternating predicate vs. alternating value:
 
-
-**End of README v5**
-
-  ---
-
-)
+```
+{ @x:(a:b|c:d|) } // Matches anything; @x will be one of {"a":"b"}, {"c":"d"}, or {}.
+{ @x:(a:(b|c|)) } // Matches iff key 'a' is present; @x will be one of {"a","b"}, {"a","c"}, {"a",null}.
+```

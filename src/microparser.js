@@ -93,7 +93,7 @@ export function tokenize(src) {
     if (reId.test(src)) {
       const j = reId.lastIndex;
       const w = src.slice(i, j);
-      if (w === 'AND')   { push('kw', 'AND', j - i); continue; }
+      // if (w === 'AND')   { push('kw', 'AND', j - i); continue; }
       if (w === '_')     { push('any', '_',   j - i); continue; }
       if (w === 'true')  { push('bool', true, j - i); continue; }
       if (w === 'false') { push('bool', false, j - i); continue; }
