@@ -15,7 +15,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matches, extract, extractAll, replaceAll, Tendril, Slice } from '../src/tendril-api.js';
+import { matches, extract, extractAll, replaceAll, Tendril, Group } from '../src/tendril-api.js';
 
 // ==================== Literals & Wildcards ====================
 
@@ -392,10 +392,10 @@ test('replace uses first solution only (longest match)', () => {
   ) ..]`;
 
   const result = Tendril(pattern).replace(input, v => ({
-    whenelse: Slice.array({ tag: 'when', children2: v.else, ...v.otherProps })
+    whenelse: Group.array({ tag: 'when', children2: v.else, ...v.otherProps })
   }));
 
-  // Should replace the 2-element slice with single merged object
+  // Should replace the 2-element group with single merged object
   assert.equal(result.length, 3); // div, merged when/else, span
   assert.equal(result[1].tag, 'when');
   assert.equal(result[1].children2, 'or this');

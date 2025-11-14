@@ -1,6 +1,6 @@
 // semantics.js
 // Pure helpers for matching semantics: strict equality, env (bindings with trail),
-// slice/coverage utilities, and regex matching.
+// group/coverage utilities, and regex matching.
 // No parser/compiler/VM logic lives here.
 
 /** @typedef {{unicodeNormalize?: false|'NFC'|'NFD'}} SemanticsOptions */
@@ -228,13 +228,13 @@ export class Env {
   }
 }
 
-/* ============================== Slice & reference utilities ============================== */
+/* ============================== Group & reference utilities ============================== */
 
-/** Array slice reference (by identity + half-open [start,end) indices). */
-export function makeArraySlice(arrRef, start, end) {
-  if (!isArr(arrRef)) throw new TypeError("makeArraySlice: arrRef must be an array");
-  if (start < 0 || end < start || end > arrRef.length) throw new RangeError("Invalid slice bounds");
-  return Object.freeze({ kind: "array-slice", ref: arrRef, start, end });
+/** Array group reference (by identity + half-open [start,end) indices). */
+export function makeArrayGroup(arrRef, start, end) {
+  if (!isArr(arrRef)) throw new TypeError("makeArrayGroup: arrRef must be an array");
+  if (start < 0 || end < start || end > arrRef.length) throw new RangeError("Invalid group bounds");
+  return Object.freeze({ kind: "array-group", ref: arrRef, start, end });
 }
 
 /** Object value reference (points to a specific key's value in a plain object or Map). */
@@ -243,8 +243,8 @@ export function makeObjectValueRef(objRef, key) {
   return Object.freeze({ kind: "object-value", ref: objRef, key });
 }
 
-/** Object-keys slice (a set of keys matched by a kPat, for counting or replacement). */
-export function makeObjectKeysSlice(objRef, keysIterable) {
+/** Object-keys group (a set of keys matched by a kPat, for counting or replacement). */
+export function makeObjectKeysGroup(objRef, keysIterable) {
   const keys = new Set(keysIterable);
   return Object.freeze({ kind: "object-keys", ref: objRef, keys });
 }
@@ -325,7 +325,7 @@ export function countKeys(objRef, kPred, vPred) {
 
 /** Shallow clone-arr/object for immutable replace operations (engine will use this). */
 export function cloneShallow(value) {
-  if (isArr(value)) return value.slice();
+  if (isArr(value)) return value.group();
   if (isObj(value)) return Object.assign({}, value);
   if (isMap(value)) return new Map(value);
   if (isSet(value)) return new Set(value);
@@ -342,9 +342,9 @@ export const Semantics = Object.freeze({
   atomEqString,
   deepEq,
   Env,
-  makeArraySlice,
+  makeArrayGroup,
   makeObjectValueRef,
-  makeObjectKeysSlice,
+  makeObjectKeysGroup,
   Coverage,
   enumerateKeys,
   getValue,

@@ -35,10 +35,10 @@ bareword                            // string literal
 
 Does `{ class: "MyClass" }` match `{ class=MyClass }`? What about `{ myVar= value }` - is `value` a bareword string or an undefined variable reference (should it be `$value`)?
 
-**5. Slice replacement scope unclear:**
+**5. Group replacement scope unclear:**
 
 ```
->> a b c <<                         // Designate a slice to be replaced
+>> a b c <<                         // Designate a group to be replaced
 ```
 
 Can this appear anywhere? `[x >> a* << y]`? What does `>> $x:a* <<` mean - replace each binding or the whole sequence?
@@ -114,7 +114,7 @@ You have `/regex/` literals but no way to compose them with your structural oper
 
 **Nice to have:**
 
-- More examples of slice replacement
+- More examples of group replacement
 - Vertical pattern whitespace rationale (or relax the rule)
 - Explicit alternation + quantifier examples
   . Clarifications to Add to Spec
@@ -129,7 +129,7 @@ Better explain "lookahead" semantics without using "consume".
 Call them symbols, not variables.
 Add examples showing ($x:pattern)* vs $x:(pattern*) distinction with actual match/no-match cases
 
-Explain the symbol or the slice versus unit thing better. Everything is a slice.
+Explain the symbol or the group versus unit thing better. Everything is a group.
 ---
 
 $x defaults to $x:_+ in arrays, $x:_ in key paths
@@ -252,12 +252,12 @@ Plan A:
 Introduce traditional lazy / greedy / possessive operators. 
 
 Plan B:
-Introduce these operators (for use within array-slice contexts):
-( left > right )     // Split the slice before the first occurrance of `right` (no backtracking),
+Introduce these operators (for use within array-group contexts):
+( left > right )     // Split the group before the first occurrance of `right` (no backtracking),
                      // and match `left` to the left side, `right` to the right side.
-( left >> right )    // Similarly, split the slice before the last occurrance of `right` (no backtracking)
-( left < right )     // Similarly, split the slice after the last occurrance of `left` (no backtracking)
-( left << right )    // Similarly, split the slice after the first occurrance of `left` (no backtracking)
+( left >> right )    // Similarly, split the group before the last occurrance of `right` (no backtracking)
+( left < right )     // Similarly, split the group after the last occurrance of `left` (no backtracking)
+( left << right )    // Similarly, split the group after the first occurrance of `left` (no backtracking)
 
 Examples:
 
@@ -278,8 +278,8 @@ I want to define a safer and simpler regex language. What do you think of this p
                      // and match `left` to the left side, `right` to the right side.
     /left>>right/  - Split the input before the last occurrance of `right` (no backtracking),
                      // and match `left` to the left side, `right` to the right side.
-    /left<right/  - Similarly, split the slice after the last occurrance of `left` (no backtracking)
-    /left<<right/  -  Similarly, split the slice after the first occurrance of `left` (no backtracking)
+    /left<right/  - Similarly, split the group after the last occurrance of `left` (no backtracking)
+    /left<<right/  -  Similarly, split the group after the first occurrance of `left` (no backtracking)
 
 The key theory motivating this is that unrestricted star behavior is not only very inefficient, it's also not very useful, because the decision to stop a sequence is not arbitrary. You don't just stop it randomly someplace in the middle. You stop it on a condition. 
 
@@ -291,7 +291,7 @@ I'd love to hand-code the recursive descent *if* it could be made readable - whi
 
 
 
-we need to (1) Change the semantics of object matching so that a KV pattern is an assertion that "if the key matches the key pattern, then the value matches the value pattern; (2) Clean up the confusion around whether in KV patterns, you bind symbols to the KV (individual values) or to the slice;
+we need to (1) Change the semantics of object matching so that a KV pattern is an assertion that "if the key matches the key pattern, then the value matches the value pattern; (2) Clean up the confusion around whether in KV patterns, you bind symbols to the KV (individual values) or to the group;
 
 (3) Also considering getting rid of greedy versus lazy quantifiers, and getting rid of any form of quantifier where you have to test every possible number of repetitions. Instead, Introduce:
 /(pat)*/ - greedy possessive 0-or-more
@@ -300,8 +300,8 @@ we need to (1) Change the semantics of object matching so that a KV pattern is a
 // and match left to the left side, right to the right side.
 /left>>right/ - Split the input before the last occurrance of right (no backtracking),
 // and match left to the left side, right to the right side.
-/left<right/ - Similarly, split the slice after the last occurrance of left (no backtracking)
-/left<<right/ - Similarly, split the slice after the first occurrance of left (no backtracking)
+/left<right/ - Similarly, split the group after the last occurrance of left (no backtracking)
+/left<<right/ - Similarly, split the group after the first occurrance of left (no backtracking)
 The key theory motivating this is that unrestricted star behavior is not only very inefficient, it's also not very useful, because the decision to stop a sequence is not arbitrary. You don't just stop it randomly someplace in the middle. You stop it on a condition.
 Let me be clear, we're not getting rid of backtracking entirely. There are still plenty of things that backtrack, a big one being alternations. Also, I'm not totally sure we can get rid of star completely without losing the ability to find a pattern anywhere in a structure (* applied to breadcrumb segments). I'm also not clear that I like change number one. It may be the wrong thing to do.
 
@@ -340,7 +340,7 @@ Tendril(pattern)
 ]
 ```
 
-while other times we want to treat it as a slice ($otherprops):
+while other times we want to treat it as a group ($otherprops):
 ```  
 > Tendril(`[.. $whenelse:(
       {tag = /^when$/i, $otherProps:..}

@@ -66,14 +66,14 @@ let parse=(input)=>{
     // number (integer)
     if(isD(c)){
       let j=i; while(j<n && isD(src[j])) j++;
-      out.push({type:'num', value:Number(src.slice(i,j))});
+      out.push({type:'num', value:Number(src.group(i,j))});
       i=j; continue;
     }
 
     // identifier / keyword (true/false)
     if(isA(c)){
       let j=i; while(j<n && isI(src[j])) j++;
-      const w=src.slice(i,j);
+      const w=src.group(i,j);
       if(w==='true'||w==='false'){
         // ensure word-boundaries (already by lexing, but keep explicit)
         const lb=i===0 || !isI(src[i-1]), rb=j===n || !isI(src[j]);
@@ -114,7 +114,7 @@ const tokens = ["==","!=",">=","<=","&&","||","->","(",")","[","]","{","}","*","
       const SQUOTE = "'";
       const DQUOTE = '"';
 
-      tokenized = input.match(new RegExp(`${SQUOTE}[^${SQUOTE}]*${SQUOTE}|${DQUOTE}[^${DQUOTE}]*${DQUOTE}|${NUMBER}|${tokens.map(t => t instanceof RegExp ? t.source : t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')}|[^\\s]+`, 'g'))?.map(t => t.match(NUMBER) ? ['number', t] : t[0] === SQUOTE || t[0] === DQUOTE ? ['text', t.slice(1, -1)] : tokens.some(token => token instanceof RegExp ? t.match(token) : t === token) ? [t] : ['text', t]) || []
+      tokenized = input.match(new RegExp(`${SQUOTE}[^${SQUOTE}]*${SQUOTE}|${DQUOTE}[^${DQUOTE}]*${DQUOTE}|${NUMBER}|${tokens.map(t => t instanceof RegExp ? t.source : t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')}|[^\\s]+`, 'g'))?.map(t => t.match(NUMBER) ? ['number', t] : t[0] === SQUOTE || t[0] === DQUOTE ? ['text', t.group(1, -1)] : tokens.some(token => token instanceof RegExp ? t.match(token) : t === token) ? [t] : ['text', t]) || []
 
       console.log('Tokenized list:', tokenized)
 

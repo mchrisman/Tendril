@@ -75,7 +75,7 @@ Need more nuanced approach with `remainder`/`%` keywords instead.
 
 2. **Add `remainder`/`%` Parsing** (src/tendril-parser.js)
 
-   **In `parseOSlice()` around line 496:**
+   **In `parseOGroup()` around line 496:**
    ```javascript
    // Check for remainder/% keywords (object residual)
    if (p.peek('id') && p.lookAhead().v === 'remainder') {
@@ -95,18 +95,18 @@ Need more nuanced approach with `remainder`/`%` keywords instead.
    if (p.peek('id') && p.lookAhead().v === 'remainder') {
      p.eat('id');
      p.eat(')');
-     return SliceBind(name, Spread(null));
+     return GroupBind(name, Spread(null));
    }
    if (p.peek('%')) {
      p.eat('%');
      p.eat(')');
-     return SliceBind(name, Spread(null));
+     return GroupBind(name, Spread(null));
    }
    ```
 
 3. **Update Grammar** (README.md line ~318)
    ```ebnf
-   O_REMNANT := S_SLICE ':' '(' ('remainder' | '%') ')'
+   O_REMNANT := S_GROUP ':' '(' ('remainder' | '%') ')'
               | 'remainder' | '%'
               | '(?!' ('remainder' | '%') ')'
    ```

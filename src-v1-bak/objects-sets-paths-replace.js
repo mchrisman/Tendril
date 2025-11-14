@@ -18,7 +18,7 @@
 // • Counts `k:v #{m,n}` are post-checks over keys satisfying both k and v.
 // • Sets use order-insensitive bipartite matching; extras allowed only with
 //   set-level spread `..` (sugar for “allow extras”).
-//   array-slice, object-key, and object-value captures; `replaceAll()` applies
+//   array-group, object-key, and object-value captures; `replaceAll()` applies
 //   non-overlapping edits left→right, returning a new immutable structure.
 
 import { parseAndValidate, PatternSyntaxError } from "./syntax.js";
@@ -28,7 +28,7 @@ import {
   isArr, isSet, isMap, isObj,
   atomEqNumber, atomEqBoolean, atomEqString, regexFull, deepEq,
   Coverage, enumerateKeys, getValue, cloneShallow,
-  makeArraySlice, makeObjectValueRef, makeObjectKeysSlice,
+  makeArrayGroup, makeObjectValueRef, makeObjectKeysGroup,
 } from "./semantics.js";
 import { Pattern as CorePattern } from "./engine.js";
 
@@ -43,10 +43,10 @@ function needsAdvanced(n) {
     case "Set":
     case "Dot":
     case "IndexedPath":
-    case "ReplaceSlice":
+    case "ReplaceGroup":
     case "ReplaceKey":
     case "ReplaceVal":
-    case "BindSlice":
+    case "BindGroup":
     case "Assert": // Assertions always use M4 path for proper support
       return true;
     case "Alt": return n.options.some(needsAdvanced);
@@ -61,8 +61,8 @@ function needsAdvanced(n) {
   }
 }
 
-// Lower BindSlice: keep Spread as-is for special residual handling
-function lowerBindSlice(bs) {
+// Lower BindGroup: keep Spread as-is for special residual handling
+function lowerBindGroup(bs) {
   // Don't transform Spread to (_=_)* for objects - it needs special handling
   // to collect residual k=v pairs not matched by other assertions
   return bs;
@@ -89,9 +89,9 @@ function lowerVerticalInObjectLike(obj) {
 
   const kvs = [];
   for (const kv of obj.kvs) {
-    if (kv.type === "BindSlice") {
-      // Lower BindSlice and recurse into its pattern
-      const lowered = lowerBindSlice(kv);
+    if (kv.type === "BindGroup") {
+      // Lower BindGroup and recurse into its pattern
+      const lowered = lowerBindGroup(kv);
       kvs.push({ ...lowered, pat: lowerVerticalEverywhere(lowered.pat) });
       continue;
     }
@@ -124,7 +124,7 @@ function lowerVerticalEverywhere(n) {
     case "Map": {
       const loweredSelf = lowerVerticalInObjectLike(n);
       return { ...loweredSelf, kvs: loweredSelf.kvs.map(kv => {
-        if (kv.type === "BindSlice") {
+        if (kv.type === "BindGroup") {
           // Already lowered in lowerVerticalInObjectLike
           return kv;
         }
@@ -142,7 +142,7 @@ function lowerVerticalEverywhere(n) {
         };
       })};
     }
-    case "BindSlice": return { ...n, pat: lowerVerticalEverywhere(n.pat) };
+    case "BindGroup": return { ...n, pat: lowerVerticalEverywhere(n.pat) };
     case "Array": return { ...n, elems: n.elems.map(lowerVerticalEverywhere) };
     case "Adj":   return { ...n, elems: n.elems.map(lowerVerticalEverywhere) };
     case "Alt":   return { ...n, options: n.options.map(lowerVerticalEverywhere) };
@@ -176,8 +176,8 @@ export function parseAndLower(sourceOrAst) {
 function makeSolution(env, varOcc, pathStack) {
   const bindings = Object.fromEntries(env.map.entries());
   const at = {};
-  for (const [k, arr] of varOcc.entries()) at[k] = arr.slice();
-  const where = pathStack.slice();
+  for (const [k, arr] of varOcc.entries()) at[k] = arr.group();
+  const where = pathStack.group();
   return { bindings, at, where };
 }
 
@@ -191,7 +191,7 @@ function traverseAll(val, path, cb) {
   cb(val, path);
   if (Array.isArray(val)) {
     for (let i = 0; i < val.length; i++) {
-      const ref = { kind: "array-slice", ref: val, start: i, end: i + 1 };
+      const ref = { kind: "array-group", ref: val, start: i, end: i + 1 };
       traverseAll(val[i], path.concat([ref]), cb);
     }
     return;
@@ -218,10 +218,10 @@ function* matchObjectLike(n, val, ctx, typeCheck) {
   if (!typeCheck(val)) return;
   const cov = new Coverage(val);
 
-  // First pass: evaluate regular kv patterns (non-BindSlice) to establish coverage
+  // First pass: evaluate regular kv patterns (non-BindGroup) to establish coverage
   for (const kv of n.kvs) {
-    if (kv.type === "BindSlice") {
-      // Skip BindSlice in first pass - handle after coverage is established
+    if (kv.type === "BindGroup") {
+      // Skip BindGroup in first pass - handle after coverage is established
       continue;
     }
 
@@ -233,7 +233,7 @@ function* matchObjectLike(n, val, ctx, typeCheck) {
       for (const k of keys) {
         for (const _ of matchNode(kv.vPat, getValue(val, k), ctx)) {
           cov.add(k);
-          ctx.captures.objKeys.push(makeObjectKeysSlice(val, [k]));
+          ctx.captures.objKeys.push(makeObjectKeysGroup(val, [k]));
           yield ctx.env;
           ctx.captures.objKeys.pop();
           any = true;
@@ -277,11 +277,11 @@ function* matchObjectLike(n, val, ctx, typeCheck) {
     if (!okThisKV) return;
   }
 
-  // Second pass: handle BindSlice nodes now that coverage is established
+  // Second pass: handle BindGroup nodes now that coverage is established
   for (const kv of n.kvs) {
-    if (kv.type !== "BindSlice") continue;
+    if (kv.type !== "BindGroup") continue;
 
-    const sliceObj = typeCheck === isMap ? new Map() : {};
+    const groupObj = typeCheck === isMap ? new Map() : {};
 
     if (kv.pat.type === "Spread") {
       // $var:.. - bind residual k=v pairs not yet covered
@@ -289,9 +289,9 @@ function* matchObjectLike(n, val, ctx, typeCheck) {
       for (const k of allKeys) {
         if (!cov.covered.has(k)) {
           if (typeCheck === isMap) {
-            sliceObj.set(k, getValue(val, k));
+            groupObj.set(k, getValue(val, k));
           } else {
-            sliceObj[k] = getValue(val, k);
+            groupObj[k] = getValue(val, k);
           }
           cov.add(k); // Mark as covered now
         }
@@ -309,11 +309,11 @@ function* matchObjectLike(n, val, ctx, typeCheck) {
             break;
           }
           if (vMatches) {
-            // Add to slice
+            // Add to group
             if (typeCheck === isMap) {
-              sliceObj.set(k, getValue(val, k));
+              groupObj.set(k, getValue(val, k));
             } else {
-              sliceObj[k] = getValue(val, k);
+              groupObj[k] = getValue(val, k);
             }
             cov.add(k);
           }
@@ -323,22 +323,22 @@ function* matchObjectLike(n, val, ctx, typeCheck) {
       // Check count constraints if any
       if (kv.pat.kvs.length > 0 && kv.pat.kvs[0].count) {
         const count = kv.pat.kvs[0].count;
-        const size = typeCheck === isMap ? sliceObj.size : Object.keys(sliceObj).length;
+        const size = typeCheck === isMap ? groupObj.size : Object.keys(groupObj).length;
         if (!(size >= count.min && (count.max === Infinity || size <= count.max))) {
           return;
         }
       }
     }
 
-    // Bind the slice to the variable
-    const ok = ctx.env.bindOrCheck(kv.name, sliceObj, ctx.opts);
+    // Bind the group to the variable
+    const ok = ctx.env.bindOrCheck(kv.name, groupObj, ctx.opts);
     if (!ok) return;
     recordVarOcc(ctx, kv.name);
   }
 
   // Counts (post-check, non-consuming)
   for (const kv of n.kvs) {
-    if (kv.type === "BindSlice") continue; // Skip BindSlice in count check
+    if (kv.type === "BindGroup") continue; // Skip BindGroup in count check
     if (kv.count) {
       const keys = enumerateKeys(val, k => keyMatches(kv.kPat, k, ctx));
       let cnt = 0;
@@ -362,7 +362,7 @@ function* matchObjectLike(n, val, ctx, typeCheck) {
 }
 
 function* matchNode(n, val, ctx) {
-  // ctx: { env: Env, path: any[], captures: {arrSlices:[], objKeys:[], objVals:[]}, opts }
+  // ctx: { env: Env, path: any[], captures: {arrGroups:[], objKeys:[], objVals:[]}, opts }
   switch (n.type) {
     /* ---- Variables & Bindings ---- */
     case "Var": {
@@ -474,7 +474,7 @@ function* matchNode(n, val, ctx) {
     case "Array": {
       if (!isArr(val)) return;
       // Build element program
-      const elems = n.elems.slice();
+      const elems = n.elems.group();
       // Lower Spread elements to Quant(Any, {0,Inf}, lazy)
       const lowered = elems.map(e => e.type === "Spread"
         ? { type: "Quant", sub: { type: "Any", span: e.span }, min: 0, max: Infinity, greedy: false, span: e.span }
@@ -489,17 +489,17 @@ function* matchNode(n, val, ctx) {
           return;
         }
         const el = lowered[i];
-        // Special case for ReplaceSlice: try any length slice (≥0) that matches its target
-        if (el.type === "ReplaceSlice") {
-          // Try slice lengths from 0..remaining (non-greedy)
+        // Special case for ReplaceGroup: try any length group (≥0) that matches its target
+        if (el.type === "ReplaceGroup") {
+          // Try group lengths from 0..remaining (non-greedy)
           for (let k = j; k <= val.length; k++) {
-            // Bind current slice window to target pattern
-            const subArr = val.slice(j, k);
+            // Bind current group window to target pattern
+            const subArr = val.group(j, k);
             for (const _ of matchNode(el.target, subArr, ctx)) {
-              // capture slice
-              ctx.captures.arrSlices.push(makeArraySlice(val, j, k));
+              // capture group
+              ctx.captures.arrGroups.push(makeArrayGroup(val, j, k));
               yield* matchFrom(i + 1, k);
-              ctx.captures.arrSlices.pop();
+              ctx.captures.arrGroups.pop();
             }
           }
           return;
@@ -529,7 +529,7 @@ function* matchNode(n, val, ctx) {
             }
 
             // Match current element of the subsequence
-            ctx.path.push({ kind: "array-slice", ref: val, start: pos, end: pos + 1 });
+            ctx.path.push({ kind: "array-group", ref: val, start: pos, end: pos + 1 });
             const snap = snapshotVarOcc(ctx.varOcc);
             for (const _ of matchNode(adjNode.elems[elemIdx], val[pos], ctx)) {
               yield* matchAdj(elemIdx + 1, pos + 1);
@@ -574,11 +574,11 @@ function* matchNode(n, val, ctx) {
           return;
         }
 
-        // Special case for Bind with array slice patterns
+        // Special case for Bind with array group patterns
         if (el.type === "Bind") {
           const pat = el.pat;
 
-          // Case 1: $x:(sequence) - fixed-length slice binding
+          // Case 1: $x:(sequence) - fixed-length group binding
           if (pat.type === "Adj" || (pat.type === "Group" && pat.sub && pat.sub.type === "Adj")) {
             const adjNode = pat.type === "Adj" ? pat : pat.sub;
             const seqLen = adjNode.elems.length;
@@ -587,20 +587,20 @@ function* matchNode(n, val, ctx) {
             // Match each element in the sequence
             function* matchSeq(elemIdx, pos) {
               if (elemIdx === seqLen) {
-                // All elements matched - bind to slice
-                const slice = val.slice(j, pos);
-                const ok = ctx.env.bindOrCheck(el.name, slice, ctx.opts);
+                // All elements matched - bind to group
+                const group = val.group(j, pos);
+                const ok = ctx.env.bindOrCheck(el.name, group, ctx.opts);
                 if (!ok) return;
 
                 // Record occurrence
-                const sliceRef = { kind: "array-slice", ref: val, start: j, end: pos };
+                const groupRef = { kind: "array-group", ref: val, start: j, end: pos };
                 const occArr = ctx.varOcc.get(el.name);
                 if (occArr) {
-                  occArr.push(sliceRef);
+                  occArr.push(groupRef);
                   yield* matchFrom(i + 1, pos);
                   occArr.pop();
                 } else {
-                  ctx.varOcc.set(el.name, [sliceRef]);
+                  ctx.varOcc.set(el.name, [groupRef]);
                   yield* matchFrom(i + 1, pos);
                   ctx.varOcc.delete(el.name);
                 }
@@ -621,7 +621,7 @@ function* matchNode(n, val, ctx) {
                   }
                   if (curPos >= val.length) return;
 
-                  ctx.path.push({ kind: "array-slice", ref: val, start: curPos, end: curPos + 1 });
+                  ctx.path.push({ kind: "array-group", ref: val, start: curPos, end: curPos + 1 });
                   for (const _ of matchNode(sub, val[curPos], ctx)) {
                     yield* matchReps(count - 1, curPos + 1);
                   }
@@ -641,7 +641,7 @@ function* matchNode(n, val, ctx) {
               }
 
               // Normal element: match single array element
-              ctx.path.push({ kind: "array-slice", ref: val, start: pos, end: pos + 1 });
+              ctx.path.push({ kind: "array-group", ref: val, start: pos, end: pos + 1 });
               const snap = snapshotVarOcc(ctx.varOcc);
               for (const _ of matchNode(elem, val[pos], ctx)) {
                 yield* matchSeq(elemIdx + 1, pos + 1);
@@ -654,7 +654,7 @@ function* matchNode(n, val, ctx) {
             return;
           }
 
-          // Case 2: $x:pat* or $x:pat+ - variable-length slice binding via quantifier
+          // Case 2: $x:pat* or $x:pat+ - variable-length group binding via quantifier
           if (pat.type === "Quant" || pat.type === "Spread" || (pat.type === "Group" && pat.sub && (pat.sub.type === "Quant" || pat.sub.type === "Spread"))) {
             const innerPat = pat.type === "Group" ? pat.sub : pat;
             const quantPat = innerPat.type === "Spread"
@@ -664,23 +664,23 @@ function* matchNode(n, val, ctx) {
             const { min, max, greedy, sub } = quantPat;
             const maxReps = Math.min(max, val.length - j);
 
-            // Match 'count' consecutive elements, then bind to slice
-            function* matchSliceReps(count, pos) {
+            // Match 'count' consecutive elements, then bind to group
+            function* matchGroupReps(count, pos) {
               if (count === 0) {
-                // Bind variable to the slice
-                const slice = val.slice(j, pos);
-                const ok = ctx.env.bindOrCheck(el.name, slice, ctx.opts);
+                // Bind variable to the group
+                const group = val.group(j, pos);
+                const ok = ctx.env.bindOrCheck(el.name, group, ctx.opts);
                 if (!ok) return;
 
                 // Record occurrence
-                const sliceRef = { kind: "array-slice", ref: val, start: j, end: pos };
+                const groupRef = { kind: "array-group", ref: val, start: j, end: pos };
                 const occArr = ctx.varOcc.get(el.name);
                 if (occArr) {
-                  occArr.push(sliceRef);
+                  occArr.push(groupRef);
                   yield* matchFrom(i + 1, pos);
                   occArr.pop();
                 } else {
-                  ctx.varOcc.set(el.name, [sliceRef]);
+                  ctx.varOcc.set(el.name, [groupRef]);
                   yield* matchFrom(i + 1, pos);
                   ctx.varOcc.delete(el.name);
                 }
@@ -689,9 +689,9 @@ function* matchNode(n, val, ctx) {
               if (pos >= val.length) return;
 
               // Match current element
-              ctx.path.push({ kind: "array-slice", ref: val, start: pos, end: pos + 1 });
+              ctx.path.push({ kind: "array-group", ref: val, start: pos, end: pos + 1 });
               for (const _ of matchNode(sub, val[pos], ctx)) {
-                yield* matchSliceReps(count - 1, pos + 1);
+                yield* matchGroupReps(count - 1, pos + 1);
               }
               ctx.path.pop();
             }
@@ -699,11 +699,11 @@ function* matchNode(n, val, ctx) {
             // Try different repetition counts based on greedy/lazy
             if (greedy) {
               for (let reps = maxReps; reps >= min; reps--) {
-                yield* matchSliceReps(reps, j);
+                yield* matchGroupReps(reps, j);
               }
             } else {
               for (let reps = min; reps <= maxReps; reps++) {
-                yield* matchSliceReps(reps, j);
+                yield* matchGroupReps(reps, j);
               }
             }
             return;
@@ -715,7 +715,7 @@ function* matchNode(n, val, ctx) {
         // Normal element: match single array element
         if (j >= val.length) return;
         // Push a concrete ref for breadcrumb and var occurrence capture
-        ctx.path.push({ kind: "array-slice", ref: val, start: j, end: j + 1 });
+        ctx.path.push({ kind: "array-group", ref: val, start: j, end: j + 1 });
         const snap = snapshotVarOcc(ctx.varOcc);
         for (const _ of matchNode(el, val[j], ctx)) {
           yield* matchFrom(i + 1, j + 1);
@@ -779,18 +779,18 @@ function* matchNode(n, val, ctx) {
     case "String":   if (atomEqString(n.value, val)) yield ctx.env; return;
     case "Regex":    if (regexFull(n.body, n.flags || "", val)) yield ctx.env; return;
 
-    /* ---- Replacement slice (in arrays) ---- */
-    case "ReplaceSlice": {
+    /* ---- Replacement group (in arrays) ---- */
+    case "ReplaceGroup": {
       // Handled inside Array case as a special element; here allow matching against
-      // a VALUE that is itself an array slice (when used outside arrays).
+      // a VALUE that is itself an array group (when used outside arrays).
       if (!isArr(val)) return;
       // Treat as matching any subarray non-greedily
       for (let end = 0; end <= val.length; end++) {
-        const sub = val.slice(0, end);
+        const sub = val.group(0, end);
         for (const _ of matchNode(n.target, sub, ctx)) {
-          ctx.captures.arrSlices.push(makeArraySlice(val, 0, end));
+          ctx.captures.arrGroups.push(makeArrayGroup(val, 0, end));
           yield ctx.env;
-          ctx.captures.arrSlices.pop();
+          ctx.captures.arrGroups.pop();
         }
       }
       return;
@@ -872,7 +872,7 @@ export function* matchAll(ast, input, opts = {}) {
       opts: semOpts,
       path: [],
       varOcc: new Map(),
-      captures: { arrSlices: [], objKeys: [], objVals: [] },
+      captures: { arrGroups: [], objKeys: [], objVals: [] },
     };
     for (const _ of matchNode(ast, input, baseCtx)) {
       yield makeSolution(baseCtx.env, baseCtx.varOcc, baseCtx.path);
@@ -887,9 +887,9 @@ export function* matchAll(ast, input, opts = {}) {
     const baseCtx = {
       env: new Env(opts.envSeed || null),
       opts: semOpts,
-      path: path.slice(),
+      path: path.group(),
       varOcc: new Map(),
-      captures: { arrSlices: [], objKeys: [], objVals: [] },
+      captures: { arrGroups: [], objKeys: [], objVals: [] },
     };
     for (const _ of matchNode(ast, v, baseCtx)) {
       results.push(makeSolution(baseCtx.env, baseCtx.varOcc, baseCtx.path));
@@ -904,14 +904,14 @@ export function* matchAll(ast, input, opts = {}) {
 function applyReplacements(root, captures, replacement) {
   // Build immutable copy with non-overlapping edits.
   // Strategy:
-  //  - Array slices: sort by (array identity, start). Apply left→right, skipping overlaps.
+  //  - Array groups: sort by (array identity, start). Apply left→right, skipping overlaps.
   //  - Object keys: change key names (if replacement is string or via fn) — here we’ll
   //    restrict replacement to values (ReplaceVal) for safety, and treat ReplaceKey as
   //    replacing the VALUE at those keys (common redaction use). If you truly want key
   //    renames, wire in a policy here.
   //  - Object values: straightforward replacement at (obj,key).
   const arrEdits = [];
-  for (const sl of captures.arrSlices) {
+  for (const sl of captures.arrGroups) {
     arrEdits.push({ kind: "arr", ref: sl.ref, start: sl.start, end: sl.end });
   }
   const valEdits = [];
@@ -935,7 +935,7 @@ function applyReplacements(root, captures, replacement) {
       const edits = arrEdits.filter(e => e.ref === node)
                             .sort((a, b) => a.start - b.start);
       if (edits.length === 0) return node;
-      const out = node.slice();
+      const out = node.group();
       let shift = 0;
       const applied = [];
       for (const e of edits) {
@@ -1006,7 +1006,7 @@ export class Pattern {
   matches(value, opts = {}) {
     if (!this._advanced) return this._core.matches(value, opts);
     const env = new Env(opts.initialEnv || null);
-    const ctx = { env, path: [], captures: { arrSlices: [], objKeys: [], objVals: [] }, opts };
+    const ctx = { env, path: [], captures: { arrGroups: [], objKeys: [], objVals: [] }, opts };
     for (const _ of matchNode(this._ast, value, ctx)) return true;
     return false;
   }
@@ -1017,7 +1017,7 @@ export class Pattern {
       return;
     }
     const env = new Env(opts.initialEnv || null);
-    const ctx = { env, path: [], captures: { arrSlices: [], objKeys: [], objVals: [] }, opts };
+    const ctx = { env, path: [], captures: { arrGroups: [], objKeys: [], objVals: [] }, opts };
     for (const _ of matchNode(this._ast, value, ctx)) {
       yield { scope: Object.fromEntries(env.map.entries()), captures: { ...ctx.captures } };
     }

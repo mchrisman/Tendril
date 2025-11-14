@@ -158,7 +158,7 @@ $name                      // shorthand for `$name:_` (Careful! Not `$name:_*`)
 [ $x $x:$y $y ]      ~= ['q','q','q']
 [ $x:($z $y) $y $z ] ~= ['r','q','q','r']
   
-$x:(keyPattern = valPattern)   // binds to the set (slice) of all matching key/value pairs; non-backtracking
+$x:(keyPattern = valPattern)   // binds to the set (group) of all matching key/value pairs; non-backtracking
 $k:keyPattern = $v:valPattern   // binds to an individual key or value. 
 ```
 
@@ -174,7 +174,7 @@ a+           === a*{1,}
 a?           === a*{0,1}
 a            === a*1
 a*{2,3}?     // lazy
-..          === _*?            // lazy wildcard slice
+..          === _*?            // lazy wildcard group
 
 // Multiple ellipses allowed. '..' is sugar for '_*?'.
 [a .. b .. c]  ~=  [a x y b z c]
@@ -184,11 +184,11 @@ a*{2,3}?     // lazy
 
 ## Quantifiers — Objects and Sets
 
-Each object assertion matches a **slice** of key/value pairs, possibly overlapping, no backtracking.
+Each object assertion matches a **group** of key/value pairs, possibly overlapping, no backtracking.
 
 ```
-{{ pat1=_  $happy:(pat2=_) }}     // bind subset slice
-{{ a=_  b=_  $rest:.. }}      // bind residual slice
+{{ pat1=_  $happy:(pat2=_) }}     // bind subset group
+{{ a=_  b=_  $rest:.. }}      // bind residual group
 ```
 
 ---
@@ -243,8 +243,8 @@ Terminology for possible interpretations of {kp=vp}:
    
 Proposal:
 1. Get rid of the current match semantics (Existential) and replace with ?= (Validation) and = (Strong).
-2. Permit ( ) to designate object slices.  
-3. When, syntactically, the symbol is being bound to key value *pairs*, not to keys or to values, then we are binding a slice. This is greedy, non-backtracking, non-iterating. The symbol cannot be used as an index in paths, and cannot unify with a single value symbol. 
+2. Permit ( ) to designate object groups.  
+3. When, syntactically, the symbol is being bound to key value *pairs*, not to keys or to values, then we are binding a group. This is greedy, non-backtracking, non-iterating. The symbol cannot be used as an index in paths, and cannot unify with a single value symbol. 
 4. When, syntactically, the symbol is being bound to a key (or to a value), it is binding an individual object. This is also greedy and non-backtracking, but it can cause iteration. 
 5. Optimize against combinatorial explosion later,  one strategy being to not actually realize the Cartesian product unless it becomes necessary. 
 6. '..' means the residue of k/v pairs that didn't match any assertion.
@@ -305,24 +305,24 @@ D. { kp = vp } // Both assertions (A & B)
 
 { $kv:($k:kp=>vp) } // *If* a key matches kp, *then* its value must match vp
    Probable binding strategy:
-      $k = slice of keys that matched
-      $kv = slice of kv pairs that matched
+      $k = group of keys that matched
+      $kv = group of kv pairs that matched
     Alternate binding strategy:
         $k = iterate over single values that matched
         $kv = iterate over single values that matched
 
 { $kv:($k:kp?=vp) } // *Some* k,v pair must match kp,vp (existing behavior)
     Probable binding strategy:
-        $k = slice of keys that matched
-        $kv = slice of kv pairs that matched
+        $k = group of keys that matched
+        $kv = group of kv pairs that matched
     Alternate binding strategy:
         $k = iterate over single values that matched
         $kv = iterate over single values that matched
         
 { $kv:($k:kp=vp) } // *All* k,v pairs must match kp,vp
    Probable binding strategy:
-      $k = slice of keys that matched
-      $kv = slice of kv pairs that matched
+      $k = group of keys that matched
+      $kv = group of kv pairs that matched
     Alternate binding strategy:
         $k = iterate over single values that matched
         $kv = iterate over single values that matched
@@ -330,7 +330,7 @@ D. { kp = vp } // Both assertions (A & B)
 
 (placeholder syntax)
 
-bind slices:
+bind groups:
    { @kv:(@k:kp=vp) }
    [ @x:(a b|_) c]   
 bind individual values (with backtracking)
@@ -339,13 +339,13 @@ bind individual values (with backtracking)
 
 Drawback: yet another syntax to learn. But I think we need both modes.
 
-Alternate: indicate slice assertions explicitly
+Alternate: indicate group assertions explicitly
     {
       $k1:k1=v1             # may be wildcard; individual with backtracking 
-         ($ks=$vs of $k2:k2=v2, $k3:k3=v3)  # $ks is an object slice; $k2 and $k3 are arrays
+         ($ks=$vs of $k2:k2=v2, $k3:k3=v3)  # $ks is an object group; $k2 and $k3 are arrays
     }
 
-bind slices (sets of keys) :
+bind groups (sets of keys) :
    { $kv:{$k:kp=vp} }
    [ $x:(a b|_) c]   
 bind individual values (with backtracking)
@@ -356,8 +356,8 @@ bind individual values (with backtracking)
 ```
 
 Or how about this?
-1. We don't distinguish between a variable that captures an object and a variable that captures an object slice (no "@" signifier).
-2. When, syntactically, the symbol is being bound to key value *pairs*, not to keys or to values, then we are binding a slice. This is greedy, non-backtracking, non-iterating. The symbol cannot be used as an index in paths, and cannot unify with a single value symbol. 
+1. We don't distinguish between a variable that captures an object and a variable that captures an object group (no "@" signifier).
+2. When, syntactically, the symbol is being bound to key value *pairs*, not to keys or to values, then we are binding a group. This is greedy, non-backtracking, non-iterating. The symbol cannot be used as an index in paths, and cannot unify with a single value symbol. 
 
 ```
     { a=_ $x:( c=_ /e|f/=_ ) }  ~=  {a:1 c:2 e:3 f:4}  => one solution: [ $x:{c:2 e:3 f:4} ] 
@@ -405,13 +405,13 @@ This is an **Array Pattern**.  It matches this **Array**.
 ```
     [a b 123]                    matches ["a", "b", 123]
 ```
-Each piece of the pattern matches a **slice** (contiguous subsequence) of the array. This is an **Array Slice**.  Parentheses are for grouping. They don't create substructures.
+Each piece of the pattern matches a **group** (contiguous subsequence) of the array. This is an **Array Group**.  Parentheses are for grouping. They don't create substructures.
 ```
     [ a (b c)*{2} d? ..]           matches ["a", "b", "c", "b", "c", "f"]
-       slice 1: a           matches slice   "a"
-       slice 2: (b c)*{2}   matches slice        "b", "c", "b", "c"
-       slice 3: d?          matches slice                          
-       slice 4: ..          matches slice                            "f"     
+       group 1: a           matches group   "a"
+       group 2: (b c)*{2}   matches group        "b", "c", "b", "c"
+       group 3: d?          matches group                          
+       group 4: ..          matches group                            "f"     
     
 ```
 
@@ -492,49 +492,49 @@ LOOKAHEAD_SINGLETON
 
 # -----------------------------
 
-# Inside arrays, SPACE is the adjacency operator between SLICE elements.
+# Inside arrays, SPACE is the adjacency operator between GROUP elements.
 
 ARRAY             <- '[' WS ARRAY_BODY? WS ']'
 
 ARRAY_BODY        <- ARRAY_ELEM (ADJ ARRAY_ELEM)*
 ADJ               <- SPACE # EXACTLY space (not '&') as sequence
 
-ARRAY_ELEM        <- LOOKAHEAD_SLICE
-/ BIND_SLICE
-/ SLICE
+ARRAY_ELEM        <- LOOKAHEAD_GROUP
+/ BIND_GROUP
+/ GROUP
 
-# Slice building blocks (can be repeated with quantifiers)
+# Group building blocks (can be repeated with quantifiers)
 
-SLICE             <- DOTS
-/ GROUPED_SLICE QUANT?
-/ SINGLE_SLICE QUANT?
+GROUP             <- DOTS
+/ GROUPED_GROUP QUANT?
+/ SINGLE_GROUP QUANT?
 
-# '..' sugar == lazy wildcard slice == _*?
+# '..' sugar == lazy wildcard group == _*?
 
 DOTS              <- '..'
 
-GROUPED_SLICE     <- '(' WS ARRAY_ELEM (ADJ ARRAY_ELEM)* WS ')'  # mere grouping, not nested array
+GROUPED_GROUP     <- '(' WS ARRAY_ELEM (ADJ ARRAY_ELEM)* WS ')'  # mere grouping, not nested array
 
-SINGLE_SLICE      <- ARRAY_ATOM
+SINGLE_GROUP      <- ARRAY_ATOM
 
-# Things that may appear as an array slice atom
+# Things that may appear as an array group atom
 
-ARRAY_ATOM        <- LOOKAHEAD_SLICE_ATOM
+ARRAY_ATOM        <- LOOKAHEAD_GROUP_ATOM
 / BINDABLE_ATOM
 / SINGLETON_ATOM
 
-# Lookaheads at slice granularity
+# Lookaheads at group granularity
 
-LOOKAHEAD_SLICE   <- '(?=' WS ARRAY_ELEM WS ')' WS ARRAY_ELEM
+LOOKAHEAD_GROUP   <- '(?=' WS ARRAY_ELEM WS ')' WS ARRAY_ELEM
 / '(?!' WS ARRAY_ELEM WS ')' WS ARRAY_ELEM
 
-LOOKAHEAD_SLICE_ATOM
+LOOKAHEAD_GROUP_ATOM
 <- '(?=' WS ARRAY_ELEM WS ')' WS ARRAY_ELEM
 / '(?!' WS ARRAY_ELEM WS ')' WS ARRAY_ELEM
 
-# Bind a slice (e.g., $rest:.. or $x:(a b))
+# Bind a group (e.g., $rest:.. or $x:(a b))
 
-BIND_SLICE        <- SYMBOL WS? ':' WS SLICE
+BIND_GROUP        <- SYMBOL WS? ':' WS GROUP
 
 # Bindable atoms may be bare symbols bound to implied wildcard, or SYMBOL:pattern
 
@@ -582,15 +582,15 @@ OBJECT_BODY       <- OBJECT_ASSERTION (WS OBJECT_ASSERTION)*
 OBJECT_ASSERTION  <- DOTS_OBJ
 / KV_ASSERTION
 / PATH_ASSERTION
-/ BIND_OBJ_SLICE
+/ BIND_OBJ_GROUP
 
-DOTS_OBJ          <- '..' # allow unknown keys (residual slice)
+DOTS_OBJ          <- '..' # allow unknown keys (residual group)
 
-# Bind an object slice (subset of kvs matched by inner assertion)
+# Bind an object group (subset of kvs matched by inner assertion)
 
-BIND_OBJ_SLICE    <- SYMBOL WS? ':' WS OBJ_SLICE_CORE
+BIND_OBJ_GROUP    <- SYMBOL WS? ':' WS OBJ_GROUP_CORE
 
-OBJ_SLICE_CORE    <- DOTS_OBJ
+OBJ_GROUP_CORE    <- DOTS_OBJ
 / KV_ASSERTION
 / PATH_ASSERTION
 
@@ -601,7 +601,7 @@ KV_ASSERTION      <- KEY_PAT WS? '=' WS? VAL_PAT WS? COUNT?
 KEY_PAT           <- SINGLE_KEY
 VAL_PAT           <- SINGLE_VAL
 
-# Singletons only (not slices) for key/value patterns:
+# Singletons only (not groups) for key/value patterns:
 
 SINGLE_KEY        <- BIND_SINGLETON / LITERAL / UNDERSCORE / GROUPED / REGEX / BAREWORD
 SINGLE_VAL        <- BIND_SINGLETON / SINGLETON

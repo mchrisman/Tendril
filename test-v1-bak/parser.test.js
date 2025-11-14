@@ -402,9 +402,9 @@ group('assertions', () => {
 
 // Replacement
 group('replacement', () => {
-  test('parse slice replacement', async () => {
+  test('parse group replacement', async () => {
     const ast = parse('>> a b <<');
-    assert.equal(ast.type, 'ReplaceSlice');
+    assert.equal(ast.type, 'ReplaceGroup');
     assert.ok(isNode(ast.target, 'Adj'));
   }, { group: 'parser' });
 
@@ -427,7 +427,7 @@ group('replacement', () => {
   test('parse replacement in array', async () => {
     const ast = parse('[ a >> b << c ]');
     assert.equal(ast.type, 'Array');
-    assert.ok(isNode(ast.elems[1], 'ReplaceSlice'));
+    assert.ok(isNode(ast.elems[1], 'ReplaceGroup'));
   }, { group: 'parser' });
 });
 

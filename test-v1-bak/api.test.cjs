@@ -23,7 +23,7 @@ async function loadAPI() {
 }
 
 // Parse command line arguments
-const args = process.argv.slice(2);
+const args = process.argv.group(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--filter' && args[i + 1]) {
     require('./framework.js').runner.filter(args[i + 1]);
@@ -231,7 +231,7 @@ group('Occurrence tracking (Solution.at)', () => {
     assert.ok(sol.at.x);
     assert.ok(sol.at.y);
     assert.equal(sol.at.x.length, 1);
-    assert.equal(sol.at.x[0].kind, 'array-slice');
+    assert.equal(sol.at.x[0].kind, 'array-group');
     assert.equal(sol.at.x[0].start, 0);
     assert.equal(sol.at.x[0].end, 1);
   });

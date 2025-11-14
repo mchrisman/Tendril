@@ -11,7 +11,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
 
 * **Pattern AST**
 
-  * Node kinds: `Atom(Number|Bool|String|Regex|Any)`, `Seq`, `Array`, `Object`, `Set`, `Group`, `Alt`, `And`, `Quant`, `Bind(name, pat)`, `Var(name)`, `Lookahead(p)`, `NLookahead(p)`, `Path(seg*, leafKV)`, `ReplaceSlice(p)`, `ReplaceKey(k)`, `ReplaceVal(v)`, `As(typeName)`.
+  * Node kinds: `Atom(Number|Bool|String|Regex|Any)`, `Seq`, `Array`, `Object`, `Set`, `Group`, `Alt`, `And`, `Quant`, `Bind(name, pat)`, `Var(name)`, `Lookahead(p)`, `NLookahead(p)`, `Path(seg*, leafKV)`, `ReplaceGroup(p)`, `ReplaceKey(k)`, `ReplaceVal(v)`, `As(typeName)`.
   * Every node carries a **source span** for debug maps.
 
 * **Input value model**
@@ -32,7 +32,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
   * ```
     State {
       // bindings
-      env: Map<Var,ValueOrSlice>
+      env: Map<Var,ValueOrGroup>
       // backtrack trail for env changes
       trail: Stack<(Var, oldValue | Unbound)>
       // for arrays
@@ -40,7 +40,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
       // for object "coverage"
       coveredKeys: BitSet | Set<KeyId> // only used when {..} without ".."
       // captures for replacement
-      captures: { slices: [SliceRef], keys: [KeyRef], vals: [ValRef] }
+      captures: { groups: [GroupRef], keys: [KeyRef], vals: [ValRef] }
       // debug
       path: Frame[]        // stack of (nodeSpan, inputRef)
     }
@@ -58,10 +58,10 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
     * If unbound → set.
     * If bound → require deep-equality using strict equality rules.
     * Record old state on `trail` for rollback.
-  * Slice binding stores **range/keys** not copied values:
+  * Group binding stores **range/keys** not copied values:
 
-    * Array: `Slice(startIdx, endIdxExclusive)`.
-    * Object: `SliceKeys([keyIds])`.
+    * Array: `Group(startIdx, endIdxExclusive)`.
+    * Object: `GroupKeys([keyIds])`.
 
 * **Backtracking & choice points**
 
@@ -92,9 +92,9 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
   * Without `..`: require `len == k` after expanding quantifiers/groups.
   * With `..`: allow trailing slack; equivalently match `p1 p2 .. pk` starting at `index=0` and then `.. === _*?` absorbs the rest.
 * `Quant` on groups applies to the **compiled sub-generator**.
-* Slice bindings:
+* Group bindings:
 
-  * `>> a b c <<` records `Slice(start, end)` when that sub-sequence matches.
+  * `>> a b c <<` records `Group(start, end)` when that sub-sequence matches.
 
 ## Objects (unordered, non-consuming kv checks)
 
@@ -110,7 +110,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
 * **Counting `#`**:
 
   * `k=v #{m,n}` means: **count** `{ k in keys | kPat =~ k && vPat =~ obj[k] } ∈ [m,n]`. Count is by keys, not matches; overlapping regexes do **not** double-count one key.
-* Slice replacements:
+* Group replacements:
 
   * `>> k << = v` marks matching **keys** (by reference) for replacement.
   * `k = >> v <<` marks **values** (by reference) for replacement.
@@ -125,7 +125,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
 
 ## Bindings & scope
 
-* `$x:pat` runs `pat`, then binds `$x` to the matched **value or slice**.
+* `$x:pat` runs `pat`, then binds `$x` to the matched **value or group**.
 * `$x` alone is shorthand `$x:_`.
 * **Branch-local**: In alternations/quantifiers, bindings are tentative; only committed along the successful path (trail handles this).
 * **Lookaheads** don’t commit bindings.
@@ -155,7 +155,7 @@ Nice—this maps cleanly to a backtracking matcher with transactional bindings. 
   1. `findAll(input)` yields `Match { env, locations }`, where `locations` contains concrete references: `(arrRef, start, end)`, `(objRef, keyId)`, `(objRef, keyId for value)`.
   2. Apply replacements **non-overlapping** and **left-to-right by source order**:
 
-     * Arrays: sort by `(arrayIdentity, start)`. Skip any slice that overlaps a previously applied one.
+     * Arrays: sort by `(arrayIdentity, start)`. Skip any group that overlaps a previously applied one.
      * Objects: distinct keys—no overlap; if multiple patterns mark the same key/value, apply once.
   3. Replacement value can be any runtime value (not just string).
 * `replaceAll(pattern, repl)`:
@@ -274,7 +274,7 @@ def bind(name, m):
     if bound is UNBOUND:
       for st1 in m(inp, st):
         st1.trail.push((name, UNBOUND))
-        st1.env[name] = valueFromInput(inp, st1)  # or slice ref
+        st1.env[name] = valueFromInput(inp, st1)  # or group ref
         yield st1
         # binding kept for caller; backtracking will rollback
     else:
@@ -287,7 +287,7 @@ def bind(name, m):
 # Debuggability
 
 * Every AST node carries `span`. On entry/exit/fail, emit `DebugEvent { span, inputPath, action }`.
-* Maintain `path` with `(span, inputRef)` frames; invert to source map slices.
+* Maintain `path` with `(span, inputRef)` frames; invert to source map groups.
 
 # Complexity & safety
 
@@ -353,7 +353,7 @@ Below is a concrete shape for your matcher-VM.
 * **COVER**: set of covered keys (for anchored objects).
 * **BK**: backtrack stack of frames `(ip, val, arridx, envTrail, coverSnapshot)`.
 * **FRAMES**: call-like frames for vertical paths (to hold path progress).
-* **CAPS**: replacement targets (slice/key/value refs).
+* **CAPS**: replacement targets (group/key/value refs).
 
 # Core instruction set (sketch)
 
@@ -379,13 +379,13 @@ Below is a concrete shape for your matcher-VM.
 ## Bindings
 
 * `BIND name` — If `$name` unbound, bind to `VAL`; else require equality with existing.
-* `BIND_SLICE name` — Bind a slice reference (array range or object key-set).
+* `BIND_GROUP name` — Bind a group reference (array range or object key-set).
 
 ## Arrays
 
 * `ENTER_ARR` — Ensure `VAL` is array; push `(VAL, ARRIDX=0)` on FRAMES.
 * `ELEM_MATCH subprog` — Run `subprog` against `VAL[ARRIDX]`; on success `ARRIDX++`.
-* `SLICE_BEGIN` / `SLICE_END` — Mark slice start/end around subsequent matches.
+* `GROUP_BEGIN` / `GROUP_END` — Mark group start/end around subsequent matches.
 * `ARR_AT idx` — Set `VAL = VAL[idx]` (for `[i]` in vertical paths).
 * `ARR_ANCHORED_END` — For anchored array, require `ARRIDX == len`, else `FAIL`.
 * `ARR_SPREAD` — Implements `..` (equiv. `_ *?`): `SPLIT(skip, use)` to choose empty vs consume.
@@ -480,7 +480,7 @@ Sketch:
 
 Notes: `MATCH_VAL` updates `COVER` for anchoring but counting uses **distinct keys**; one key can satisfy multiple kv-patterns, but counts are per key.
 
-# Replacement slices
+# Replacement groups
 
 Pattern: `{ (_.)*password= >>value<< }`
 

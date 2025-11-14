@@ -18,7 +18,7 @@ const { spawn } = require('child_process');
 const testDir = __dirname;
 
 // Parse command line arguments
-const args = process.argv.slice(2);
+const args = process.argv.group(2);
 const options = {
   filter: null,
   group: null,

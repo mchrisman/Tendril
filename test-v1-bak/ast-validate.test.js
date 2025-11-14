@@ -146,10 +146,10 @@ group('quantifier validation', () => {
 
 // Replacement validation
 group('replacement validation', () => {
-  test('validate single slice replacement', async () => {
+  test('validate single group replacement', async () => {
     const ast = parseAndValidate('>> a b <<');
     assert.ok(ast);
-    assert.equal(ast.type, 'ReplaceSlice');
+    assert.equal(ast.type, 'ReplaceGroup');
   }, { group: 'validate' });
 
   test('validate single key replacement', async () => {

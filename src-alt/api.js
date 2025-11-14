@@ -24,8 +24,8 @@
 //     //     // where the binding occurred:
 //     //     //   'value'  -> bound to a value position
 //     //     //   'key'    -> bound to an object key (enables key rename)
-//     //     //   'slice'  -> multi-item slice (arrays) or kv-slice (objects)
-//     //     site: 'value' | 'key' | 'slice',
+//     //     //   'group'  -> multi-item group (arrays) or kv-group (objects)
+//     //     site: 'value' | 'key' | 'group',
 //     //     // optional: a stable numeric "occurrence id" per binding, if helpful
 //     //   }
 //   }
@@ -72,22 +72,22 @@ export function Tendril(pattern, options = {}) {
           }
         }
 
-        if (bind.site === 'slice' && norm.value) {
-          // slice replacement (array/object)
-          const slice = bind.slice || {};
-          if (slice.type === 'array') {
+        if (bind.site === 'group' && norm.value) {
+          // group replacement (array/object)
+          const group = bind.group || {};
+          if (group.type === 'array') {
             occurrences.push({
-              kind: 'splice-slice',
-              pathToArray: slice.pathToArray,
-              start: slice.start,
-              deleteCount: slice.end - slice.start,
+              kind: 'splice-group',
+              pathToArray: group.pathToArray,
+              start: group.start,
+              deleteCount: group.end - group.start,
               insert: toArray(norm.value(env)),
             });
-          } else if (slice.type === 'object') {
+          } else if (group.type === 'object') {
             occurrences.push({
-              kind: 'replace-obj-slice',
-              pathToObject: slice.pathToObject,
-              keys: slice.keys.slice(),
+              kind: 'replace-obj-group',
+              pathToObject: group.pathToObject,
+              keys: group.keys.group(),
               replacement: toObject(norm.value(env)),
             });
           } else {
@@ -124,10 +124,10 @@ export function Tendril(pattern, options = {}) {
         setAtPath(root, op.path, op.value);
       } else if (op.kind === 'rename-key') {
         renameKeyAtPath(root, op.path, op.oldKey, op.newKey);
-      } else if (op.kind === 'splice-slice') {
+      } else if (op.kind === 'splice-group') {
         const arr = getAtPath(root, op.pathToArray);
         if (Array.isArray(arr)) arr.splice(op.start, op.deleteCount, ...op.insert);
-      } else if (op.kind === 'replace-obj-slice') {
+      } else if (op.kind === 'replace-obj-group') {
         const obj = getAtPath(root, op.pathToObject);
         if (obj && typeof obj === 'object') {
           // remove covered keys, then merge replacement keys
@@ -179,7 +179,7 @@ function setAtPath(root, path, value) {
   if (!Array.isArray(path) || path.length === 0) {
     throw new Error('Cannot set empty path');
   }
-  const parent = getAtPath(root, path.slice(0, -1));
+  const parent = getAtPath(root, path.group(0, -1));
   const last = path[path.length - 1];
   if (last.type === 'index' && Array.isArray(parent)) parent[last.key] = value;
   else if (isObject(parent)) parent[last.key] = value;
@@ -194,7 +194,7 @@ function getAtPath(root, path) {
   return cur;
 }
 
-function parentPath(path) { return path && path.length ? path.slice(0, -1) : []; }
+function parentPath(path) { return path && path.length ? path.group(0, -1) : []; }
 function getLastKeyFromPath(path){ return path && path.length ? path[path.length-1].key : undefined; }
 
 function renameKeyAtPath(root, path, oldKey, newKey) {
@@ -212,7 +212,7 @@ function isObject(x){ return x!==null && typeof x==='object' && !Array.isArray(x
 function depthOfOp(op){
   if (op.kind === 'set-value') return op.path.length;
   if (op.kind === 'rename-key') return op.path.length + 1;
-  if (op.kind === 'splice-slice') return op.pathToArray.length + 1;
-  if (op.kind === 'replace-obj-slice') return op.pathToObject.length + 1;
+  if (op.kind === 'splice-group') return op.pathToArray.length + 1;
+  if (op.kind === 'replace-obj-group') return op.pathToObject.length + 1;
   return 0;
 }

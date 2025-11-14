@@ -155,7 +155,7 @@ true, false                            // boolean literal
 _                                      // any single object or primitive
 ```
    
-## Slices, grouping, containers
+## Groups, grouping, containers
 
 ```
 a b c                               // 3 patterns in a consecutive sequence (only appears within arrays)
@@ -170,7 +170,7 @@ a=b c=d e=f                         // 3 key/value patterns present simultaneous
 a b c                               // 3 Set members (only appears within Sets)
 {{ a b c }}                         // 1 pattern (matching a Set)
 
->> a b c <<                         // Designate a slice to be replaced
+>> a b c <<                         // Designate a group to be replaced
 >> k << = v                         // Designate a key to be replaced
 k = >> v <<                         // Designate a value to be replaced
 ```
@@ -249,7 +249,7 @@ and if you want to bind the repetition, you can use parentheses: `$x:(_+)`.
    [$x:/ab/+] !=~ [ a b ]    // x must be consistent; it can't be 'a' on the first repetition and 'b' on the second.
    [ _+ ]     =~ [ a b ]    // but the anonymous wildcard can be.
 
-   [$x:(/ab/+)] =~ [ b a b a ]    // x=Slice(b a)
+   [$x:(/ab/+)] =~ [ b a b a ]    // x=Group(b a)
 
 ```
 ## Assertions
@@ -282,7 +282,7 @@ Array quantifiers can be used on the `"kPat."` part of the construct:
 
 Compiles to immutable Matcher generator subclasses in the style typical of RegEx implementations, with backtracking,
 scope (symbol binding) tracking, source map for debugging, pruning of branches when bound symbol constraints
-are encountered. API supports iterating over all matches (giving the symbol bindings), optional pre-initialized symbols, symbols that bind to slices, e.g. `Pattern("_ $x:( _ _ )")`. Symbol binding works as expected within repetitions/alternations. 
+are encountered. API supports iterating over all matches (giving the symbol bindings), optional pre-initialized symbols, symbols that bind to groups, e.g. `Pattern("_ $x:( _ _ )")`. Symbol binding works as expected within repetitions/alternations. 
 
 ---
 
@@ -314,11 +314,11 @@ Pattern('{
 Repeated ellipses are redundant and inefficient, and the compiler will either give a warning or optimize it away:
 [ .. .. a] === [ ..* a ] === [ .. a ]
 
-// Matches with x=Slice(b a), the identical slice in two different positions
+// Matches with x=Group(b a), the identical group in two different positions
 [$x:(/ab/+) .. $x:(_ _)] =~ [ b a b a other stuff b a]
 
 // Fails to match:
-// the first $x is constrained to be a slice found at the start of the array, therefore starting with b;
+// the first $x is constrained to be a group found at the start of the array, therefore starting with b;
 // the second $x is constrained to be a singleton found at the end of the array, therefore equal to a;
 // so there is no way for the second $x to be the same as the first $x
 [$x:(/ab/+) .. $x] !=~ [ b a b a other stuff b a]

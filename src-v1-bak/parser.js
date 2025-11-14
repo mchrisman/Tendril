@@ -396,7 +396,7 @@ class Parser {
     let spreadCount = 0;
 
     while (!this.at(T.RBRACE)) {
-      // Check for slice binding: $var:(kv-pattern) or $var:..
+      // Check for group binding: $var:(kv-pattern) or $var:..
       if (this.at(T.DOLLAR)) {
         const dollarPos = this.i;
         const dollar = this.eat(T.DOLLAR);
@@ -412,11 +412,11 @@ class Parser {
             const span = {start: dollar.span.start, end: ellipsis.span.end};
             const varNode = node("Var", {start: dollar.span.start, end: nameTok.span.end}, {name: nameTok.value});
             const spreadNode = node("Spread", ellipsis.span, {});
-            kvs.push(node("BindSlice", span, {name: varNode.name, pat: spreadNode}));
+            kvs.push(node("BindGroup", span, {name: varNode.name, pat: spreadNode}));
             hasSpread = true;
             spreadCount++;
           } else if (this.at(T.LPAREN)) {
-            // $var:(kv-assertions) - bind KV slice
+            // $var:(kv-assertions) - bind KV group
             const parenStart = this.eat(T.LPAREN).span.start;
             const innerKvs = [];
             let innerHasSpread = false;
@@ -430,21 +430,21 @@ class Parser {
                 if (res.kind === "KV" || res.kind === "ReplaceKey" || res.kind === "ReplaceVal") {
                   innerKvs.push(res.node);
                 } else {
-                  throw this.err("Unexpected KV form in slice binding", this.cur().span.start);
+                  throw this.err("Unexpected KV form in group binding", this.cur().span.start);
                 }
               }
               this.opt(T.COMMA);
-              if (this.at(T.EOF)) throw this.err("Unterminated slice binding", parenStart);
+              if (this.at(T.EOF)) throw this.err("Unterminated group binding", parenStart);
             }
             const parenEnd = this.eat(T.RPAREN).span.end;
             const span = {start: dollar.span.start, end: parenEnd};
-            const slicePat = node("Object", {start: parenStart, end: parenEnd}, {
+            const groupPat = node("Object", {start: parenStart, end: parenEnd}, {
               kvs: innerKvs,
               anchored: !innerHasSpread,
               hasSpread: innerHasSpread,
               spreadCount: innerHasSpread ? 1 : 0
             });
-            kvs.push(node("BindSlice", span, {name: nameTok.value, pat: slicePat}));
+            kvs.push(node("BindGroup", span, {name: nameTok.value, pat: groupPat}));
           } else {
             // $var:k = v (binding just the key) - rewind and parse as normal KV
             this.i = dollarPos;

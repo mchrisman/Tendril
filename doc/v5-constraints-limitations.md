@@ -107,8 +107,8 @@ constraints = [
 
 ## Related Issues
 
-- Slice bindings (`@x`) are partially implemented but not fully integrated
-- Negation + slice interaction needs testing
+- Group bindings (`@x`) are partially implemented but not fully integrated
+- Negation + group interaction needs testing
 - Array negative lookaheads have a separate bug (see test suite)
 
 ---

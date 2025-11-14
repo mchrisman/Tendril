@@ -2,16 +2,16 @@
 // Requires AST produced by tendril-parser.js and helpers from microparser.js
 
 import {
-  bindScalar, bindSlice, cloneEnv, isBound,
+  bindScalar, bindGroup, cloneEnv, isBound,
 } from './microparser.js';
-import {Slice} from './tendril-api.js';
+import {Group} from './tendril-api.js';
 
 // ------------- Solution structure: {env, sites} -------------
 // Solution tracks both bindings (env) and where they were bound (sites)
 // Site kinds:
 //  - scalar: {kind: 'scalar', path: [], valueRef: obj}
-//  - slice (array): {kind: 'slice', path: [], sliceStart: n, sliceEnd: m, valueRefs: [obj1, ...]}
-//  - slice (object): {kind: 'slice', path: [], keys: ['a', ...], valueRefs: {a: obj1, ...}}
+//  - group (array): {kind: 'group', path: [], groupStart: n, groupEnd: m, valueRefs: [obj1, ...]}
+//  - group (object): {kind: 'group', path: [], keys: ['a', ...], valueRefs: {a: obj1, ...}}
 
 function newSolution() {
   return {env: new Map(), sites: new Map()};
@@ -32,15 +32,15 @@ function recordScalarSite(sol, varName, path, valueRef) {
   sol.sites.get(varName).push({kind: 'scalar', path: [...path], valueRef});
 }
 
-function recordSliceSite(sol, varName, path, sliceStart, sliceEnd, valueRefs) {
+function recordGroupSite(sol, varName, path, groupStart, groupEnd, valueRefs) {
   if (!sol.sites.has(varName)) {
     sol.sites.set(varName, []);
   }
   sol.sites.get(varName).push({
-    kind: 'slice',
+    kind: 'group',
     path: [...path],
-    sliceStart,
-    sliceEnd,
+    groupStart,
+    groupEnd,
     valueRefs: [...valueRefs],
   });
 }
@@ -206,10 +206,10 @@ function matchItem(item, node, path, sol, emit, ctx) {
       return;
     }
 
-    case 'SliceBind': {
-      // Slice binding can only appear in array/object contexts
+    case 'GroupBind': {
+      // Group binding can only appear in array/object contexts
       // If appearing at top level, treat as error
-      throw new Error('Slice binding @x cannot appear at top level');
+      throw new Error('Group binding @x cannot appear at top level');
     }
 
     case 'Arr': {
@@ -261,9 +261,9 @@ function matchArray(items, arr, path, sol, emit, ctx) {
       return;
     }
 
-    // Slice binding @x or @x:(pattern)
-    if (it.type === 'SliceBind') {
-      return matchArraySliceBind(it, ixItem, ixArr, sIn);
+    // Group binding @x or @x:(pattern)
+    if (it.type === 'GroupBind') {
+      return matchArrayGroupBind(it, ixItem, ixArr, sIn);
     }
 
     // Quantified item (from parser: Quant node)
@@ -277,7 +277,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
     // Lookahead — zero-width assertion at current position (unanchored)
     if (it.type === 'Look') {
       let matchedSol = null;
-      const remainingSlice = arr.slice(ixArr);
+      const remainingGroup = arr.group(ixArr);
 
       // Match the lookahead pattern against remaining array (unanchored at end)
       // For negative lookahead, clone to discard bindings
@@ -292,7 +292,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
         patternItems.push({type: 'Spread', quant: null}); // '..' with no quant
       }
 
-      matchArray(patternItems, remainingSlice, [...path, ixArr], testSol, (s2) => {
+      matchArray(patternItems, remainingGroup, [...path, ixArr], testSol, (s2) => {
         if (!matchedSol) matchedSol = s2;
       }, ctx);
 
@@ -313,26 +313,26 @@ function matchArray(items, arr, path, sol, emit, ctx) {
     }, ctx);
   }
 
-  function matchArraySliceBind(sliceBind, ixItem, ixArr, sIn) {
+  function matchArrayGroupBind(groupBind, ixItem, ixArr, sIn) {
     // @x matches 0+ consecutive items
     // @x:(pat) matches 0+ items where each matches pat
     const maxK = arr.length - ixArr;
 
     // For @x:(item1 item2? ...), match a sequence of items
-    if (sliceBind.pat.type === 'Seq') {
-      // Try each possible slice length and see if the Seq pattern matches
-      // GREEDY: try longer slices first
+    if (groupBind.pat.type === 'Seq') {
+      // Try each possible group length and see if the Seq pattern matches
+      // GREEDY: try longer groups first
       for (let k = maxK; k >= 0; k--) {
-        const testSlice = arr.slice(ixArr, ixArr + k);
+        const testGroup = arr.group(ixArr, ixArr + k);
 
-        matchArray(sliceBind.pat.items, testSlice, [...path, ixArr], sIn, (s2) => {
-          const slice = testSlice;
+        matchArray(groupBind.pat.items, testGroup, [...path, ixArr], sIn, (s2) => {
+          const group = testGroup;
           const s3 = cloneSolution(s2);
-          const sliceValue = Slice.array(...slice);
-          if (bindSlice(s3.env, sliceBind.name, sliceValue)) {
-            recordSliceSite(s3, sliceBind.name, path, ixArr, ixArr + k, slice);
+          const groupValue = Group.array(...group);
+          if (bindGroup(s3.env, groupBind.name, groupValue)) {
+            recordGroupSite(s3, groupBind.name, path, ixArr, ixArr + k, group);
             if (ctx.debug?.onBind) {
-              ctx.debug.onBind('slice', sliceBind.name, sliceValue);
+              ctx.debug.onBind('group', groupBind.name, groupValue);
             }
             stepItems(ixItem + 1, ixArr + k, s3);
           }
@@ -342,22 +342,22 @@ function matchArray(items, arr, path, sol, emit, ctx) {
     }
 
     // For @x:(pat*), validate using quantifier logic
-    if (sliceBind.pat.type === 'Quant') {
-      const {sub, min, max} = sliceBind.pat;
+    if (groupBind.pat.type === 'Quant') {
+      const {sub, min, max} = groupBind.pat;
       const effectiveMin = min !== null ? min : 0;
       const effectiveMax = max !== null ? max : Infinity;
 
       for (let k = 0; k <= maxK; k++) {
-        const slice = arr.slice(ixArr, ixArr + k);
+        const group = arr.group(ixArr, ixArr + k);
 
-        // Check if slice length satisfies quantifier bounds
-        if (slice.length < effectiveMin || slice.length > effectiveMax) continue;
+        // Check if group length satisfies quantifier bounds
+        if (group.length < effectiveMin || group.length > effectiveMax) continue;
 
         // Validate each item matches sub-pattern
         let allMatch = true;
-        for (let i = 0; i < slice.length; i++) {
+        for (let i = 0; i < group.length; i++) {
           let foundMatch = false;
-          matchItem(sub, slice[i], [...path, ixArr + i], sIn, () => {
+          matchItem(sub, group[i], [...path, ixArr + i], sIn, () => {
             foundMatch = true;
           }, ctx);
           if (!foundMatch) {
@@ -367,13 +367,13 @@ function matchArray(items, arr, path, sol, emit, ctx) {
         }
         if (!allMatch) continue;
 
-        // Try binding this slice
+        // Try binding this group
         const s2 = cloneSolution(sIn);
-        const sliceValue = Slice.array(...slice);
-        if (bindSlice(s2.env, sliceBind.name, sliceValue)) {
-          recordSliceSite(s2, sliceBind.name, path, ixArr, ixArr + k, slice);
+        const groupValue = Group.array(...group);
+        if (bindGroup(s2.env, groupBind.name, groupValue)) {
+          recordGroupSite(s2, groupBind.name, path, ixArr, ixArr + k, group);
           if (ctx.debug?.onBind) {
-            ctx.debug.onBind('slice', sliceBind.name, sliceValue);
+            ctx.debug.onBind('group', groupBind.name, groupValue);
           }
           stepItems(ixItem + 1, ixArr + k, s2);
         }
@@ -381,14 +381,14 @@ function matchArray(items, arr, path, sol, emit, ctx) {
     } else {
       // Non-quantified pattern: @x:(pattern) means exactly one item matching pattern
       if (ixArr < arr.length) {
-        matchItem(sliceBind.pat, arr[ixArr], [...path, ixArr], sIn, (s2) => {
-          const slice = [arr[ixArr]];
+        matchItem(groupBind.pat, arr[ixArr], [...path, ixArr], sIn, (s2) => {
+          const group = [arr[ixArr]];
           const s3 = cloneSolution(s2);
-          const sliceValue = Slice.array(...slice);
-          if (bindSlice(s3.env, sliceBind.name, sliceValue)) {
-            recordSliceSite(s3, sliceBind.name, path, ixArr, ixArr + 1, slice);
+          const groupValue = Group.array(...group);
+          if (bindGroup(s3.env, groupBind.name, groupValue)) {
+            recordGroupSite(s3, groupBind.name, path, ixArr, ixArr + 1, group);
             if (ctx.debug?.onBind) {
-              ctx.debug.onBind('slice', sliceBind.name, sliceValue);
+              ctx.debug.onBind('group', groupBind.name, groupValue);
             }
             stepItems(ixItem + 1, ixArr + 1, s3);
           }
@@ -485,8 +485,8 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
   if (DEBUG) console.log(`[matchObject] obj keys:`, Object.keys(obj), `terms:`, terms.length);
 
   for (const term of terms) {
-    // Handle slice bindings: @var=(pattern) or @var=(remainder)
-    if (term.type === 'SliceBind') {
+    // Handle group bindings: @var=(pattern) or @var=(remainder)
+    if (term.type === 'GroupBind') {
       const isSpread = term.pat.type === 'Spread';
       const next = [];
 
@@ -501,19 +501,19 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
           }
 
           const s2 = cloneSolution(s0);
-          const sliceValue = Slice.object(residualObj);
-          if (bindSlice(s2.env, term.name, sliceValue)) {
+          const groupValue = Group.object(residualObj);
+          if (bindGroup(s2.env, term.name, groupValue)) {
             if (!s2.sites.has(term.name)) {
               s2.sites.set(term.name, []);
             }
             s2.sites.get(term.name).push({
-              kind: 'slice',
+              kind: 'group',
               path: [...path],
               keys: residualKeys,
               valueRefs: residualObj
             });
             if (ctx.debug?.onBind) {
-              ctx.debug.onBind('slice', term.name, sliceValue);
+              ctx.debug.onBind('group', term.name, groupValue);
             }
             // Preserve tested keys for this branch
             next.push({sol: s2, testedKeys: new Set(testedKeys)});
@@ -521,37 +521,37 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
         } else {
           // @var=(pattern) - recursively match pattern, collect matched keys
           if (term.pat.type !== 'OGroup') {
-            throw new Error(`SliceBind in object context expects OGroup or Spread pattern, got ${term.pat.type}`);
+            throw new Error(`GroupBind in object context expects OGroup or Spread pattern, got ${term.pat.type}`);
           }
 
           const matchedKeys = new Set();
           matchObject(
-            term.pat.slices,
+            term.pat.groups,
             null,
             obj,
             path,
             s0,
             (s2) => {
-              // Bind the matched keys as a slice
+              // Bind the matched keys as a group
               const capturedObj = {};
               for (const k of matchedKeys) {
                 capturedObj[k] = obj[k];
               }
 
               const s3 = cloneSolution(s2);
-              const sliceValue = Slice.object(capturedObj);
-              if (bindSlice(s3.env, term.name, sliceValue)) {
+              const groupValue = Group.object(capturedObj);
+              if (bindGroup(s3.env, term.name, groupValue)) {
                 if (!s3.sites.has(term.name)) {
                   s3.sites.set(term.name, []);
                 }
                 s3.sites.get(term.name).push({
-                  kind: 'slice',
+                  kind: 'group',
                   path: [...path],
                   keys: Array.from(matchedKeys),
                   valueRefs: capturedObj
                 });
                 if (ctx.debug?.onBind) {
-                  ctx.debug.onBind('slice', term.name, sliceValue);
+                  ctx.debug.onBind('group', term.name, groupValue);
                 }
                 // Mark matched keys as tested in this branch
                 const newTestedKeys = new Set(testedKeys);
@@ -575,7 +575,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       // Process grouped terms - just flatten them into the main sequence
       const next = [];
       for (const state of solutions) {
-        matchObject(term.slices, null, obj, path, state.sol, (s2) => {
+        matchObject(term.groups, null, obj, path, state.sol, (s2) => {
           next.push({sol: s2, testedKeys: new Set(state.testedKeys)});
         }, ctx);
       }
@@ -604,7 +604,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
           // Pass parent's testedKeys so .. inside lookahead knows which keys are residual
           let matchedSol = null;
           const lookaheadTestedKeys = new Set(testedKeys);
-          matchObjectSlice(term.pat, obj, path, cloneSolution(s0), (s2) => {
+          matchObjectGroup(term.pat, obj, path, cloneSolution(s0), (s2) => {
             if (!matchedSol) matchedSol = s2;  // capture first successful match
           }, ctx, lookaheadTestedKeys);
 
@@ -626,7 +626,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     }
 
     if (term.type !== 'OTerm') {
-      throw new Error(`Expected OTerm, SliceBind, OLook, or OGroup, got ${term.type}`);
+      throw new Error(`Expected OTerm, GroupBind, OLook, or OGroup, got ${term.type}`);
     }
 
     // Handle K?:V desugaring: K?:V → (K:V | (?!K:_))
@@ -745,8 +745,8 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
         }
       }
       solutions = next;
-    } else if (spread.type === 'SliceBind') {
-      // @var=(remainder) - bind residual keys to slice variable
+    } else if (spread.type === 'GroupBind') {
+      // @var=(remainder) - bind residual keys to group variable
       const next = [];
       for (const state of solutions) {
         const {sol: s0, testedKeys} = state;
@@ -757,19 +757,19 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
         }
 
         const s2 = cloneSolution(s0);
-        const sliceValue = Slice.object(residualObj);
-        if (bindSlice(s2.env, spread.name, sliceValue)) {
+        const groupValue = Group.object(residualObj);
+        if (bindGroup(s2.env, spread.name, groupValue)) {
           if (!s2.sites.has(spread.name)) {
             s2.sites.set(spread.name, []);
           }
           s2.sites.get(spread.name).push({
-            kind: 'slice',
+            kind: 'group',
             path: [...path],
             keys: residualKeys,
             valueRefs: residualObj
           });
           if (ctx.debug?.onBind) {
-            ctx.debug.onBind('slice', spread.name, sliceValue);
+            ctx.debug.onBind('group', spread.name, groupValue);
           }
           next.push({sol: s2, testedKeys});
         }
@@ -803,30 +803,30 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
 }
 
 /**
- * matchObjectSlice - Match a single O_SLICE pattern against an object
- * Used by lookaheads and other contexts where we need to match one slice in isolation
+ * matchObjectGroup - Match a single O_GROUP pattern against an object
+ * Used by lookaheads and other contexts where we need to match one group in isolation
  */
-function matchObjectSlice(slice, obj, path, sol, emit, ctx, testedKeys = new Set()) {
+function matchObjectGroup(group, obj, path, sol, emit, ctx, testedKeys = new Set()) {
   guard(ctx);
 
-  // Handle different slice types
-  if (slice.type === 'OTerm') {
+  // Handle different group types
+  if (group.type === 'OTerm') {
     // Single object term K:V or K?:V
-    matchObject([slice], null, obj, path, sol, emit, ctx, testedKeys);
-  } else if (slice.type === 'OGroup') {
-    // Group of slices (K1:V1 K2:V2 ...)
-    matchObject(slice.slices, null, obj, path, sol, emit, ctx, testedKeys);
-  } else if (slice.type === 'SliceBind') {
+    matchObject([group], null, obj, path, sol, emit, ctx, testedKeys);
+  } else if (group.type === 'OGroup') {
+    // Group of groups (K1:V1 K2:V2 ...)
+    matchObject(group.groups, null, obj, path, sol, emit, ctx, testedKeys);
+  } else if (group.type === 'GroupBind') {
     // @var=(pattern)
-    matchObject([slice], null, obj, path, sol, emit, ctx, testedKeys);
-  } else if (slice.type === 'OLook') {
+    matchObject([group], null, obj, path, sol, emit, ctx, testedKeys);
+  } else if (group.type === 'OLook') {
     // Nested lookahead
-    matchObject([slice], null, obj, path, sol, emit, ctx, testedKeys);
-  } else if (slice.type === 'Spread') {
+    matchObject([group], null, obj, path, sol, emit, ctx, testedKeys);
+  } else if (group.type === 'Spread') {
     // Bare .. - match if there are residual keys
-    matchObject([], slice, obj, path, sol, emit, ctx, testedKeys);
+    matchObject([], group, obj, path, sol, emit, ctx, testedKeys);
   } else {
-    throw new Error(`Unexpected slice type in matchObjectSlice: ${slice.type}`);
+    throw new Error(`Unexpected group type in matchObjectGroup: ${group.type}`);
   }
 }
 
@@ -839,7 +839,7 @@ function navigateBreadcrumbs(breadcrumbs, startNode, basePath, sol, emit, ctx) {
   }
 
   const bc = breadcrumbs[0];
-  const rest = breadcrumbs.slice(1);
+  const rest = breadcrumbs.group(1);
 
   // Navigate the breadcrumb (no quantifiers in v5)
   navigateSingleBreadcrumb(bc, rest, startNode, basePath, sol, emit, ctx);
@@ -1010,7 +1010,7 @@ function fastBoundKey(pat, env, validate, exists) {
   if (!binding || binding.kind !== 'scalar') return undefined;
 
   // If inner pattern is itself a binding, we need normal binding logic
-  if (pat.pat && (pat.pat.type === 'SBind' || pat.pat.type === 'SliceBind')) {
+  if (pat.pat && (pat.pat.type === 'SBind' || pat.pat.type === 'GroupBind')) {
     return undefined;
   }
 

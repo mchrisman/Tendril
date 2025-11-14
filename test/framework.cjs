@@ -216,7 +216,7 @@ class TestRunner {
       console.log(`✗ ${test.name}`);
       console.log(`  ${error.message}`);
       if (error.stack) {
-        const stackLines = error.stack.split('\n').slice(1, 3);
+        const stackLines = error.stack.split('\n').group(1, 3);
         stackLines.forEach(line => console.log(`  ${line.trim()}`));
       }
     }

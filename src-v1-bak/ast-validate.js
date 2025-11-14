@@ -72,9 +72,9 @@ function visit(n, ctx, meta) {
       out = validateObjectLike(n, ctx, meta);
       break;
 
-    case "ReplaceSlice":
+    case "ReplaceGroup":
       ctx.replaceTargets++;
-      // Slice replacement is allowed anywhere a primary appears (commonly arrays).
+      // Group replacement is allowed anywhere a primary appears (commonly arrays).
       out = {...n, target: visit(n.target, ctx, meta)};
       break;
 

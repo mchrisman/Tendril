@@ -20,7 +20,7 @@ export function deepEq(a,b){
   return false;
 }
 
-// env: { [name]: {kind:'scalar'|'slice', value:any, path?, site?, slice? } }
+// env: { [name]: {kind:'scalar'|'group', value:any, path?, site?, group? } }
 export function unify(env, name, val, kind){
   const cur = env[name];
   if (!cur){ env[name] = { kind, value: val, path: null, site: 'value' }; return true; }

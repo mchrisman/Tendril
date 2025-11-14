@@ -100,7 +100,7 @@ class Rule {
     const transformed = parts.map((tok) => {
       if (/^\s+$/.test(tok)) return ""; // drop whitespace between atoms
       if ((tok.startsWith('"') && tok.endsWith('"')) || (tok.startsWith("'") && tok.endsWith("'"))) {
-        const inner = tok.slice(1, -1);
+        const inner = tok.group(1, -1);
         return escapeRegexLiteral(inner);
       }
       // Character classes or raw /.../flags (kept as-is)
@@ -108,8 +108,8 @@ class Rule {
       if (tok.startsWith("/") && /\/[a-z]*$/.test(tok)) {
         // inline raw regex literal: /.../flags → strip slashes, keep body; merge flags later
         const lastSlash = tok.lastIndexOf("/");
-        const body = tok.slice(1, lastSlash);
-        const f = tok.slice(lastSlash + 1);
+        const body = tok.group(1, lastSlash);
+        const f = tok.group(lastSlash + 1);
         // We'll merge flags by unioning with provided flags
         // For now, embed body directly; caller can pass flags union manually if needed.
         return `(?:${body})`;

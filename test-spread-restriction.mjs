@@ -22,7 +22,7 @@ try {
   console.log('✗ Error:', e.message);
 }
 
-console.log('\nTest 3: Valid - slice binding {k=$v @rest:(remainder)}\n');
+console.log('\nTest 3: Valid - group binding {k=$v @rest:(remainder)}\n');
 try {
   const t3 = Tendril('{k=$v @rest:(remainder)}');
   const r = t3.match({k: 1, extra: 2});

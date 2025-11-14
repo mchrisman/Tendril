@@ -165,16 +165,16 @@ Grammar Changes
 
 Current Array Grammar (has lookaheads):
 
-A_SLICE := ... | '(?=' A_SLICE ')' | '(?!' A_SLICE ')'
+A_GROUP := ... | '(?=' A_GROUP ')' | '(?!' A_GROUP ')'
 
 Proposed Object Grammar (add lookaheads):
 
-O_SLICE := '(' O_BODY ')'
-| S_SLICE
-| S_SLICE ':' '(' O_SLICE* ')'
+O_GROUP := '(' O_BODY ')'
+| S_GROUP
+| S_GROUP ':' '(' O_GROUP* ')'
 | O_TERM
-| '(?=' O_SLICE ')'      // NEW: positive lookahead
-| '(?!' O_SLICE ')'      // NEW: negative lookahead
+| '(?=' O_GROUP ')'      // NEW: positive lookahead
+| '(?!' O_GROUP ')'      // NEW: negative lookahead
 
 // REMOVED: '?=' operator (becomes syntactic sugar)
 
@@ -189,8 +189,8 @@ Implementation Requirements
     - Remove distinction between variable and non-variable keys
     - All key patterns iterate and create solution branches
 2. Implement lookaheads for objects
-    - (?=O_SLICE) positive lookahead
-    - (?!O_SLICE) negative lookahead
+    - (?=O_GROUP) positive lookahead
+    - (?!O_GROUP) negative lookahead
     - Bindings escape and participate in unification (Prolog-style)
 3. Implement K=?V desugaring
     - Parser or compiler transforms K=?V to (K=V | (?!K))
@@ -216,7 +216,7 @@ End of Appendix
 
 ----------------------------
 
-Overloading ..: it means both lazy slice (arrays) and residual keys (objects). That’s elegant but easy to misremember in mixed patterns.
+Overloading ..: it means both lazy group (arrays) and residual keys (objects). That’s elegant but easy to misremember in mixed patterns.
 
 =? optic: visually odd and cognitively heavier than it needs to be; it also reads as “assign maybe,” which is backwards for readers used to ?= or ?..
 

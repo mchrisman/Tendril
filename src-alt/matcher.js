@@ -30,7 +30,7 @@ function* matchNode(node, data, env, path){
     case A.K.SVAR: {
       // Sugar: in arrays, treat specially in sequence matcher; here default to empty
       const empty = Array.isArray(data) ? [] : (isObject(data) ? {} : []);
-      if (unifyWithMeta(env, node.name, empty, 'slice', path, 'slice')) yield env;
+      if (unifyWithMeta(env, node.name, empty, 'group', path, 'group')) yield env;
       return;
     }
 
@@ -42,8 +42,8 @@ function* matchNode(node, data, env, path){
       }
       if (!matched) return;
 
-      const kind = node.isSlice ? 'slice' : 'scalar';
-      const site = node.isSlice && Array.isArray(data) ? 'slice' : 'value';
+      const kind = node.isGroup ? 'group' : 'scalar';
+      const site = node.isGroup && Array.isArray(data) ? 'group' : 'value';
       if (unifyWithMeta(env, node.name, data, kind, path, site)) yield env;
       return;
     }
@@ -80,7 +80,7 @@ function* matchNode(node, data, env, path){
 
     case A.K.OBJ:
       if (!isObject(data)) return;
-      yield* matchObject(node.slices, data, env, path);
+      yield* matchObject(node.groups, data, env, path);
       return;
 
     default: return;
@@ -99,7 +99,7 @@ function* matchSeq(seq, arr, i, env, path){
   }
   const [head, ...tail] = seq;
 
-  // '..' as lazy wildcard slice: quant(wc, 0..∞, greedy:false)
+  // '..' as lazy wildcard group: quant(wc, 0..∞, greedy:false)
   if (isDotDot(head)){
     for (let take=0; i+take<=arr.length; take++){
       yield* matchSeq(tail, arr, i+take, cloneEnvShallow(env), path);
@@ -107,7 +107,7 @@ function* matchSeq(seq, arr, i, env, path){
     return;
   }
 
-  // Slice binder in arrays: @x:( item*{m,n} ) or bare @x
+  // Group binder in arrays: @x:( item*{m,n} ) or bare @x
   if (head.k===A.K.SVAR){
     // sugar for @x:(_*) (greedy)
     const name = head.name;
@@ -115,14 +115,14 @@ function* matchSeq(seq, arr, i, env, path){
     // choose greedy by default
     const take = maxTake; // possessive/greedy default
     const env2 = cloneEnvShallow(env);
-    const sliceVal = arr.slice(i, i+take);
-    if (unifySliceArray(env2, name, sliceVal, path, i, i+take)) {
+    const groupVal = arr.group(i, i+take);
+    if (unifyGroupArray(env2, name, groupVal, path, i, i+take)) {
       yield* matchSeq(tail, arr, i+take, env2, path);
     }
     return;
   }
 
-  if (head.k===A.K.BIND && head.isSlice){
+  if (head.k===A.K.BIND && head.isGroup){
     // @x:( QUANT(node, q) )  — capture the contiguous segment that matches
     if (head.pat.k===A.K.QUANT){
       const q = head.pat;
@@ -141,8 +141,8 @@ function* matchSeq(seq, arr, i, env, path){
           j++;
         }
         if (!ok) continue;
-        const sliceVal = arr.slice(i, j);
-        if (!unifySliceArray(env2, head.name, sliceVal, path, i, j)) continue;
+        const groupVal = arr.group(i, j);
+        if (!unifyGroupArray(env2, head.name, groupVal, path, i, j)) continue;
         yield* matchSeq(tail, arr, j, env2, path);
         if (poss) return; // commit (no backtrack) for possessive
       }
@@ -153,8 +153,8 @@ function* matchSeq(seq, arr, i, env, path){
     if (i>=arr.length) return;
     for (const e2 of matchNode(head.pat, arr[i], cloneEnvShallow(env), path.concat([pathStepIndex(i)]))){
       const env2=e2;
-      const sliceVal = [arr[i]];
-      if (unifySliceArray(env2, head.name, sliceVal, path, i, i+1)){
+      const groupVal = [arr[i]];
+      if (unifyGroupArray(env2, head.name, groupVal, path, i, i+1)){
         yield* matchSeq(tail, arr, i+1, env2, path);
       }
     }
@@ -211,22 +211,22 @@ function chooseTakes(min, max, greedy, possessive){
   return arr;
 }
 
-function unifySliceArray(env, name, sliceVal, pathToArray, start, end){
+function unifyGroupArray(env, name, groupVal, pathToArray, start, end){
   const cur = env[name];
   const meta = { type:'array', pathToArray, start, end };
   if (!cur){
-    env[name] = { kind:'slice', value: sliceVal, path: pathToArray, site:'slice', slice: meta };
+    env[name] = { kind:'group', value: groupVal, path: pathToArray, site:'group', group: meta };
     return true;
   }
-  if (cur.kind!=='slice') return false;
-  if (!deepEq(cur.value, sliceVal)) return false;
+  if (cur.kind!=='group') return false;
+  if (!deepEq(cur.value, groupVal)) return false;
   // keep deepest pathToArray
-  if (!cur.slice || (pathToArray.length > (cur.slice.pathToArray?.length||0))) cur.slice = meta;
+  if (!cur.group || (pathToArray.length > (cur.group.pathToArray?.length||0))) cur.group = meta;
   return true;
 }
 
 // ---------------- Objects ----------------
-function* matchObject(slices, obj, env, path){
+function* matchObject(groups, obj, env, path){
   const keys = Object.keys(obj);
 
   // Split and track residual binder if present
@@ -234,7 +234,7 @@ function* matchObject(slices, obj, env, path){
   let residCount = null;
   let residBindName = null;
 
-  for (const s of slices){
+  for (const s of groups){
     if (s.k===A.K.O_RESID){
       residCount = s.count || null;
       residBindName = s.bindName || null;
@@ -281,17 +281,17 @@ function* matchObject(slices, obj, env, path){
     }
   }
 
-  // Bind residual slice if requested: @rest:(..)
+  // Bind residual group if requested: @rest:(..)
   if (residBindName){
     const kv = {};
     for (const k of residualKeys) kv[k] = obj[k];
-    const meta = { type:'object', pathToObject: path, keys: residualKeys.slice() };
+    const meta = { type:'object', pathToObject: path, keys: residualKeys.group() };
     const cur = env2[residBindName];
     if (!cur){
-      env2[residBindName] = { kind:'slice', value: kv, path, site:'slice', slice: meta };
+      env2[residBindName] = { kind:'group', value: kv, path, site:'group', group: meta };
     } else {
-      if (cur.kind!=='slice' || !deepEq(cur.value, kv)) return;
-      if (!cur.slice || (path.length > (cur.slice.pathToObject?.length||0))) cur.slice = meta;
+      if (cur.kind!=='group' || !deepEq(cur.value, kv)) return;
+      if (!cur.group || (path.length > (cur.group.pathToObject?.length||0))) cur.group = meta;
     }
   }
 
@@ -318,7 +318,7 @@ function bindKeyVars(expr, rawKey, env, keyPath){
     case A.K.VAR:
       return unifyWithMeta(env, expr.name, String(rawKey), 'scalar', keyPath, 'key');
     case A.K.BIND: {
-      if (expr.isSlice) return false;
+      if (expr.isGroup) return false;
       if (!testKeyPred(expr.pat, rawKey)) return false;
       return unifyWithMeta(env, expr.name, String(rawKey), 'scalar', keyPath, 'key');
     }
@@ -364,7 +364,7 @@ function evalKeyExpr(expr, env){
       return b.value;
     }
     case A.K.BIND: {
-      if (expr.isSlice) return NO_KEY;
+      if (expr.isGroup) return NO_KEY;
       if (expr.pat.k===A.K.LIT) return expr.pat.v;
       return NO_KEY;
     }
@@ -382,6 +382,6 @@ function unifyWithMeta(env, name, value, kind, path, site){
   if (cur.kind!==kind) return false;
   if (!deepEq(cur.value, value)) return false;
   if (!cur.path || (path && path.length > cur.path.length)) cur.path = path;
-  // keep earliest site preference order: key > value > slice? (leave as-is)
+  // keep earliest site preference order: key > value > group? (leave as-is)
   return true;
 }

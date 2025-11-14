@@ -177,8 +177,8 @@ const topCompilers = {
   Dot() {
     throw new Error("Compiler: 'Dot' not supported in M3");
   },
-  ReplaceSlice() {
-    throw new Error("Compiler: 'ReplaceSlice' not supported in M3");
+  ReplaceGroup() {
+    throw new Error("Compiler: 'ReplaceGroup' not supported in M3");
   },
   ReplaceKey() {
     throw new Error("Compiler: 'ReplaceKey' not supported in M3");

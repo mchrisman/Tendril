@@ -4,13 +4,13 @@
 // Grammar structure:
 //   ROOT_PATTERN := ITEM
 //   ITEM := atoms, bindings, objects, arrays, alternations
-//   A_SLICE := array slice patterns (with quantifiers, @x, $x)
-//   O_SLICE := object slice patterns (with breadcrumbs, @x)
+//   A_GROUP := array group patterns (with quantifiers, @x, $x)
+//   O_GROUP := object group patterns (with breadcrumbs, @x)
 //
 // AST Node Types:
 //   Atoms: Any, Lit, Re, Bool, Null
 //   Containers: Arr, Obj
-//   Bindings: SBind (scalar $x), SliceBind (slice @x)
+//   Bindings: SBind (scalar $x), GroupBind (group @x)
 //   Operators: Alt, Look, Quant
 //   Object: OTerm (with breadcrumbs), Spread (..)
 //   Breadcrumbs: Breadcrumb with optional B_Quant
@@ -37,7 +37,7 @@ const Null = () => ({type: 'Null'});
 
 // Bindings
 const SBind = (name, pat) => ({type: 'SBind', name, pat});  // $x=(pat)
-const SliceBind = (name, pat) => ({type: 'SliceBind', name, pat});  // @x=(pat)
+const GroupBind = (name, pat) => ({type: 'GroupBind', name, pat});  // @x=(pat)
 
 // Containers
 const Arr = (items) => ({type: 'Arr', items});
@@ -135,18 +135,18 @@ function parseItemTerm(p) {
     return SBind(name, Any());
   }
 
-  // Slice binding: @x or @x=(...)
+  // Group binding: @x or @x=(...)
   if (p.peek('@')) {
     p.eat('@');
     const name = p.eat('id').v;
     if (p.maybe('=')) {
       p.eat('(');
-      const pat = parseASlice(p);
+      const pat = parseAGroup(p);
       p.eat(')');
-      return SliceBind(name, pat);
+      return GroupBind(name, pat);
     }
     // Bare @x means @x=(_*)
-    return SliceBind(name, Quant(Any(), '*', 0, Infinity));
+    return GroupBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
   // Wildcard
@@ -191,7 +191,7 @@ function parseItemTerm(p) {
 }
 
 function parseLookahead(p) {
-  // (?= A_SLICE) or (?! A_SLICE)
+  // (?= A_GROUP) or (?! A_GROUP)
   let neg = false;
   if (p.peek('(?=')) {
     p.eat('(?=');
@@ -201,13 +201,13 @@ function parseLookahead(p) {
   } else {
     p.fail('expected (?= or (?! for lookahead');
   }
-  const pat = parseASlice(p);
+  const pat = parseAGroup(p);
   p.eat(')');
   return Look(neg, pat);
 }
 
 function parseObjectLookahead(p) {
-  // (?= O_SLICE) or (?! O_SLICE)
+  // (?= O_GROUP) or (?! O_GROUP)
   let neg = false;
   if (p.peek('(?=')) {
     p.eat('(?=');
@@ -217,18 +217,18 @@ function parseObjectLookahead(p) {
   } else {
     p.fail('expected (?= or (?! for object lookahead');
   }
-  const pat = parseOSlice(p);
+  const pat = parseOGroup(p);
   p.eat(')');
   return {type: 'OLook', neg, pat};
 }
 
 // ---------- ARRAYS ----------
 
-// A_BODY := (A_SLICE (','? A_SLICE)*)?
+// A_BODY := (A_GROUP (','? A_GROUP)*)?
 function parseABody(p, stopToken) {
   const items = [];
   while (!p.peek(stopToken)) {
-    items.push(parseASlice(p));
+    items.push(parseAGroup(p));
     p.maybe(',');  // Optional comma
   }
   return items;
@@ -242,19 +242,19 @@ function parseArr(p) {
   return Arr(items);
 }
 
-function parseASlice(p) {
-  // A_SLICE := '(' A_BODY ')'
-  //          | S_SLICE
-  //          | S_SLICE '=' '(' A_BODY ')'
+function parseAGroup(p) {
+  // A_GROUP := '(' A_BODY ')'
+  //          | S_GROUP
+  //          | S_GROUP '=' '(' A_BODY ')'
   //          | S_ITEM
   //          | S_ITEM '=' '(' A_BODY ')'
   //          | ITEM
   //          | OBJ
   //          | ARR
-  //          | A_SLICE A_QUANT
-  //          | A_SLICE '|' A_SLICE
-  //          | '(?=' A_SLICE ')'
-  //          | '(?!' A_SLICE ')'
+  //          | A_GROUP A_QUANT
+  //          | A_GROUP '|' A_GROUP
+  //          | '(?=' A_GROUP ')'
+  //          | '(?!' A_GROUP ')'
 
   // Special handling for .. (spread)
   if (p.peek('..')) {
@@ -264,7 +264,7 @@ function parseASlice(p) {
     return Spread(quant ? `${quant.op}` : null);
   }
 
-  let base = parseASliceBase(p);
+  let base = parseAGroupBase(p);
 
   // Handle quantifier
   const q = p.backtrack(() => parseAQuant(p));
@@ -276,7 +276,7 @@ function parseASlice(p) {
   if (p.peek('|')) {
     const alts = [base];
     while (p.maybe('|')) {
-      let alt = parseASliceBase(p);
+      let alt = parseAGroupBase(p);
       const q = p.backtrack(() => parseAQuant(p));
       if (q) {
         alt = Quant(alt, q.op, q.min, q.max);
@@ -289,8 +289,8 @@ function parseASlice(p) {
   return base;
 }
 
-function parseASliceBase(p) {
-  // Base A_SLICE without quantifiers or alternation
+function parseAGroupBase(p) {
+  // Base A_GROUP without quantifiers or alternation
 
   // Lookahead
   if (p.peek('(?=') || p.peek('(?!')) {
@@ -307,7 +307,7 @@ function parseASliceBase(p) {
     return {type: 'Seq', items};
   }
 
-  // Slice binding: @x or @x=(...)
+  // Group binding: @x or @x=(...)
   if (p.peek('@')) {
     p.eat('@');
     const name = p.eat('id').v;
@@ -317,9 +317,9 @@ function parseASliceBase(p) {
       p.eat(')');
       // If single item, use directly; otherwise create Seq
       const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
-      return SliceBind(name, pat);
+      return GroupBind(name, pat);
     }
-    return SliceBind(name, Quant(Any(), '*', 0, Infinity));
+    return GroupBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
   // Scalar binding: $x or $x=(...)
@@ -392,22 +392,22 @@ function parseAQuant(p) {
 
 function parseObj(p) {
   // OBJ := '{' O_BODY O_REMNANT? '}'
-  // O_REMNANT := S_SLICE ':' '(' 'remainder' ')'
+  // O_REMNANT := S_GROUP ':' '(' 'remainder' ')'
   //            | '(?!' 'remainder' ')'
   //            | 'remainder'
   p.eat('{');
   const terms = [];
 
-  // Parse O_BODY: greedily parse O_SLICEs until we can't
+  // Parse O_BODY: greedily parse O_GROUPs until we can't
   while (true) {
-    const slice = p.backtrack(() => {
+    const group = p.backtrack(() => {
       if (p.peek('}')) return null;
-      const s = parseOSlice(p);
+      const s = parseOGroup(p);
       p.maybe(',');
       return s;
     });
-    if (!slice) break;
-    terms.push(slice);
+    if (!group) break;
+    terms.push(group);
   }
 
   // Now try to parse optional O_REMNANT
@@ -418,7 +418,7 @@ function parseObj(p) {
 }
 
 function parseORemnant(p) {
-  // O_REMNANT := S_SLICE '=' '(' 'remainder' ')'
+  // O_REMNANT := S_GROUP '=' '(' 'remainder' ')'
   //            | '(?!' 'remainder' ')'
   //            | 'remainder'
 
@@ -433,7 +433,7 @@ function parseORemnant(p) {
     p.eat('id');
     p.eat(')');
     p.maybe(',');
-    return SliceBind(name, Spread(null));
+    return GroupBind(name, Spread(null));
   });
   if (bindRemnant) return bindRemnant;
 
@@ -461,13 +461,13 @@ function parseORemnant(p) {
   return null;
 }
 
-function parseOSlice(p) {
-  // O_SLICE := '(' O_BODY ')'
-  //          | S_SLICE
-  //          | S_SLICE '=' '(' O_SLICE* ')'
+function parseOGroup(p) {
+  // O_GROUP := '(' O_BODY ')'
+  //          | S_GROUP
+  //          | S_GROUP '=' '(' O_GROUP* ')'
   //          | O_TERM
-  //          | '(?=' O_SLICE ')'
-  //          | '(?!' O_SLICE ')'
+  //          | '(?=' O_GROUP ')'
+  //          | '(?!' O_GROUP ')'
 
   // Try lookahead first
   if (p.peek('(?=') || p.peek('(?!')) {
@@ -478,30 +478,30 @@ function parseOSlice(p) {
   // Use backtracking because '(' could also be part of O_TERM's key pattern
   const groupResult = p.backtrack(() => {
     p.eat('(');
-    const slices = [];
+    const groups = [];
     while (!p.peek(')')) {
-      slices.push(parseOSlice(p));
+      groups.push(parseOGroup(p));
       p.maybe(',');
     }
     p.eat(')');
-    return {type: 'OGroup', slices};
+    return {type: 'OGroup', groups};
   });
   if (groupResult) return groupResult;
 
-  // S_SLICE: Slice binding @x=(O_BODY)
+  // S_GROUP: Group binding @x=(O_BODY)
   if (p.peek('@')) {
     p.eat('@');
     const name = p.eat('id').v;
     if (p.maybe('=')) {
       p.eat('(');
       // Parse O_BODY: @x=(pattern)
-      const slices = [];
+      const groups = [];
       while (!p.peek(')')) {
-        slices.push(parseOSlice(p));
+        groups.push(parseOGroup(p));
         p.maybe(',');
       }
       p.eat(')');
-      return SliceBind(name, {type: 'OGroup', slices});
+      return GroupBind(name, {type: 'OGroup', groups});
     }
     // Bare @x in object context is not allowed
     p.fail('bare @x not allowed in objects; use @x=(remainder) to bind residual keys');
@@ -637,7 +637,7 @@ export const AST = {
   // Atoms
   Any, Lit, Re, Bool, Null,
   // Bindings
-  SBind, SliceBind,
+  SBind, GroupBind,
   // Containers
   Arr, Obj,
   // Operators

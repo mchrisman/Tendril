@@ -1,6 +1,6 @@
 // Test Tendril patterns for AppDown macro transformations
 
-import {Tendril,Slice} from './dist/tendril.esm.js';
+import {Tendril,Group} from './dist/tendril.esm.js';
 
 console.log('Testing Tendril patterns for AppDown macros\n');
 function deepEquals(a, b) {
@@ -116,7 +116,7 @@ try {
         // Exclude 'children' from attrs since we're renaming it to thenChildren
 //        const {children: _, remainder.attrsRest} = $.attrs || {};
         return {
-          whenelse: Slice.array({
+          whenelse: Group.array({
             tag: 'If',
             ...($.attrs||{}),// attrsRest,
             ...($.other || {}),

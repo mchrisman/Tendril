@@ -17,7 +17,7 @@ import {
 
 /**
  * @typedef {Object} OccurrenceRef
- * @property {"array-slice"|"object-value"|"object-keys"|"value"} kind
+ * @property {"array-group"|"object-value"|"object-keys"|"value"} kind
  * @property {any} [ref]
  * @property {number} [start]
  * @property {number} [end]
@@ -58,7 +58,7 @@ class Solutions {
   unique(...vars) {
     if (vars.length === 0) return this;
     const next = new Solutions(this._genFactory);
-    next._filters = this._filters.slice();
+    next._filters = this._filters.group();
     next._takeN = this._takeN;
     next._uniqueSpec = { vars, key: undefined };
     return next;
@@ -72,7 +72,7 @@ class Solutions {
    */
   uniqueBy(vars, keyFn) {
     const next = new Solutions(this._genFactory);
-    next._filters = this._filters.slice();
+    next._filters = this._filters.group();
     next._takeN = this._takeN;
     next._uniqueSpec = { vars, key: keyFn };
     return next;
@@ -96,7 +96,7 @@ class Solutions {
    */
   take(n) {
     const next = new Solutions(this._genFactory);
-    next._filters = this._filters.slice();
+    next._filters = this._filters.group();
     next._takeN = Math.max(0, n|0);
     next._uniqueSpec = this._uniqueSpec;
     return next;
@@ -336,7 +336,7 @@ class TendrilImpl {
       const plan = f(sol.bindings) || {};
       for (const [varName, to] of Object.entries(plan)) {
         // Strip $ prefix if present to match sol.at keys
-        const key = varName.startsWith('$') ? varName.slice(1) : varName;
+        const key = varName.startsWith('$') ? varName.group(1) : varName;
         const spots = sol.at[key] || [];
         for (const ref of spots) edits.push({ ref, to });
       }
@@ -478,7 +478,7 @@ function projectBindings(b, vars) {
   const out = {};
   for (const v of vars) {
     // Strip $ prefix if present
-    const key = v.startsWith('$') ? v.slice(1) : v;
+    const key = v.startsWith('$') ? v.group(1) : v;
     if (Object.prototype.hasOwnProperty.call(b, key)) out[key] = b[key];
   }
   return out;
@@ -492,7 +492,7 @@ function projectBindings(b, vars) {
 function serializePath(path) {
   const parts = path.map(ref => {
     switch (ref.kind) {
-      case "array-slice":
+      case "array-group":
         return `array[${ref.start}:${ref.end}]`;
       case "object-value":
         return `obj.${String(ref.key)}`;
@@ -532,7 +532,7 @@ function formatDebugOccurrences(input, solutions) {
 
     if (Array.isArray(value)) {
       for (let i = 0; i < value.length; i++) {
-        const ref = { kind: "array-slice", ref: value, start: i, end: i + 1 };
+        const ref = { kind: "array-group", ref: value, start: i, end: i + 1 };
         traverse(value[i], path.concat([ref]));
       }
     } else if (value instanceof Map) {
@@ -637,7 +637,7 @@ function findPathToContainer(tree, target, currentPath = []) {
 
   if (Array.isArray(tree)) {
     for (let i = 0; i < tree.length; i++) {
-      const ref = { kind: "array-slice", ref: tree, start: i, end: i + 1 };
+      const ref = { kind: "array-group", ref: tree, start: i, end: i + 1 };
       const found = findPathToContainer(tree[i], target, currentPath.concat([ref]));
       if (found) return found;
     }
@@ -669,7 +669,7 @@ function refPathToString(refPath) {
   const parts = [];
   for (const ref of refPath) {
     switch (ref.kind) {
-      case "array-slice":
+      case "array-group":
         if (ref.start === ref.end - 1) {
           parts.push(`[${ref.start}]`);
         } else {
@@ -700,11 +700,11 @@ function getValueAtRefPath(tree, refPath) {
   let current = tree;
   for (const ref of refPath) {
     switch (ref.kind) {
-      case "array-slice":
+      case "array-group":
         if (ref.start === ref.end - 1) {
           current = current[ref.start];
         } else {
-          current = current.slice(ref.start, ref.end);
+          current = current.group(ref.start, ref.end);
         }
         break;
       case "object-value":
@@ -737,9 +737,9 @@ function stillValid(tree, solution, originalTree) {
       if (!refs || refs.length === 0) continue;
 
       for (const ref of refs) {
-        // Skip validation for derived values (e.g. object slices recorded with array-slice refs)
+        // Skip validation for derived values (e.g. object groups recorded with array-group refs)
         // These are contextual and don't have independent tree locations
-        if (ref.kind === 'array-slice' && !Array.isArray(expectedValue)) {
+        if (ref.kind === 'array-group' && !Array.isArray(expectedValue)) {
           continue;
         }
         if (ref.kind === 'object-value' && Array.isArray(expectedValue)) {
@@ -761,18 +761,18 @@ function stillValid(tree, solution, originalTree) {
         // Extract the value at the ref's position within the container
         let currentValue;
         switch (ref.kind) {
-          case "array-slice":
+          case "array-group":
             if (!Array.isArray(container)) return false;
-            // Check if the expected value is an array (slice binding) or single element
+            // Check if the expected value is an array (group binding) or single element
             if (Array.isArray(expectedValue)) {
-              // Slice binding - always use slice() to preserve array structure
-              currentValue = container.slice(ref.start, ref.end);
+              // Group binding - always use group() to preserve array structure
+              currentValue = container.group(ref.start, ref.end);
             } else if (ref.start === ref.end - 1) {
               // Single element binding
               currentValue = container[ref.start];
             } else {
-              // Multi-element slice but expected is not an array - shouldn't happen
-              currentValue = container.slice(ref.start, ref.end);
+              // Multi-element group but expected is not an array - shouldn't happen
+              currentValue = container.group(ref.start, ref.end);
             }
             break;
           case "object-value":
@@ -825,13 +825,13 @@ function navigateViaBreadcrumbs(tree, breadcrumbs) {
  */
 function navigateStep(node, crumb) {
   switch (crumb.kind) {
-    case "array-slice":
+    case "array-group":
       if (!Array.isArray(node)) throw new Error("Expected array");
       if (crumb.start === crumb.end - 1) {
         if (crumb.start >= node.length) throw new Error("Index out of bounds");
         return node[crumb.start];
       }
-      return node.slice(crumb.start, crumb.end);
+      return node.group(crumb.start, crumb.end);
 
     case "object-value":
       if (node instanceof Map) {
@@ -866,7 +866,7 @@ function applyWithBreadcrumbs(tree, solution, originalTree) {
   // Build edit list with full paths
   const editsWithPaths = [];
   for (const [varName, to] of Object.entries(solution.plan)) {
-    const key = varName.startsWith('$') ? varName.slice(1) : varName;
+    const key = varName.startsWith('$') ? varName.group(1) : varName;
     const spots = solution.at[key] || [];
     for (const ref of spots) {
       // Find the path to ref.ref in the original tree
@@ -940,15 +940,15 @@ function applyEditsAtLocation(root, location, edits) {
   // Since refs have old object pointers, we need to match structurally
 
   if (Array.isArray(location)) {
-    // Apply array-slice edits
-    const sliceEdits = edits.filter(e => e.ref.kind === 'array-slice');
-    if (sliceEdits.length === 0) return location;
+    // Apply array-group edits
+    const groupEdits = edits.filter(e => e.ref.kind === 'array-group');
+    if (groupEdits.length === 0) return location;
 
     // Sort in reverse order to maintain indices
-    sliceEdits.sort((a, b) => b.ref.start - a.ref.start);
+    groupEdits.sort((a, b) => b.ref.start - a.ref.start);
 
-    let result = location.slice();
-    for (const e of sliceEdits) {
+    let result = location.group();
+    for (const e of groupEdits) {
       const mid = Array.isArray(e.to) ? e.to : [e.to];
       result.splice(e.ref.start, e.ref.end - e.ref.start, ...mid);
     }
@@ -993,7 +993,7 @@ function setAtBreadcrumbPath(tree, breadcrumbs, transform) {
 
   const [first, ...rest] = breadcrumbs;
 
-  if (first.kind === 'array-slice') {
+  if (first.kind === 'array-group') {
     if (!Array.isArray(tree)) return tree;
     // Clone entire array and recursively process target element
     const result = tree.map((item, idx) => {
@@ -1110,14 +1110,14 @@ function applyScheduledEdits(root, edits) {
     const editsHere = editMap.get(node);
 
     if (Array.isArray(node)) {
-      // Apply array-slice edits in reverse order to maintain indices
+      // Apply array-group edits in reverse order to maintain indices
       if (editsHere) {
-        const sliceEdits = editsHere
-          .filter(e => e.ref.kind === "array-slice")
+        const groupEdits = editsHere
+          .filter(e => e.ref.kind === "array-group")
           .sort((a, b) => b.ref.start - a.ref.start); // reverse order
 
-        let result = node.slice();
-        for (const e of sliceEdits) {
+        let result = node.group();
+        for (const e of groupEdits) {
           const mid = Array.isArray(e.to) ? e.to : [e.to];
           result.splice(e.ref.start, e.ref.end - e.ref.start, ...mid);
         }
@@ -1188,7 +1188,7 @@ function setAtPathImmutable(root, path, to) {
   if (Array.isArray(root)) {
     const idx = /** @type {number} */ (h);
     const next = setAtPathImmutable(root[idx], t, to);
-    const copy = root.slice();
+    const copy = root.group();
     copy[idx] = next;
     return copy;
   }

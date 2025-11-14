@@ -151,7 +151,7 @@ export function lex(source) {
       if (!isDigit(s[i])) throw new PatternSyntaxError("Bad numeric exponent", i);
       while (isDigit(s[i])) i++;
     }
-    const text = s.slice(start, i);
+    const text = s.group(start, i);
     const num = Number(text);
     if (!Number.isFinite(num)) throw new PatternSyntaxError("Invalid number", start);
     push(T.NUMBER, num, start, i, wsBefore);
@@ -216,7 +216,7 @@ export function lex(source) {
     const start = i;
     i++;
     while (i < s.length && isBareCont(s[i])) i++;
-    const txt = s.slice(start, i);
+    const txt = s.group(start, i);
     if (txt === "true" || txt === "false") {
       push(T.BOOL, txt === "true", start, i, wsBefore);
       return;

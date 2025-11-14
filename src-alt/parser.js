@@ -86,12 +86,12 @@ class Parser{
 
   // Objects: { O_BODY }
   parseObject(){
-    const slices=[];
+    const groups=[];
     while(!this.peek('}')){
       if (this.peek('..')){ // pure residual
         this.eat('..');
         const cnt=this.maybeObjCount();
-        slices.push(A.oResid(cnt));
+        groups.push(A.oResid(cnt));
       } else if (this.peek('@')) { // @rest:(..)
         this.eat('@');
         const id = this.eat('ID').value;
@@ -99,7 +99,7 @@ class Parser{
         this.eat('..');
         const cnt=this.maybeObjCount();
         this.eat(')');
-        slices.push(A.oResid(cnt, id));
+        groups.push(A.oResid(cnt, id));
       } else {
         // KEY ( .KEY | [KEY] )* ('=' | '?=') VALUE (O_QUANT)?
         const key = this.expression(BP.DOT);
@@ -111,12 +111,12 @@ class Parser{
         const op = this.peek('?=') ? (this.eat('?='), '?=') : (this.eat('='), '=');
         const val = this.expression(BP.LOW);
         const cnt = this.maybeObjCount();
-        slices.push(A.oAssert(key, steps, op, val, cnt));
+        groups.push(A.oAssert(key, steps, op, val, cnt));
       }
       if (this.peek(',')) this.eat(',');
     }
     this.eat('}');
-    return A.obj(slices);
+    return A.obj(groups);
   }
 
   maybeObjCount(){

@@ -146,10 +146,10 @@ As usual, parentheses override normal precedence. The lookahead operators come w
 
 ---
 
-## Arrays and Array slices
+## Arrays and Array groups
 
 
-A "slice" of an array is a contiguous subsequence. Each term of the array pattern matches a slice.
+A "group" of an array is a contiguous subsequence. Each term of the array pattern matches a group.
 
 ```
 
@@ -196,11 +196,11 @@ p1 & p2                    // conjunction (same value matches both)
 ```
 ## Objects
 
-A "slice" of an object is a subset of its unordered K/V pairs. Each term of an object pattern defines a slice and expresses an assertion about it. The terms can be overlapping and may be empty.
+A "group" of an object is a subset of its unordered K/V pairs. Each term of an object pattern defines a group and expresses an assertion about it. The terms can be overlapping and may be empty.
 
 ```
-{ K ?= V }        In the slice of all keys matching K, every value must match V. (An empty object always matches.)
-{ K = V }         In the slice of all keys matching K, every value must match V; *and* the slice is nonempty.
+{ K ?= V }        In the group of all keys matching K, every value must match V. (An empty object always matches.)
+{ K = V }         In the group of all keys matching K, every value must match V; *and* the group is nonempty.
 { K1=V1 K2=V2 }   A conjunction.
 { (?!TERM) }      A negation
 { 
@@ -248,7 +248,7 @@ Attempt to match [ $x $y $x ] ~= [ 1 2 3 ]  ==> **fail**
 Binding can backtrack. There can be multiple solutions.
 
 When the variable is unbound, `$name` is short for `$name:_`.
-When already bound, `$name` is short for `($name:_*{n})` where n is the length of the bound slice.
+When already bound, `$name` is short for `($name:_*{n})` where n is the length of the bound group.
 
 ```
 [ $x $x:/(a|b)/ $y ]   ~= ['a','a','y']
@@ -256,7 +256,7 @@ When already bound, `$name` is short for `($name:_*{n})` where n is the length o
 [ $x $x:$y $y ]      ~= ['q','q','q']
 [ $x:($z $y) $y $z ] ~= ['r','q','q','r']
   
-$x:(keyPattern = valPattern)   // binds to the set (slice) of all matching key/value pairs; non-backtracking
+$x:(keyPattern = valPattern)   // binds to the set (group) of all matching key/value pairs; non-backtracking
 $k:keyPattern = $v:valPattern   // binds to an individual key or value. 
 
 ```
@@ -265,11 +265,11 @@ $k:keyPattern = $v:valPattern   // binds to an individual key or value.
 
 ## Quantifiers — Objects and Sets
 
-Each object assertion matches a **slice** of key/value pairs, possibly overlapping, no backtracking.
+Each object assertion matches a **group** of key/value pairs, possibly overlapping, no backtracking.
 
 ```
-{{ pat1=_  $happy:(pat2=_) }}     // bind subset slice
-{{ a=_  b=_  $rest:.. }}      // bind residual slice
+{{ pat1=_  $happy:(pat2=_) }}     // bind subset group
+{{ a=_  b=_  $rest:.. }}      // bind residual group
 ```
 
 Object-counting remains:
@@ -285,7 +285,7 @@ k=v          === k=v #{1,}      // default: one or more
 ```
 ```
 {$x:($k:KEYPAT=$v:VPAT)}  // $k,$v Get bound to individual KB pairs (iterating, backtracking)
-                          // $x is bound to the whole slice
+                          // $x is bound to the whole group
 ```
 
 ---
@@ -318,9 +318,9 @@ k=v          === k=v #{1,}      // default: one or more
   Whitespace serves as a token delimiter and is stripped by the lexer.
   
 * **Adjacency notation**
-  In the grammar below, when two nonterminals appear adjacent (e.g., `ARRAY_SLICE_PATTERN ARRAY_SLICE_PATTERN`),
+  In the grammar below, when two nonterminals appear adjacent (e.g., `ARRAY_GROUP_PATTERN ARRAY_GROUP_PATTERN`),
   this represents adjacency in the token stream after whitespace removal.
-  In array patterns, adjacent tokens denote sequence/concatenation of array slices.
+  In array patterns, adjacent tokens denote sequence/concatenation of array groups.
   
   No explicit `ws` annotations appear in productions; treat inter-token whitespace/comments 
   as lexical separators only.
@@ -346,17 +346,17 @@ SINGLETON_PATTERN       := LITERAL
 LOOKAHEAD_SINGLETON     := '(?=' SINGLETON_PATTERN ')' 
                          | '(?!' SINGLETON_PATTERN ')' 
 
-ARRAY_PATTERN           := '[' ARRAY_SLICE_PATTERN*']'
+ARRAY_PATTERN           := '[' ARRAY_GROUP_PATTERN*']'
 
-ARRAY_SLICE_PATTERN     := '..'                           
+ARRAY_GROUP_PATTERN     := '..'                           
                          | SYMBOL (':' SINGLETON_PATTERN)?
-                         | '(' ARRAY_SLICE_PATTERN ')' ARRAY_QUANT?
+                         | '(' ARRAY_GROUP_PATTERN ')' ARRAY_QUANT?
                          | SINGLETON_PATTERN ARRAY_QUANT?
-                         | ARRAY_SLICE_PATTERN ARRAY_SLICE_PATTERN  // adjacency
-                         | LOOKAHEAD_ARRAY_SLICE
+                         | ARRAY_GROUP_PATTERN ARRAY_GROUP_PATTERN  // adjacency
+                         | LOOKAHEAD_ARRAY_GROUP
 
-LOOKAHEAD_ARRAY_SLICE   := '(?=' ARRAY_SLICE_PATTERN ')'
-                         | '(?!' ARRAY_SLICE_PATTERN ')'
+LOOKAHEAD_ARRAY_GROUP   := '(?=' ARRAY_GROUP_PATTERN ')'
+                         | '(?!' ARRAY_GROUP_PATTERN ')'
 
 ARRAY_QUANT             := '*-->' | '*--->' | '*--?>' | ('{' (INTEGER (',' INTEGER)?)? '}')? | '?' | '*+'
 
@@ -401,9 +401,9 @@ Examples:
 [ $x $x ] !~= [ [1,2], [1,2,3] ]    // NO (different shapes)
 ```
 
-## Objects and Object Slices
+## Objects and Object Groups
 
-* Each object assertion matches a **slice**: a subset of key/value pairs satisfying that assertion.
+* Each object assertion matches a **group**: a subset of key/value pairs satisfying that assertion.
 * Assertions are **conjunctive** and **non-exclusive**; a single property may satisfy several.
 
 Example:
@@ -412,11 +412,11 @@ Example:
 { /[ab].*/=22  /[bc].*/=22  xq*3 }  ~=  { b:22, c:22 }
 ```
 
-### Binding slices
+### Binding groups
 
 ```
-{ pat1=_  $happy:(pat2=_) }       // bind subset slice to $happy
-{ a=_  b=_  $rest:.. }        // bind residual slice
+{ pat1=_  $happy:(pat2=_) }       // bind subset group to $happy
+{ a=_  b=_  $rest:.. }        // bind residual group
 ```
 
 ### Vertical/path assertions
@@ -459,7 +459,7 @@ Tendril("{ (_.)*password = $value }")
   .replaceAll(input, $ => ({ $value: "REDACTED" }));
 ```
 
-**Bind object slices**
+**Bind object groups**
 
 ```
 { /user.*/=_  $contacts:(/contact.*/=_)  $rest:.. }

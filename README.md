@@ -238,9 +238,9 @@ yields a distinct solution.
 
 [ @x @x @y ]     // matches [5, 5, 5, 5, 5]
               // Multiple solutions by different splits:
-              // {x:Slice(5, 5), y:Slice(5)}
-              // {x:Slice(5), y:Slice(5, 5, 5)}
-              // {x:Slice(), y:Slice(5, 5, 5, 5, 5)}
+              // {x:Group(5, 5), y:Group(5)}
+              // {x:Group(5), y:Group(5, 5, 5)}
+              // {x:Group(), y:Group(5, 5, 5, 5, 5)}
 ```
 
 A scalar binder `$x:(P)` succeeds exactly when the data matches P at that point AND the matched value is a single value AND unification succeeds.
@@ -306,7 +306,7 @@ Tendril("[$x $y]").replace([3, 4], $ => [$.y, $.x])
 
 // Replace group variables
 Tendril("[@x 99 @y]").replace([1, 2, 99, 4], $ => [...$.y, 99, ...$.x])
-// Result: [4, 99, 2]
+// Result: [4, 99, 1, 2]
 
 // Transform object structures
 Tendril("{ _(._)*.password : $p }")

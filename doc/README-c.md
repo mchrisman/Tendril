@@ -71,7 +71,7 @@ const pattern = `{
 
 ```javascript
 // $var binds scalar values (exactly one)
-// @var binds slices (zero or more items)
+// @var binds groups (zero or more items)
 
 [ $x .. $x ]  // matches ["a", "other", "stuff", "a"]
               // $x unifies to "a" (appears twice, must be equal)
@@ -154,7 +154,7 @@ matcher.replaceAll(data, vars => ({varName: newValue}))
 Tendril("[$x $y]").replace([3,4], $ => [$.y, $.x])
 // Result: [4, 3]
 
-// Replace slice variables
+// Replace group variables
 Tendril("[@x 99 @y]").replace([1,2,99,4], $ => [...$.y, 99, ...$.x])
 // Result: [4, 99, 2]
 
@@ -182,7 +182,7 @@ Tendril(`[
   )
   ..
 ]`).replaceAll(vdom, $ => ({
-  whenelse: Slice.array({
+  whenelse: Group.array({
     tag: 'If',
     thenChildren: $.then,
     elseChildren: $.else || []
@@ -271,7 +271,7 @@ Patterns are first-class values that can be:
 
 **1. Learning curve**
 
-The distinction between `$scalar` and `@slice`, quantifier semantics, and unification rules require study. This is more complex than JSONPath.
+The distinction between `$scalar` and `@group`, quantifier semantics, and unification rules require study. This is more complex than JSONPath.
 
 **2. Performance**
 
@@ -283,7 +283,7 @@ Backtracking over large datasets can be expensive. Tendril is not optimized for:
 
 **3. Pattern syntax complexity**
 
-The grammar includes 13 concepts (literals, variables, slices, arrays, objects, paths, quantifiers, alternation, lookaheads, unification, remainder, breadcrumbs, wildcards). This is manageable but not simple.
+The grammar includes 13 concepts (literals, variables, groups, arrays, objects, paths, quantifiers, alternation, lookaheads, unification, remainder, breadcrumbs, wildcards). This is manageable but not simple.
 
 **4. Debugging**
 

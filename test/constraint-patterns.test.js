@@ -1,7 +1,7 @@
 /**
  * Constraint Pattern Tests
  *
- * Tests for declarative object semantics, negative assertions, and slice bindings.
+ * Tests for declarative object semantics, negative assertions, and group bindings.
  * See doc/v5-constraints-limitations.md for known limitations.
  *
  * Run with: node test/constraint-patterns.test.js
@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Tendril, Slice } from '../src/tendril-api.js';
+import { Tendril, Group } from '../src/tendril-api.js';
 
 // ============================================================================
 // NEGATIVE ASSERTIONS - What Works
@@ -91,65 +91,65 @@ test('WORKAROUND: bind variable before negation', () => {
 });
 
 // ============================================================================
-// SLICE BINDINGS - Arrays
+// GROUP BINDINGS - Arrays
 // ============================================================================
 
-test('array slice binding - middle slice', () => {
+test('array group binding - middle group', () => {
   const result = Tendril('[1 @x 5]').all([1, 2, 3, 4, 5]);
   assert.equal(result.length, 1);
   assert.deepEqual([...result[0].bindings.x], [2, 3, 4]);
 });
 
-test('array slice binding - end slice', () => {
+test('array group binding - end group', () => {
   const result = Tendril('[1 @x]').all([1, 2, 3]);
   assert.equal(result.length, 1);
   assert.deepEqual([...result[0].bindings.x], [2, 3]);
 });
 
-test('array slice binding - empty slice', () => {
+test('array group binding - empty group', () => {
   const result = Tendril('[1 @x 2]').all([1, 2]);
   assert.equal(result.length, 1);
   assert.equal(result[0].bindings.x.length, 0);
 });
 
-test('array slice binding with pattern - specific sequence', () => {
+test('array group binding with pattern - specific sequence', () => {
   const result = Tendril('[@x=(1 2) 3]').all([1, 2, 3]);
   assert.equal(result.length, 1);
   assert.deepEqual([...result[0].bindings.x], [1, 2]);
 });
 
-test('array slice binding with pattern - quantified', () => {
+test('array group binding with pattern - quantified', () => {
   const result = Tendril('[@x=((1|2)*) 3]').all([1, 2, 1, 3]);
   assert.equal(result.length, 1);
   assert.deepEqual([...result[0].bindings.x], [1, 2, 1]);
 });
 
-test('array slice binding with pattern - any elements', () => {
+test('array group binding with pattern - any elements', () => {
   const result = Tendril('[@x=(_*) 5]').all([1, 2, 3, 4, 5]);
   assert.equal(result.length, 1);
   assert.deepEqual([...result[0].bindings.x], [1, 2, 3, 4]);
 });
 
 // ============================================================================
-// SLICE BINDINGS - Objects
+// GROUP BINDINGS - Objects
 // ============================================================================
 
-test('object slice binding - residual keys', () => {
+test('object group binding - residual keys', () => {
   const result = Tendril('{a:1 @x=(remainder)}').all({a: 1, b: 2, c: 3});
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings.x, Slice.object({b: 2, c: 3}));
+  assert.deepEqual(result[0].bindings.x, Group.object({b: 2, c: 3}));
 });
 
-test('object slice binding - empty residual', () => {
+test('object group binding - empty residual', () => {
   const result = Tendril('{a:1 @x=(remainder)}').all({a: 1});
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings.x, Slice.object({}));
+  assert.deepEqual(result[0].bindings.x, Group.object({}));
 });
 
-test('object slice binding with pattern - match subset', () => {
+test('object group binding with pattern - match subset', () => {
   const result = Tendril('{@x=(a:1 b:2) c:3}').all({a: 1, b: 2, c: 3});
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings.x, Slice.object({a: 1, b: 2}));
+  assert.deepEqual(result[0].bindings.x, Group.object({a: 1, b: 2}));
 });
 
 // ============================================================================
@@ -201,20 +201,20 @@ test('existential matching with unification', () => {
 // COMBINED PATTERNS
 // ============================================================================
 
-test('slice binding with negation', () => {
+test('group binding with negation', () => {
   const result = Tendril('{@x=(a:1) (?!b:_)}').all({a: 1, c: 2});
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings.x, Slice.object({a: 1}));
+  assert.deepEqual(result[0].bindings.x, Group.object({a: 1}));
 });
 
-test('multiple slices and negations', () => {
+test('multiple groups and negations', () => {
   const result = Tendril('{@x=(a:1) @y=(c:3) (?!d:_)}').all({a: 1, b: 2, c: 3});
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings.x, Slice.object({a: 1}));
-  assert.deepEqual(result[0].bindings.y, Slice.object({c: 3}));
+  assert.deepEqual(result[0].bindings.x, Group.object({a: 1}));
+  assert.deepEqual(result[0].bindings.y, Group.object({c: 3}));
 });
 
-test('nested arrays with slices', () => {
+test('nested arrays with groups', () => {
   const result = Tendril('[[@x=(1*) @y=(2*)]]').all([[1, 1, 2, 2]]);
   assert.equal(result.length, 1);
   assert.deepEqual([...result[0].bindings.x], [1, 1]);

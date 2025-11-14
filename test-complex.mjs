@@ -1,4 +1,4 @@
-import {Tendril, Slice} from './dist/tendril.esm.js';
+import {Tendril, Group} from './dist/tendril.esm.js';
 
 function deepEquals(a, b) {
   if (a === b) return true;
@@ -25,7 +25,7 @@ function deepEquals(a, b) {
   return true;
 }
 
-console.log('Test 1: Complex When/Else pattern with slices\n');
+console.log('Test 1: Complex When/Else pattern with groups\n');
 
 const test3 = [
   {tag: 'div', children: ['before']},
@@ -47,7 +47,7 @@ const sol3 = pattern3.solutions(test3).first();
 if (sol3) {
   console.log('✓ Matched with surrounding nodes!');
   console.log('Bindings:', sol3.bindings);
-  console.log('\nDetailed slice contents:');
+  console.log('\nDetailed group contents:');
   console.log('$.attrs keys:', Object.keys(sol3.bindings.attrs));
   console.log('$.attrs:', sol3.bindings.attrs);
   console.log('$.other keys:', Object.keys(sol3.bindings.other));
@@ -64,7 +64,7 @@ if (pattern3.replaceAll) {
       // Exclude 'children' from attrs spread since we're renaming it to thenChildren
       const {children: _, ...attrsRest} = $.attrs || {};
       return {
-        whenelse: Slice.array({
+        whenelse: Group.array({
           tag: 'If',
           ...attrsRest,
           ...($.other || {}),

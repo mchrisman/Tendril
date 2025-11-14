@@ -99,7 +99,7 @@ As usual, parentheses override normal precedence. The lookahead operators come w
   K=V means for all (key,value) where key matches K, value matches V, *and* there is at least one such.
 ```
 
-`..` refers to the **untested slice**: all key/value pairs whose key did not match any key pattern in any `K=V` or `K?=V` assertion.
+`..` refers to the **untested group**: all key/value pairs whose key did not match any key pattern in any `K=V` or `K?=V` assertion.
 `..` is not necessarily empty; it can be bound to any `@` variable (`@x:(..)`).
 
 ---
@@ -140,10 +140,10 @@ $name                 // shorthand for $name:(_)
 [ $x:($z $y) $y $z ] ~= ['r','q','q','r']
 ```
 
-### Scalar vs. Slice bindings
+### Scalar vs. Group bindings
 
 * `$x` binds a **scalar** (one item per solution).
-* `@x` binds a **slice** (0 … n items).
+* `@x` binds a **group** (0 … n items).
 * Bare `$x` ≡ `$x:(_)`
 * Bare `@x` ≡ `@x:(_*)`
 * `$x:(pattern)` ensures the data matches `pattern` and is a single value.
@@ -160,21 +160,21 @@ Examples:
 [ $x @y ]    ~= [[1,2],[3,4]]   // {x:[1,2], y:[[3,4]]}
 [ @x @y ]    ~= [[1,2],[3,4]]   // 3 solutions (different splits)
 ```
-- `..` in objects refers to the **untested slice**: the set of all key value pairs whose key did not match any of the key patterns in any of the assertions.
+- `..` in objects refers to the **untested group**: the set of all key value pairs whose key did not match any of the key patterns in any of the assertions.
   Let us avoid the use of the word *anchored* in referring to objects. (It's confusing. The object is 'anchored' in the sense that *all* of the k/v pairs of the object are tested against *all* the assertions. But this doesn't imply that `..` is empty.)
 
-- Rationalize semantics and syntax for singleton vs slice matching. We have two kinds of logic variables: scalars prefixed with '$', and slices prefixed with '@':
-  `$x:(A_SLICE)` can bind $x to exactly one item; bare $x means `$x:(_)`.
-  `@x:(A_SLICE)` can bind @x to zero, one, or more items; bare @X means `@x:(_*)`.
-  In objects, `@x:(O_BODY)` binds a slice (set of k/v pairs). The terms *scalar* and *slice* refer to *data*, not to *patterns*. (Some patterns cannot be classified as scalar or slice at compile time.)
+- Rationalize semantics and syntax for singleton vs group matching. We have two kinds of logic variables: scalars prefixed with '$', and groups prefixed with '@':
+  `$x:(A_GROUP)` can bind $x to exactly one item; bare $x means `$x:(_)`.
+  `@x:(A_GROUP)` can bind @x to zero, one, or more items; bare @X means `@x:(_*)`.
+  In objects, `@x:(O_BODY)` binds a group (set of k/v pairs). The terms *scalar* and *group* refer to *data*, not to *patterns*. (Some patterns cannot be classified as scalar or group at compile time.)
 
-- '..' in Object patterns is a special token that means "the slice of all k/v pairs whose keys did not match any of the key patterns of any of the k/v assertions.
+- '..' in Object patterns is a special token that means "the group of all k/v pairs whose keys did not match any of the key patterns of any of the k/v assertions.
 
 - bare $x or @x is allowed, but if you want to enforce a pattern on the bound object, parentheses are now required:
-  `$x:(pat)` or `@x(slice)`.
+  `$x:(pat)` or `@x(group)`.
 
 -
-  - In array patterns [ ], all the entries are slice patterns, and a *scalar* is merely an unwrapped slice of length exactly one. Formally, `$x:(pattern)` is a *triple assertion*: the data matches pattern AND the data is a single value AND (unification) if $x was previously bound, the data is equal to the previously bound value. Therefore $x:(_?) and $x:(_*) are both equivalent to $x:(_). You can bind `..` to any @ variable:  `@xyz:(..)`.
+  - In array patterns [ ], all the entries are group patterns, and a *scalar* is merely an unwrapped group of length exactly one. Formally, `$x:(pattern)` is a *triple assertion*: the data matches pattern AND the data is a single value AND (unification) if $x was previously bound, the data is equal to the previously bound value. Therefore $x:(_?) and $x:(_*) are both equivalent to $x:(_). You can bind `..` to any @ variable:  `@xyz:(..)`.
 
 Examples:
 
@@ -201,7 +201,7 @@ Examples:
         // {x:[[1,2],[3,4]], y:[]}    
 ```
 
-- In object patterns { }, the distinction between a scalar and a slice is observable at compile time. Keys and values are scalars. Slices contain key value *pairs*.  `{ @mySlice:(color=blue) $myKey:(color)=$myValue:(blue) }`
+- In object patterns { }, the distinction between a scalar and a group is observable at compile time. Keys and values are scalars. Groups contain key value *pairs*.  `{ @myGroup:(color=blue) $myKey:(color)=$myValue:(blue) }`
 
 - @x together with $x is a name collision, not permitted.
 
@@ -242,7 +242,7 @@ a*           === a*{0,}         // greedy
 a*+          === a*{0,}         // greedy, possessive
 a+?, a+, a++ === a*{1,}         // Not greedy, greedy, greedy possessive
 a?           === a*{0,1}
-..          === _*?            // lazy wildcard slice
+..          === _*?            // lazy wildcard group
 ```
 
 Multiple ellipses are allowed:
@@ -317,7 +317,7 @@ IDENT                   := /[a-zA-Z]\w*/
 ROOT_PATTERN            := ITEM
 
 S_ITEM                   := '$' IDENT
-S_SLICE                  := '@' IDENT
+S_GROUP                  := '@' IDENT
 
 ITEM                     := '(' ITEM ')'
                           | S_ITEM
@@ -328,20 +328,20 @@ ITEM                     := '(' ITEM ')'
                           | ARR
                           | ITEM '|' ITEM     
 
-A_BODY                   :=  (A_SLICE (','? A_SLICE)*)?
+A_BODY                   :=  (A_GROUP (','? A_GROUP)*)?
     
-A_SLICE                  := '(' A_BODY ')'
-                          | S_SLICE
-                          | S_SLICE ':' '(' A_SLICE ')'
+A_GROUP                  := '(' A_BODY ')'
+                          | S_GROUP
+                          | S_GROUP ':' '(' A_GROUP ')'
                           | S_ITEM
-                          | S_ITEM ':' '(' A_SLICE ')'
+                          | S_ITEM ':' '(' A_GROUP ')'
                           | ITEM
                           | OBJ
                           | ARR
-                          | A_SLICE A_QUANT        // todo, indicate precedence
-                          | A_SLICE '|' A_SLICE
-                          | '(?=' A_SLICE ')'
-                          | '(?!' A_SLICE ')'    
+                          | A_GROUP A_QUANT        // todo, indicate precedence
+                          | A_GROUP '|' A_GROUP
+                          | '(?=' A_GROUP ')'
+                          | '(?!' A_GROUP ')'    
                           
 ARR                      := '[' A_BODY ']'                          
 
@@ -359,11 +359,11 @@ BREADCRUMB              := '.' KEY
                           | '[' KEY ']' B_QUANT
                           
                           
-O_BODY                  := (O_SLICE (','? O_SLICE)*)? 
+O_BODY                  := (O_GROUP (','? O_GROUP)*)? 
 
-O_SLICE                 := '(' O_BODY ')'
-                          | S_SLICE
-                          | S_SLICE ':' '(' O_SLICE* ')'
+O_GROUP                 := '(' O_BODY ')'
+                          | S_GROUP
+                          | S_GROUP ':' '(' O_GROUP* ')'
                           | O_TERM
 
 OBJ                     := '{' O_BODY '}'
@@ -431,7 +431,7 @@ a.b=c                     // vertical/path assertion (right-associative)
   a*+
   a+
   a?
-  ..       === _*?       // lazy wildcard slice
+  ..       === _*?       // lazy wildcard group
 ```
   
 * **Nested quantifiers** are allowed via grouping:
@@ -445,7 +445,7 @@ a.b=c                     // vertical/path assertion (right-associative)
 
 ## Binding and Unification
 
-* `$name:(pattern)` attempts to match the data to the pattern, and if successful, binds `$name` to the matched data. The pattern must be a singleton pattern, not a slice pattern.
+* `$name:(pattern)` attempts to match the data to the pattern, and if successful, binds `$name` to the matched data. The pattern must be a singleton pattern, not a group pattern.
 * Bare `$name` is shorthand for `$name:(_)`.
 * **Unification** If the same symbol occurs more than once, e.g. `[ $x:(pattern1) $x:(pattern2) ]`:
     - First pattern1 is matched. (Abort on failure.) The first $x is set to that matched value.
@@ -468,9 +468,9 @@ Examples:
 [ $x $x ] !~= [ [1,2], [1,2,3] ]    // NO (different shapes)
 ```
 
-## Objects and Object Slices
+## Objects and Object Groups
 
-* Each object assertion matches a **slice**: a subset of key/value pairs satisfying that assertion.
+* Each object assertion matches a **group**: a subset of key/value pairs satisfying that assertion.
 * Assertions are **conjunctive** and **non-exclusive**; a single property may satisfy several.
 
 Example:
@@ -478,12 +478,12 @@ Example:
 { /[ab].*/=22  /[bc].*/=22 }  ~=  { b:22, c:22 }
 ```
 
-### Binding slices
+### Binding groups
 
 
 ```
-{ pat1=_  $happy:(pat2=_) }       // bind subset slice to $happy
-{ a=_  b=_  @rest:(..) }        // bind residual slice
+{ pat1=_  $happy:(pat2=_) }       // bind subset group to $happy
+{ a=_  b=_  @rest:(..) }        // bind residual group
 ```
 
 ### Vertical/path assertions
@@ -505,7 +505,7 @@ Example:
 (?!pattern) q     // negative lookahead
 ```
 
-Array-slice lookaheads:
+Array-group lookaheads:
 
 ```
 [ (?= a b ) a b .. ]
@@ -539,7 +539,7 @@ Tendril("{ _(._)*.password = $value }")
   .replaceAll(input, $ => ({ $value: "REDACTED" }));
 ```
 
-**Bind object slices**
+**Bind object groups**
 ```
 { /user.*/=_  $contacts:(/contact.*/=_)  @rest:(..) }
 ```

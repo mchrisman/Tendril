@@ -51,7 +51,7 @@ function parse(input) {
   function Arr_() {
     eat('[')
     let o = []
-    while(!peek(']')) o.push(attempt(ArrSlice_()))
+    while(!peek(']')) o.push(attempt(ArrGroup_()))
     eat(']')
     o
   }

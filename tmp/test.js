@@ -10,7 +10,7 @@ const cases = [
   ['array group + quant', '[(a b) +]'],
   ['array lazy any + count', '[ .. *{2,} ]'],
   ['lookahead singleton', '(?= foo) bar'],
-  ['lookahead slice', '[ (?= a b) c d ]'],
+  ['lookahead group', '[ (?= a b) c d ]'],
   ['object kv + spread + count', '{ foo = bar # {1,3} .. }'],
   ['map with as Map', '{ foo = bar } as Map'],
   ['set double brace', '{{ a b }}'],

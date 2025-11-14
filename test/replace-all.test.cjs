@@ -7,12 +7,12 @@
 const { test, group, assert, run, setSourceFile } = require('./framework.cjs');
 
 // Import the V5 API (ESM, so we need dynamic import)
-let Tendril, Slice;
+let Tendril, Group;
 
 async function loadAPI() {
   const api = await import('../src/tendril-api.js');
   Tendril = api.Tendril;
-  Slice = api.Slice;
+  Group = api.Group;
 }
 
 setSourceFile('replace-all.test.cjs');

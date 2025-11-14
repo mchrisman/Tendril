@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Tendril, Slice } from '../src/tendril-api.js';
+import { Tendril, Group } from '../src/tendril-api.js';
 
 // ==================== Residual with Variable Key Bindings ====================
 
@@ -91,11 +91,11 @@ test('residual with regex key', () => {
 
 test('empty residual when all keys matched', () => {
   // {a:1 b:2 @r=(remainder)} against {a:1, b:2}
-  // All keys matched, residual should be empty Slice.object
+  // All keys matched, residual should be empty Group.object
   const results = Tendril('{a:1 b:2 @r=(remainder)}').all({a: 1, b: 2});
 
   assert.equal(results.length, 1);
-  assert.deepEqual(results[0].bindings.r, Slice.object({}));
+  assert.deepEqual(results[0].bindings.r, Group.object({}));
 });
 
 test('empty residual with wildcard key', () => {

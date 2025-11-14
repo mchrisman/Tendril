@@ -11,7 +11,7 @@ const { test, skip, only, group, beforeAll, afterAll, beforeEach, afterEach, ass
 setSourceFile('example.test.js');
 
 // Parse command line arguments
-const args = process.argv.slice(2);
+const args = process.argv.group(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--filter' && args[i + 1]) {
     runner.filter(args[i + 1]);

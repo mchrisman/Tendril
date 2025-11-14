@@ -240,26 +240,26 @@ group('environment', () => {
   }, { group: 'semantics' });
 });
 
-// Slice utilities
-group('slice utilities', () => {
-  test('makeArraySlice - valid', async () => {
+// Group utilities
+group('group utilities', () => {
+  test('makeArrayGroup - valid', async () => {
     const arr = [1, 2, 3, 4, 5];
-    const slice = sem.makeArraySlice(arr, 1, 3);
-    assert.equal(slice.kind, 'array-slice');
-    assert.equal(slice.ref, arr);
-    assert.equal(slice.start, 1);
-    assert.equal(slice.end, 3);
+    const group = sem.makeArrayGroup(arr, 1, 3);
+    assert.equal(group.kind, 'array-group');
+    assert.equal(group.ref, arr);
+    assert.equal(group.start, 1);
+    assert.equal(group.end, 3);
   }, { group: 'semantics' });
 
-  test('makeArraySlice - invalid bounds', async () => {
+  test('makeArrayGroup - invalid bounds', async () => {
     const arr = [1, 2, 3];
-    assert.throws(() => sem.makeArraySlice(arr, -1, 2), RangeError);
-    assert.throws(() => sem.makeArraySlice(arr, 2, 1), RangeError);
-    assert.throws(() => sem.makeArraySlice(arr, 0, 10), RangeError);
+    assert.throws(() => sem.makeArrayGroup(arr, -1, 2), RangeError);
+    assert.throws(() => sem.makeArrayGroup(arr, 2, 1), RangeError);
+    assert.throws(() => sem.makeArrayGroup(arr, 0, 10), RangeError);
   }, { group: 'semantics' });
 
-  test('makeArraySlice - non-array', async () => {
-    assert.throws(() => sem.makeArraySlice({}, 0, 1), TypeError);
+  test('makeArrayGroup - non-array', async () => {
+    assert.throws(() => sem.makeArrayGroup({}, 0, 1), TypeError);
   }, { group: 'semantics' });
 
   test('makeObjectValueRef - object', async () => {
@@ -282,13 +282,13 @@ group('slice utilities', () => {
     assert.throws(() => sem.makeObjectValueRef([], 'a'), TypeError);
   }, { group: 'semantics' });
 
-  test('makeObjectKeysSlice', async () => {
+  test('makeObjectKeysGroup', async () => {
     const obj = { a: 1, b: 2 };
-    const slice = sem.makeObjectKeysSlice(obj, ['a', 'b']);
-    assert.equal(slice.kind, 'object-keys');
-    assert.equal(slice.ref, obj);
-    assert.ok(slice.keys.has('a'));
-    assert.ok(slice.keys.has('b'));
+    const group = sem.makeObjectKeysGroup(obj, ['a', 'b']);
+    assert.equal(group.kind, 'object-keys');
+    assert.equal(group.ref, obj);
+    assert.ok(group.keys.has('a'));
+    assert.ok(group.keys.has('b'));
   }, { group: 'semantics' });
 });
 

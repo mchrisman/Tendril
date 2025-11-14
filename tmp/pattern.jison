@@ -96,30 +96,30 @@ LOOKAHEAD_SINGLETON
 
 ARRAY_PATTERN
   : '[' ']'                                         { $$ = {type:'array', items:[]}; }
-  | '[' ARRAY_SLICE_PATTERN ']'                     { $$ = {type:'array', items:$2}; }
+  | '[' ARRAY_GROUP_PATTERN ']'                     { $$ = {type:'array', items:$2}; }
   ;
 
-ARRAY_SLICE_PATTERN
-  : SLICE_ATOM (ARRAY_WS SLICE_ATOM)*               {
+ARRAY_GROUP_PATTERN
+  : GROUP_ATOM (ARRAY_WS GROUP_ATOM)*               {
         const out = [$1];
         for (let i=0; i<$2.length; i++) out.push($2[i][1]);
         $$ = out;
     }
   ;
 
-SLICE_ATOM
-  : DDOT                                            { $$ = {type:'slice', kind:'lazy_any'}; }
+GROUP_ATOM
+  : DDOT                                            { $$ = {type:'group', kind:'lazy_any'}; }
   | SYMBOL opt_colon_singleton                      { $$ = $2 ? {type:'binding', name:$1, pattern:$2} : {type:'symbol', name:$1}; }
-  | '(' ARRAY_SLICE_PATTERN ')' opt_array_quant     { $$ = {type:'group', items:$2, quant:$4||null}; }
+  | '(' ARRAY_GROUP_PATTERN ')' opt_array_quant     { $$ = {type:'group', items:$2, quant:$4||null}; }
   | SINGLETON_PATTERN opt_array_quant               { $$ = $2 ? {type:'quant', pattern:$1, quant:$2} : $1; }
-  | LOOKAHEAD_ARRAY_SLICE                           { $$ = $1; }
+  | LOOKAHEAD_ARRAY_GROUP                           { $$ = $1; }
   ;
 
-LOOKAHEAD_ARRAY_SLICE
-  : LP_LOOKAHEAD_POS ARRAY_SLICE_PATTERN ')' ARRAY_SLICE_PATTERN
-      { $$ = {type:'lookaheadSlice', positive:true, guard:$2, then:$4}; }
-  | LP_LOOKAHEAD_NEG ARRAY_SLICE_PATTERN ')' ARRAY_SLICE_PATTERN
-      { $$ = {type:'lookaheadSlice', positive:false, guard:$2, then:$4}; }
+LOOKAHEAD_ARRAY_GROUP
+  : LP_LOOKAHEAD_POS ARRAY_GROUP_PATTERN ')' ARRAY_GROUP_PATTERN
+      { $$ = {type:'lookaheadGroup', positive:true, guard:$2, then:$4}; }
+  | LP_LOOKAHEAD_NEG ARRAY_GROUP_PATTERN ')' ARRAY_GROUP_PATTERN
+      { $$ = {type:'lookaheadGroup', positive:false, guard:$2, then:$4}; }
   ;
 
 opt_array_quant

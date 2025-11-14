@@ -35,10 +35,10 @@ n.b. Most of these are of the "just do the obvious thing" variety and could be o
 * JS regex `/u` **does not** do canonical equivalence. **Default:** no normalization.
 * **Option:** `normalize: 'NFC' | 'NFD' | false` in Pattern options; when enabled, normalize **all** strings (input and pattern barewords/strings) before equality/regex.
 
-## Slice wildcard (`..`)
+## Group wildcard (`..`)
 
 * **Arrays:** `..` ≡ `_*?` (lazy wildcard). Can appear anywhere and multiple times: `[a .. b .. c]` matches `[a, x, y, b, z, c]`. All arrays are anchored; `..` is just syntactic sugar.
-* **Objects:** `..` ≡ `_:_ #?` (allows unknown keys). Multiple slice wildcards are allowed but redundant if adjacent; implementations should warn.
+* **Objects:** `..` ≡ `_:_ #?` (allows unknown keys). Multiple group wildcards are allowed but redundant if adjacent; implementations should warn.
 * **Sets:** `..` ≡ `_ *?` (allows extra members). Same semantics as arrays.
 
 ## Sets and "extras"
@@ -64,10 +64,10 @@ n.b. Most of these are of the "just do the obvious thing" variety and could be o
   - Nested in alternations like `[a | (?=b)]` they work as expected
 * **Implementation:** Lookaheads execute their pattern in a shadow environment; bindings made during lookahead execution are discarded.
 
-## Slices
+## Groups
 
-* Represent a slice with an explicit type, e.g. `Slice { arrayRef, start, end }` (half-open `[start,end)`).
-* Empty slice allowed. Examples in your note stand.
+* Represent a group with an explicit type, e.g. `Group { arrayRef, start, end }` (half-open `[start,end)`).
+* Empty group allowed. Examples in your note stand.
 
 ## Replacement collisions (objects/Maps)
 
@@ -103,7 +103,7 @@ For **Set** replacement: `set.delete(old); set.add(new)` (idempotent).
 ## API (ergonomic proposal)
 
 ```ts
-type Scope = Record<string, unknown> & { slices?: Record<string, Slice> };
+type Scope = Record<string, unknown> & { groups?: Record<string, Group> };
 
 class Pattern {
     constructor(source: string, opts?: {
@@ -286,11 +286,11 @@ Does that answer your question?
 
 Regexes have their own internal bindings and backreferences. Those are local to the regex, which is treated like a black box, and we do not interact with them at all.
 
-> Slice bindings —
+> Group bindings —
 > 
 > Pattern("_ $x:( _ _ )") — what is $x bound to exactly (tuple? list of two matches?)
 >
-$x would be bound to an array slice --- a sequence of adjacent units. That example would fail (ideally compile-time) not compile because the pattern must describe a single unit, not a slice.  But to try to answer your question.
+$x would be bound to an array group --- a sequence of adjacent units. That example would fail (ideally compile-time) not compile because the pattern must describe a single unit, not a group.  But to try to answer your question.
 
      [_ $x:(_ _) foo $x] =~ [a b b foo b b]
      [_ $x:(_ _) foo $x] !=~ [a b b foo [b b]]
@@ -298,7 +298,7 @@ $x would be bound to an array slice --- a sequence of adjacent units. That examp
 
 
 > 
-> Can slices be nested?
+> Can groups be nested?
 
   Yes, but unless a container is involved, they just flatten
 
@@ -453,7 +453,7 @@ The counts are per key value pattern and are completely independent from one ano
 > 
 > What is the current position they peek from?
 
-They can only appear in prescribed positions:   In front of a key pattern or in front of a value pattern. And they must match a unit, not a slice.
+They can only appear in prescribed positions:   In front of a key pattern or in front of a value pattern. And they must match a unit, not a group.
 
     { (?=/.*a.*/)/(..)*/= _ }   //  Match keys of even length that contain an 'a'
 
@@ -478,14 +478,14 @@ There is no need for that semantic; it's redundant, because that's what key valu
 The obvious answer.
 
 
-> Empty-slice bindings
-> Can $x:( .. ) bind to an empty slice ([])? If yes, under what patterns (e.g., (_*))?
+> Empty-group bindings
+> Can $x:( .. ) bind to an empty group ([])? If yes, under what patterns (e.g., (_*))?
 
-Yes, it can bind to an empty slice:
+Yes, it can bind to an empty group:
 
-    `[$x:(_*) $y] =~ [a b c]` finds matches { $x:Slice(), $y:'a'}, { $x:Slice('a'), $y:'b'}, { $x:Slice(a b), $y:'c'}.
+    `[$x:(_*) $y] =~ [a b c]` finds matches { $x:Group(), $y:'a'}, { $x:Group('a'), $y:'b'}, { $x:Group(a b), $y:'c'}.
 
-( We need to have a structure to represent the bound value of $x when it's a slice and not an array. )
+( We need to have a structure to represent the bound value of $x when it's a group and not an array. )
 
 > Pre-initialized variables
 > API shape for seeding bindings (e.g., Pattern(p).find(input, { $x= 42 })) and failure behavior if the seed conflicts.

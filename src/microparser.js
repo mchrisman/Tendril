@@ -23,7 +23,7 @@ export function tokenize(src) {
     reWS.lastIndex = i;
     if (reWS.test(src)) { i = reWS.lastIndex; continue; }
 
-    const c = src[i], c2 = src.slice(i, i + 2), c3 = src.slice(i, i + 3);
+    const c = src[i], c2 = src.group(i, i + 2), c3 = src.group(i, i + 3);
 
     // comments //... to end-of-line (optional but handy)
     if (c2 === '//') {
@@ -61,8 +61,8 @@ export function tokenize(src) {
         let k = j + 1;
         while (k < src.length && /[a-z]/i.test(src[k])) k++;
 
-        const pattern = src.slice(i + 1, j);
-        const flags = src.slice(j + 1, k);
+        const pattern = src.group(i + 1, j);
+        const flags = src.group(j + 1, k);
 
         // Try to construct RegExp to validate this is a valid endpoint
         try {
@@ -84,7 +84,7 @@ export function tokenize(src) {
     reNum.lastIndex = i;
     if (reNum.test(src)) {
       const j = reNum.lastIndex;
-      push('num', Number(src.slice(i, j)), j - i);
+      push('num', Number(src.group(i, j)), j - i);
       continue;
     }
 
@@ -92,7 +92,7 @@ export function tokenize(src) {
     reId.lastIndex = i;
     if (reId.test(src)) {
       const j = reId.lastIndex;
-      const w = src.slice(i, j);
+      const w = src.group(i, j);
       // if (w === 'AND')   { push('kw', 'AND', j - i); continue; }
       if (w === '_')     { push('any', '_',   j - i); continue; }
       if (w === 'true')  { push('bool', true, j - i); continue; }
@@ -136,7 +136,7 @@ function readEsc(s, i) {
       if (s[j] !== '}') return { chr: 'u', adv: 1 }; // fallback
       return { chr: String.fromCodePoint(parseInt(hex, 16) || 0), adv: (j + 1) - i };
     } else {
-      const hex = s.slice(i + 1, i + 5);
+      const hex = s.group(i + 1, i + 5);
       return { chr: String.fromCharCode(parseInt(hex, 16) || 0), adv: 5 };
     }
   }
@@ -271,7 +271,7 @@ export class Parser {
 // ---------- Binding helpers (shared across engine/parser) ----------
 
 /**
- * env: Map<string, {kind:'scalar'|'slice', value:any}>
+ * env: Map<string, {kind:'scalar'|'group', value:any}>
  * We keep it simple and explicit; engine will ensure no accidental mutation.
  */
 export function cloneEnv(env) {
@@ -290,10 +290,10 @@ export function bindScalar(env, name, val) {
   return cur.kind === 'scalar' && Object.is(cur.value, val);
 }
 
-export function bindSlice(env, name, slice) {
+export function bindGroup(env, name, group) {
   const cur = env.get(name);
-  if (!cur) { env.set(name, { kind: 'slice', value: slice }); return true; }
-  // No unification between existing bindings for slices (and never slice<->scalar)
+  if (!cur) { env.set(name, { kind: 'group', value: group }); return true; }
+  // No unification between existing bindings for groups (and never group<->scalar)
   return false;
 }
 

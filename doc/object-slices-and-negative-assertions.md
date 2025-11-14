@@ -6,7 +6,7 @@ To coder: Here’s a clean, standalone **Change Request (CR)** covering \[change
 
 ### Summary
 
-This change replaces the ambiguous “lookahead” model for object negation with a declarative **existential constraint** model, clarifies how variables behave inside such assertions, and normalizes slice (`$` and `@`) semantics across arrays and objects. The goal is to make object matching logically well-defined and implementation-feasible without relying on procedural evaluation order.
+This change replaces the ambiguous “lookahead” model for object negation with a declarative **existential constraint** model, clarifies how variables behave inside such assertions, and normalizes group (`$` and `@`) semantics across arrays and objects. The goal is to make object matching logically well-defined and implementation-feasible without relying on procedural evaluation order.
 
 ---
 
@@ -35,18 +35,18 @@ This aligns object negation with standard first-order logic (∄ binding that ma
 
 ---
 
-### 2. Consistent Slice Semantics (`$` and `@`)
+### 2. Consistent Group Semantics (`$` and `@`)
 
 The `$` and `@` sigils are now explicitly differentiated by their domain of quantification.
 
 * `$x` binds a **single item** (a scalar).
   In arrays, it is shorthand for `$x:(_)`, meaning “match one element and bind it to $x.”
-* `@x` binds a **slice**—a contiguous subsequence in an array or a subset of key–value pairs in an object.
+* `@x` binds a **group**—a contiguous subsequence in an array or a subset of key–value pairs in an object.
 
     * In arrays, `@x` is equivalent to `@x:(_*)`.
     * In objects, `@x` is equivalent to `@x:(..)` (the full set of matched pairs).
 
-Quantifiers such as `+`, `*`, and `?` may follow either `$x` or `@x`, desugaring to repetition of their canonical slice form (e.g., `$x+` → `($x:(_))+`).
+Quantifiers such as `+`, `*`, and `?` may follow either `$x` or `@x`, desugaring to repetition of their canonical group form (e.g., `$x+` → `($x:(_))+`).
 This ensures uniform, predictable expansion rules across data structures.
 
 ---

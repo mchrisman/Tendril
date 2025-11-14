@@ -11,7 +11,7 @@
  * - Lookaheads (?=p) (?!p)
  *
  * NOT YET SUPPORTED (will throw):
- * - Object, Set, Dot, ReplaceSlice, ReplaceKey, ReplaceVal
+ * - Object, Set, Dot, ReplaceGroup, ReplaceKey, ReplaceVal
  */
 
 const { test, assert, run, group, setSourceFile } = require('./framework.js');
@@ -522,7 +522,7 @@ group('M4 features', () => {
   }, { group: 'engine' });
 
   test('replacement pattern works (NOT YET IMPLEMENTED)', async () => {
-    // TODO: ReplaceSlice not yet supported per file header
+    // TODO: ReplaceGroup not yet supported per file header
     // const p = compile('[>> 1 <<]');
     // assert.ok(p.matches([1]));
   }, { group: 'engine' });

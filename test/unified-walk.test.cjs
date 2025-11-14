@@ -7,7 +7,7 @@
 const { test, group, assert, run, setSourceFile } = require('./framework.cjs');
 
 // Import the V5 API (ESM, so we need dynamic import)
-let Tendril, extract, extractAll, matches, Slice;
+let Tendril, extract, extractAll, matches, Group;
 
 async function loadAPI() {
   const api = await import('../src/tendril-api.js');
@@ -15,7 +15,7 @@ async function loadAPI() {
   extract = api.extract;
   extractAll = api.extractAll;
   matches = api.matches;
-  Slice = api.Slice;
+  Group = api.Group;
 }
 
 setSourceFile('unified-walk.test.cjs');
@@ -180,7 +180,7 @@ group('Complex patterns - When/Else matching', () => {
     assert.equal(sol, null, 'Scalar binding with sequence should not match');
   });
 
-  test('replace slice binding', async () => {
+  test('replace group binding', async () => {
     await loadAPI();
 
     const test4 = [
@@ -201,7 +201,7 @@ group('Complex patterns - When/Else matching', () => {
 
     const result = pattern4.replace(test4, ($) => {
       return {
-        whenelse: Slice.array({
+        whenelse: Group.array({
           tag: 'If',
           attrs: $.attrs || {},
           thenChildren: $.then,

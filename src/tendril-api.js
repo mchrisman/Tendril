@@ -50,7 +50,7 @@ class Solutions {
   unique(...vars) {
     if (vars.length === 0) return this;
     const next = new Solutions(this._genFactory);
-    next._filters = this._filters.slice();
+    next._filters = this._filters.group();
     next._takeN = this._takeN;
     next._uniqueSpec = {vars};
     next._uniqueByFn = this._uniqueByFn;
@@ -59,7 +59,7 @@ class Solutions {
 
   uniqueBy(keyFn) {
     const next = new Solutions(this._genFactory);
-    next._filters = this._filters.slice();
+    next._filters = this._filters.group();
     next._takeN = this._takeN;
     next._uniqueSpec = this._uniqueSpec;
     next._uniqueByFn = keyFn;
@@ -77,7 +77,7 @@ class Solutions {
 
   take(n) {
     const next = new Solutions(this._genFactory);
-    next._filters = this._filters.slice();
+    next._filters = this._filters.group();
     next._takeN = Math.max(0, n | 0);
     next._uniqueSpec = this._uniqueSpec;
     next._uniqueByFn = this._uniqueByFn;
@@ -283,7 +283,7 @@ class TendrilImpl {
       : {'0': fnOrValue};
 
     for (const [varName, to] of Object.entries(plan)) {
-      const key = varName.startsWith('$') ? varName.slice(1) : varName;
+      const key = varName.startsWith('$') ? varName.group(1) : varName;
       const spots = sol.at[key] || [];
       for (const site of spots) {
         edits.push({site, to});
@@ -312,7 +312,7 @@ class TendrilImpl {
     const edits = [];
     for (const {sol, plan} of allOccurrences) {
       for (const [varName, to] of Object.entries(plan)) {
-        const key = varName.startsWith('$') ? varName.slice(1) : varName;
+        const key = varName.startsWith('$') ? varName.group(1) : varName;
         const spots = sol.at[key] || [];
         for (const site of spots) {
           edits.push({site, to});
@@ -369,13 +369,13 @@ export function uniqueMatches(pattern, input, ...vars) {
   return Tendril(pattern).solutions(input).unique(...vars).project(b => b);
 }
 
-// ------------------- Slice class -------------------
+// ------------------- Group class -------------------
 
 /**
- * Slice — wrapper for slice bindings and replacements
+ * Group — wrapper for group bindings and replacements
  * Represents a contiguous subsequence of an array or subset of object properties
  */
-export class Slice {
+export class Group {
   constructor(type, value) {
     // Make internal properties non-enumerable so they don't pollute spreading
     Object.defineProperty(this, '_type', {
@@ -402,17 +402,17 @@ export class Slice {
 
   // Factory methods
   static array(...items) {
-    return new Slice("array", items);
+    return new Group("array", items);
   }
 
   static object(obj) {
-    return new Slice("object", obj);
+    return new Group("object", obj);
   }
 
   // Iterable protocol (for [...s])
   [Symbol.iterator]() {
     if (this._type !== "array") {
-      throw new TypeError("Object-type Slice is not iterable");
+      throw new TypeError("Object-type Group is not iterable");
     }
     let i = 0;
     const arr = this._value;
@@ -425,13 +425,13 @@ export class Slice {
 
   // Index access (s[2])
   get [Symbol.toStringTag]() {
-    return `Slice(${this._type})`;
+    return `Group(${this._type})`;
   }
 
   // Optional: convenience to mimic array indexing directly
   at(i) {
     if (this._type === "array") return this._value[i];
-    throw new TypeError("Not an array slice");
+    throw new TypeError("Not an array group");
   }
 }
 
@@ -457,7 +457,7 @@ function applyEdits(input, edits) {
   for (const [pathKey, pathEdits] of editsByPath) {
     // Separate scalar sets from array splices
     const sets = pathEdits.filter(e => e.site.kind === 'scalar');
-    const splices = pathEdits.filter(e => e.site.kind === 'slice');
+    const splices = pathEdits.filter(e => e.site.kind === 'group');
 
     // Apply scalar sets
     for (const edit of sets) {
@@ -475,14 +475,14 @@ function applyEdits(input, edits) {
 
     // Apply splices (needs index adjustment for arrays)
     if (splices.length > 0) {
-      // Separate array slices from object slices
-      const arraySplices = splices.filter(e => e.site.sliceStart !== undefined);
+      // Separate array groups from object groups
+      const arraySplices = splices.filter(e => e.site.groupStart !== undefined);
       const objectSplices = splices.filter(e => e.site.keys !== undefined);
 
       // Handle array splices
       if (arraySplices.length > 0) {
-        // Sort by sliceStart ascending (leftmost first)
-        arraySplices.sort((a, b) => a.site.sliceStart - b.site.sliceStart);
+        // Sort by groupStart ascending (leftmost first)
+        arraySplices.sort((a, b) => a.site.groupStart - b.site.groupStart);
 
         let offset = 0;
         for (const edit of arraySplices) {
@@ -490,8 +490,8 @@ function applyEdits(input, edits) {
           if (!Array.isArray(arr)) continue;
 
           // Adjust indices by cumulative offset
-          const start = edit.site.sliceStart + offset;
-          const end = edit.site.sliceEnd + offset;
+          const start = edit.site.groupStart + offset;
+          const end = edit.site.groupEnd + offset;
 
           // Compare-and-set: verify all elements still match
           let allMatch = true;
@@ -503,15 +503,15 @@ function applyEdits(input, edits) {
           }
 
           if (allMatch) {
-            // Slice replacements MUST use Slice wrapper
-            if (!edit.to || !(edit.to instanceof Slice) || edit.to._type !== 'array') {
+            // Group replacements MUST use Group wrapper
+            if (!edit.to || !(edit.to instanceof Group) || edit.to._type !== 'array') {
               throw new Error(
-                `Array slice variable replacement must use Slice.array(). ` +
-                `Use: replace(data, $ => ({varName: Slice.array(...elements)}))`
+                `Array group variable replacement must use Group.array(). ` +
+                `Use: replace(data, $ => ({varName: Group.array(...elements)}))`
               );
             }
 
-            // Extract replacement elements from Slice wrapper
+            // Extract replacement elements from Group wrapper
             const elements = edit.to._value;
 
             // Splice out old, splice in new (mutates arr in-place)
@@ -538,11 +538,11 @@ function applyEdits(input, edits) {
         }
 
         if (allMatch) {
-          // Object slice replacements MUST use Slice.object()
-          if (!edit.to || !(edit.to instanceof Slice) || edit.to._type !== 'object') {
+          // Object group replacements MUST use Group.object()
+          if (!edit.to || !(edit.to instanceof Group) || edit.to._type !== 'object') {
             throw new Error(
-              `Object slice variable replacement must use Slice.object(). ` +
-              `Use: replace(data, $ => ({varName: Slice.object({...props})}))`
+              `Object group variable replacement must use Group.object(). ` +
+              `Use: replace(data, $ => ({varName: Group.object({...props})}))`
             );
           }
 
@@ -582,7 +582,7 @@ function setAtMutate(root, path, value) {
 function projectBindings(b, vars) {
   const out = {};
   for (const v of vars) {
-    const key = v.startsWith('$') ? v.slice(1) : v;
+    const key = v.startsWith('$') ? v.group(1) : v;
     if (Object.prototype.hasOwnProperty.call(b, key)) out[key] = b[key];
   }
   return out;

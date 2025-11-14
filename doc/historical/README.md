@@ -124,7 +124,7 @@ a+           === a*{1,}
 a?           === a*{0,1}
 a            === a*1
 a*{2,3}?     // lazy
-..          === _*?            // lazy wildcard slice
+..          === _*?            // lazy wildcard group
 
 // Multiple ellipses allowed. '..' is sugar for '_*?'.
 [a .. b .. c]  ~=  [a x y b z c]
@@ -134,10 +134,10 @@ a*{2,3}?     // lazy
 
 ## Quantifiers — Objects 
 
-Each object assertion matches a **slice** of key/value pairs, possibly overlapping, no backtracking.
+Each object assertion matches a **group** of key/value pairs, possibly overlapping, no backtracking.
 ```
-{ pat1=_  $happy:(pat2=_) }     // bind subset slice
-{ a=_  b=_  $rest:(..) }      // bind residual slice
+{ pat1=_  $happy:(pat2=_) }     // bind subset group
+{ a=_  b=_  $rest:(..) }      // bind residual group
 ```
 
 ---
@@ -236,17 +236,17 @@ SINGLETON_PATTERN       := LITERAL
 LOOKAHEAD_SINGLETON     := '(?=' SINGLETON_PATTERN ')' SINGLETON_PATTERN
                          | '(?!' SINGLETON_PATTERN ')' SINGLETON_PATTERN
 
-ARRAY_PATTERN           := '[' ARRAY_SLICE_PATTERN* ']'
+ARRAY_PATTERN           := '[' ARRAY_GROUP_PATTERN* ']'
 
-ARRAY_SLICE_PATTERN     := '..'                               // == _*? (lazy)
+ARRAY_GROUP_PATTERN     := '..'                               // == _*? (lazy)
                          | SYMBOL (':' SINGLETON_PATTERN)?
-                         | '(' ARRAY_SLICE_PATTERN ')' ARRAY_QUANT?
+                         | '(' ARRAY_GROUP_PATTERN ')' ARRAY_QUANT?
                          | SINGLETON_PATTERN ARRAY_QUANT?
-                         | ARRAY_SLICE_PATTERN ARRAY_WS ARRAY_SLICE_PATTERN
-                         | LOOKAHEAD_ARRAY_SLICE
+                         | ARRAY_GROUP_PATTERN ARRAY_WS ARRAY_GROUP_PATTERN
+                         | LOOKAHEAD_ARRAY_GROUP
 
-LOOKAHEAD_ARRAY_SLICE   := '(?=' ARRAY_SLICE_PATTERN ')' ARRAY_SLICE_PATTERN
-                         | '(?!' ARRAY_SLICE_PATTERN ')' ARRAY_SLICE_PATTERN
+LOOKAHEAD_ARRAY_GROUP   := '(?=' ARRAY_GROUP_PATTERN ')' ARRAY_GROUP_PATTERN
+                         | '(?!' ARRAY_GROUP_PATTERN ')' ARRAY_GROUP_PATTERN
 
 ARRAY_QUANT             := '?' | '??' | '+' | '+?' | '*' ('{' (INTEGER (',' INTEGER)?)? '}')?
 
@@ -299,7 +299,7 @@ Precedence: `( )` > quantifiers > binding > path descent (i.e. . []) > space > `
   a+        === a*{1,}
   a?        === a*{0,1}
   a*?       // lazy
-  ..       === _*?       // lazy wildcard slice
+  ..       === _*?       // lazy wildcard group
   ```
 * **Nested quantifiers** are allowed via grouping:
 
@@ -312,7 +312,7 @@ Precedence: `( )` > quantifiers > binding > path descent (i.e. . []) > space > `
 
 ## Binding and Unification
 
-* `$name : pattern` attempts to match the data to the pattern, and if successful, binds `$name` to the matched data. The pattern must be a singleton pattern, not a slice pattern.
+* `$name : pattern` attempts to match the data to the pattern, and if successful, binds `$name` to the matched data. The pattern must be a singleton pattern, not a group pattern.
 * Bare `$name` is shorthand for `$name:_`.
 * **Unification** If the same symbol occurs more than once, e.g. [ $x:pattern1 $x:pattern2 ]:
     - First pattern1 is matched. (Abort on failure.) The first $x is set to that matched value.
@@ -335,9 +335,9 @@ Examples:
 [ $x $x ] !~= [ [1,2], [1,2,3] ]    // NO (different shapes)
 ```
 
-## Objects and Object Slices
+## Objects and Object Groups
 
-* Each object assertion matches a **slice**: a subset of key/value pairs satisfying that assertion.
+* Each object assertion matches a **group**: a subset of key/value pairs satisfying that assertion.
 * Assertions are **conjunctive** and **non-exclusive**; a single property may satisfy several.
 
 Example:
@@ -346,11 +346,11 @@ Example:
 { /[ab].*/=22  /[bc].*/=22  xq*3 }  ~=  { b:22, c:22 }
 ```
 
-### Binding slices
+### Binding groups
 
 ```
-{ pat1=_  @happy:(pat2=_) }       // bind subset slice to $happy
-{ a=_  b=_  @rest:(..) }        // bind residual slice
+{ pat1=_  @happy:(pat2=_) }       // bind subset group to $happy
+{ a=_  b=_  @rest:(..) }        // bind residual group
 ```
 
 ### Vertical/path assertions
@@ -373,7 +373,7 @@ Objects are **anchored by default**; `{a=b} !~= {a:b, c=d}`.
 (?!pattern) q     // negative lookahead
 ```
 
-Array-slice lookaheads:
+Array-group lookaheads:
 
 ```
 [ (?= a b ) a b .. ]
@@ -405,7 +405,7 @@ Tendril("{ (_.)*password = $value }")
   .replaceAll(input, $ => ({ $value: "REDACTED" }));
 ```
 
-**Bind object slices**
+**Bind object groups**
 
 ```
 { /user.*/=_  $contacts:(/contact.*/=_)  $rest:.. }
