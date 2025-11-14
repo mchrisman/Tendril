@@ -87,7 +87,7 @@ export function Tendril(pattern, options = {}) {
             occurrences.push({
               kind: 'replace-obj-group',
               pathToObject: group.pathToObject,
-              keys: group.keys.group(),
+              keys: group.keys.slice(),
               replacement: toObject(norm.value(env)),
             });
           } else {
@@ -179,7 +179,7 @@ function setAtPath(root, path, value) {
   if (!Array.isArray(path) || path.length === 0) {
     throw new Error('Cannot set empty path');
   }
-  const parent = getAtPath(root, path.group(0, -1));
+  const parent = getAtPath(root, path.slice(0, -1));
   const last = path[path.length - 1];
   if (last.type === 'index' && Array.isArray(parent)) parent[last.key] = value;
   else if (isObject(parent)) parent[last.key] = value;
@@ -194,7 +194,7 @@ function getAtPath(root, path) {
   return cur;
 }
 
-function parentPath(path) { return path && path.length ? path.group(0, -1) : []; }
+function parentPath(path) { return path && path.length ? path.slice(0, -1) : []; }
 function getLastKeyFromPath(path){ return path && path.length ? path[path.length-1].key : undefined; }
 
 function renameKeyAtPath(root, path, oldKey, newKey) {

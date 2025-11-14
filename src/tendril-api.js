@@ -50,7 +50,7 @@ class Solutions {
   unique(...vars) {
     if (vars.length === 0) return this;
     const next = new Solutions(this._genFactory);
-    next._filters = this._filters.group();
+    next._filters = this._filters.slice();
     next._takeN = this._takeN;
     next._uniqueSpec = {vars};
     next._uniqueByFn = this._uniqueByFn;
@@ -59,7 +59,7 @@ class Solutions {
 
   uniqueBy(keyFn) {
     const next = new Solutions(this._genFactory);
-    next._filters = this._filters.group();
+    next._filters = this._filters.slice();
     next._takeN = this._takeN;
     next._uniqueSpec = this._uniqueSpec;
     next._uniqueByFn = keyFn;
@@ -77,7 +77,7 @@ class Solutions {
 
   take(n) {
     const next = new Solutions(this._genFactory);
-    next._filters = this._filters.group();
+    next._filters = this._filters.slice();
     next._takeN = Math.max(0, n | 0);
     next._uniqueSpec = this._uniqueSpec;
     next._uniqueByFn = this._uniqueByFn;
@@ -283,7 +283,7 @@ class TendrilImpl {
       : {'0': fnOrValue};
 
     for (const [varName, to] of Object.entries(plan)) {
-      const key = varName.startsWith('$') ? varName.group(1) : varName;
+      const key = varName.startsWith('$') ? varName.slice(1) : varName;
       const spots = sol.at[key] || [];
       for (const site of spots) {
         edits.push({site, to});
@@ -312,7 +312,7 @@ class TendrilImpl {
     const edits = [];
     for (const {sol, plan} of allOccurrences) {
       for (const [varName, to] of Object.entries(plan)) {
-        const key = varName.startsWith('$') ? varName.group(1) : varName;
+        const key = varName.startsWith('$') ? varName.slice(1) : varName;
         const spots = sol.at[key] || [];
         for (const site of spots) {
           edits.push({site, to});
@@ -582,7 +582,7 @@ function setAtMutate(root, path, value) {
 function projectBindings(b, vars) {
   const out = {};
   for (const v of vars) {
-    const key = v.startsWith('$') ? v.group(1) : v;
+    const key = v.startsWith('$') ? v.slice(1) : v;
     if (Object.prototype.hasOwnProperty.call(b, key)) out[key] = b[key];
   }
   return out;

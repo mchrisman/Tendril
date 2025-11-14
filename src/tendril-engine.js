@@ -277,7 +277,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
     // Lookahead — zero-width assertion at current position (unanchored)
     if (it.type === 'Look') {
       let matchedSol = null;
-      const remainingGroup = arr.group(ixArr);
+      const remainingGroup = arr.slice(ixArr);
 
       // Match the lookahead pattern against remaining array (unanchored at end)
       // For negative lookahead, clone to discard bindings
@@ -323,7 +323,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
       // Try each possible group length and see if the Seq pattern matches
       // GREEDY: try longer groups first
       for (let k = maxK; k >= 0; k--) {
-        const testGroup = arr.group(ixArr, ixArr + k);
+        const testGroup = arr.slice(ixArr, ixArr + k);
 
         matchArray(groupBind.pat.items, testGroup, [...path, ixArr], sIn, (s2) => {
           const group = testGroup;
@@ -348,7 +348,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
       const effectiveMax = max !== null ? max : Infinity;
 
       for (let k = 0; k <= maxK; k++) {
-        const group = arr.group(ixArr, ixArr + k);
+        const group = arr.slice(ixArr, ixArr + k);
 
         // Check if group length satisfies quantifier bounds
         if (group.length < effectiveMin || group.length > effectiveMax) continue;
@@ -839,7 +839,7 @@ function navigateBreadcrumbs(breadcrumbs, startNode, basePath, sol, emit, ctx) {
   }
 
   const bc = breadcrumbs[0];
-  const rest = breadcrumbs.group(1);
+  const rest = breadcrumbs.slice(1);
 
   // Navigate the breadcrumb (no quantifiers in v5)
   navigateSingleBreadcrumb(bc, rest, startNode, basePath, sol, emit, ctx);

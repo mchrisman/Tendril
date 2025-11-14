@@ -26,12 +26,12 @@ export function lex(input){
     const ch = peek(); if (!ch) break;
 
     // Lookahead tokens
-    if (ch==='(' && input.group(i, i+3)==='(?=' ){ toks.push({type:'(?=',lexeme:'(?='}); i+=3; continue; }
-    if (ch==='(' && input.group(i, i+3)==='(?!' ){ toks.push({type:'(?!',lexeme:'(?!'}); i+=3; continue; }
+    if (ch==='(' && input.slice(i, i+3)==='(?=' ){ toks.push({type:'(?=',lexeme:'(?='}); i+=3; continue; }
+    if (ch==='(' && input.slice(i, i+3)==='(?!' ){ toks.push({type:'(?!',lexeme:'(?!'}); i+=3; continue; }
 
     // Two-char symbols
-    if (input.group(i,i+2)==='?='){ emit('?=','?='); i+=2; continue; }
-    if (input.group(i,i+2)==='..'){ emit('..','..'); i+=2; continue; }
+    if (input.slice(i,i+2)==='?='){ emit('?=','?='); i+=2; continue; }
+    if (input.slice(i,i+2)==='..'){ emit('..','..'); i+=2; continue; }
 
     // Single-char symbols
     const sym = '()[]{}.,|:?=*+#!';

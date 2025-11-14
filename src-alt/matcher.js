@@ -115,7 +115,7 @@ function* matchSeq(seq, arr, i, env, path){
     // choose greedy by default
     const take = maxTake; // possessive/greedy default
     const env2 = cloneEnvShallow(env);
-    const groupVal = arr.group(i, i+take);
+    const groupVal = arr.slice(i, i+take);
     if (unifyGroupArray(env2, name, groupVal, path, i, i+take)) {
       yield* matchSeq(tail, arr, i+take, env2, path);
     }
@@ -141,7 +141,7 @@ function* matchSeq(seq, arr, i, env, path){
           j++;
         }
         if (!ok) continue;
-        const groupVal = arr.group(i, j);
+        const groupVal = arr.slice(i, j);
         if (!unifyGroupArray(env2, head.name, groupVal, path, i, j)) continue;
         yield* matchSeq(tail, arr, j, env2, path);
         if (poss) return; // commit (no backtrack) for possessive
@@ -285,7 +285,7 @@ function* matchObject(groups, obj, env, path){
   if (residBindName){
     const kv = {};
     for (const k of residualKeys) kv[k] = obj[k];
-    const meta = { type:'object', pathToObject: path, keys: residualKeys.group() };
+    const meta = { type:'object', pathToObject: path, keys: residualKeys.slice() };
     const cur = env2[residBindName];
     if (!cur){
       env2[residBindName] = { kind:'group', value: kv, path, site:'group', group: meta };
