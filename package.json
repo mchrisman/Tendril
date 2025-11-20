@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "build": "node build.js",
-    "test": "./run-all"
+    "test": "node --test test/*.test.js"
   },
   "keywords": [
     "pattern-matching",

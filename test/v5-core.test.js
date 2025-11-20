@@ -16,6 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { matches, extract, extractAll, replaceAll, Tendril, Group } from '../src/tendril-api.js';
+import { parsePattern } from '../src/tendril-parser.js';
 
 // ==================== Literals & Wildcards ====================
 
@@ -201,6 +202,75 @@ test('breadcrumb - array index wildcard', () => {
 test('breadcrumb - mixed key and index', () => {
   assert.ok(matches('{a[0]:1}', {a: [1, 2]}));
   assert.ok(matches('{a[1].b:2}', {a: [{b: 1}, {b: 2}]}));
+});
+
+test('breadcrumb - skip levels with ..', () => {
+  // Modern syntax: ..password means arbitrary depth (including zero) then password
+  assert.ok(matches('{..password:$x}', {password: 'secret'}));
+  assert.ok(matches('{..password:$x}', {user: {password: 'secret'}}));
+  assert.ok(matches('{..password:$x}', {user: {credentials: {password: 'secret'}}}));
+  assert.ok(matches('{..password:$x}', {a: {b: {c: {password: 'secret'}}}}));
+});
+
+test('breadcrumb - quantifiers NOT supported (v5)', () => {
+  // The old v4 syntax _(._)* is no longer supported
+  // This should fail to parse
+  assert.throws(() => {
+    parsePattern('{ _(._)*.password : $x }');
+  }, /unexpected|expected/i);
+});
+
+test('breadcrumb - multiple matches at different depths', () => {
+  // ..password finds all password fields at any depth
+  const data = {
+    password: 'top',
+    user: {
+      password: 'nested',
+      profile: {
+        password: 'deep'
+      }
+    }
+  };
+  const results = extractAll('{..password:$x}', data);
+  assert.equal(results.length, 3);
+  const passwords = results.map(r => r.x).sort();
+  assert.deepEqual(passwords, ['deep', 'nested', 'top']);
+});
+
+test('breadcrumb - _..foo (wildcard then skip to foo)', () => {
+  // _..foo means: match any key, then descend to foo
+  const data = {
+    user: {credentials: {foo: 1}},
+    admin: {settings: {foo: 2}}
+  };
+  const results = extractAll('{_..foo:$x}', data);
+  assert.equal(results.length, 2);
+  const values = results.map(r => r.x).sort();
+  assert.deepEqual(values, [1, 2]);
+});
+
+test('breadcrumb - ..:bar (any value at any depth)', () => {
+  // ..:bar means: navigate to any key at any depth, match value bar
+  const data = {
+    a: {b: {c: 'bar'}},
+    x: {y: 'bar'},
+    z: 'bar'
+  };
+  const results = extractAll('{..:bar}', data);
+  assert.equal(results.length, 3);
+});
+
+test('breadcrumb - ..foo:bar vs .. foo:bar (spacing)', () => {
+  // In Tendril, whitespace is a delimiter, so '.. foo' should be two tokens
+  // But since .. needs to be followed by a key in breadcrumb context,
+  // both should parse the same way if foo follows ..
+  const data = {a: {foo: 'bar'}};
+
+  assert.ok(matches('{..foo:bar}', data), '..foo should match');
+
+  // With space: '.. foo' - the space should not affect parsing
+  // since whitespace is generally insignificant except as delimiter
+  assert.ok(matches('{.. foo:bar}', data), '.. foo should match same as ..foo');
 });
 
 // ==================== Scalar Binding ($x) ====================

@@ -12,7 +12,7 @@ Tendril is:
 
 Patterns resemble the data they match, with minimal extra syntax, and with syntax familiar to Regex and JSON users.
 
-```
+```js
 // "Hello, worlds"
 const data = {
   planets: {
@@ -59,18 +59,18 @@ Tendril(pattern)
 ### Primitives
 
 ```
-foo                    // matches the exact string "foo" (bare identifier)
-"foo bar"              // quoted strings match strings containing spaces or punctuation
+foo            // matches the exact string "foo" (bare identifier)
+"foo bar"      // quoted strings match strings containing spaces or punctuation
 
-/foo/                  // regex matches *any substring* — "seafood" matches (contains "foo")
-/foo/i                 // case-insensitive substring match — "FOOdish", "seaFOOd" both match
-/^[A-Z]{2,}$/          // regex anchors to whole string — matches "NASA", "OK", but not "Ok!"
+/foo/          // regex matches *any substring* — "seafood" matches (contains "foo")
+/foo/i         // case-insensitive substring match — "FOOdish", "seaFOOd" both match
+/^[A-Z]{2,}$/  // regex anchors to whole string — matches "NASA", "OK", but not "Ok!"
 
-123                    // matches numeric value 123 (123 and 123.0 equivalent)
+123            // matches numeric value 123 (123 and 123.0 equivalent)
 
-true                   // matches Boolean true only
-false                  // matches Boolean false only
-null                   // matches null only
+true           // matches Boolean true only
+false          // matches Boolean false only
+null           // matches null only
 ```
 
 ### Arrays
@@ -88,43 +88,6 @@ null                   // matches null only
 [ foobar ]     // matches ["foobar"], ❌does not match ["foo","bar"]
 [ foo bar ]    // matches ["foo","bar"], ❌does not match ["foo bar"]
 
-```
-
-### Objects
-
-An object pattern is an unordered set of predicates, each of the form
-
-- `K?:V`, which means for all key/value properties in the object, if the key matches K then the value must match V;
-- `K:V`, which means the same thing **and** that there exists at least one key matching K.
-
-```
-{ /[ab]/:/[cd]/ }   // matches object {"a":"c"}. Does not match any array or string.
-{ a:b, c:d }    // matches {"a":"b", "c":"d", "e":"f"}.  All predicates are satisfied.
-{ a:b, x:y }    // ❌does not match {"a":"b", "c":"d", "e":"f"}.  `x:y` not satisfied.
-{ a:b, x?:y }   // matches {"a":"b", "c":"d", "e":"f"}.  `x?:y` is trivially satisfied.
-{ a:b, x?:y }   // ❌does not match {"a":"b", "c":"d", "x":"w"}. `x?:y` not satisfied.
-
-{ /a|b/:/x/  /b|c/:/y/ }  // matches {"a":"x", "b":"y"}. Commas are optional.
-
-Every predicate must be satisfied by at least one key-value pair, but the same key-value pair may satisfy multiple predicates:
-
-{ /a|b/:/x/  /b|c/:/y/ }  //matches { b: "xy" }
-{ /a|b/:/x/ /b|c/:/y/ }  // does not match {"b":"x"}. 
-
-
-```
-
-The keyword `remainder` signifies the set of key/value properties whose keys didn't match any of the predicates' conditions.
-
-```
-{ a:b }           // matches {"a":"c", "b":"c", "e":"f"}. Remainder is {"b":"c", "e":"f"}.
-
-{ a:b remainder }         // ❌does not match {"a":"b"}. The `remainder` asserts a nonempty remainder.
-{ a:b (?!remainder) }     // ❌does not match {"a":"b", "c":"d"}. The '(?!remainder)' asserts an empty remainder.
-{ a:b @rest=(remainder) } // @rest binds to a nonempty remainder
-{ a:b @rest=(remainder?) } // @rest binds to a nonempty or empty remainder
-{ a:_ (?!remainder) } // matches iff 'a' is the only key
-{ a:_ remainder } // matches iff 'a' is not the only key
 ```
 
 ### Operators in arrays
@@ -157,6 +120,46 @@ Use parentheses to apply operators to groups.
 [1 2 (3 4|5 6)]    // matches [1, 2, 5, 6]  
 [(?! .. 3 4) ..]   // matches [4, 3, 2, 1] but not [1, 2, 3, 4]
                    // (matches arrays *not* containing the subsequence [3,4])
+```
+
+### Objects
+
+Array patterns are regex-like, but object patterns are different. An object pattern is an unordered set of predicates, each of the form
+
+- `K?:V`, which means for all key/value properties in the object, if the key matches K then the value must match V;
+- `K:V`, which means the same thing **and** that there exists at least one key matching K.
+
+```
+{ /[ab]/:/[cd]/ }   // matches object {"a":"c"}. Does not match any array or string.
+{ a:b, c:d }    // matches {"a":"b", "c":"d", "e":"f"}.  All predicates are satisfied.
+{ a:b, x:y }    // ❌does not match {"a":"b", "c":"d", "e":"f"}.  `x:y` not satisfied.
+{ a:b, x?:y }   // matches {"a":"b", "c":"d", "e":"f"}.  `x?:y` is trivially satisfied.
+{ a:b, x?:y }   // ❌does not match {"a":"b", "c":"d", "x":"w"}. `x?:y` not satisfied.
+
+{ /a|b/:/x/  /b|c/:/y/ }  // matches {"a":"x", "b":"y"}. Commas are optional.
+
+Every predicate must be satisfied by at least one key-value pair, but the same key-value pair may satisfy multiple predicates:
+
+{ /a|b/:/x/  /b|c/:/y/ }  //matches { b: "xy" }
+{ /a|b/:/x/ /b|c/:/y/ }  // does not match {"b":"x"}. 
+
+
+```
+
+The keyword `remainder` signifies the set of key/value properties whose keys didn't match any of the predicates' conditions.
+
+```
+{ a:b }           // matches {"a":"c", "b":"c", "e":"f"}. Remainder is {"b":"c", "e":"f"}.
+
+{ a:b remainder }         // ❌does not match {"a":"b"}. The `remainder` asserts a nonempty remainder.
+{ a:b (?!remainder) }     // ❌does not match {"a":"b", "c":"d"}. The '(?!remainder)' asserts an empty remainder.
+
+// Important idioms:
+{ a:b @rest=(remainder) } // @rest binds to a nonempty remainder
+{ a:b @rest=(remainder?) } // @rest binds to a nonempty or empty remainder
+
+{ a:_ (?!remainder) } // matches iff 'a' is the only key
+{ a:_ remainder } // matches iff 'a' is not the only key
 ```
 
 ### Operators on key/value predicates
@@ -204,9 +207,9 @@ adjacency/commas inside arrays and objects
 `:`, `?:`
 Parentheses override precedence. Lookaheads always require parentheses.
 
-### Variables: Scalars and groups
+### Capturing variables: Scalars and groups
 
-Tendril has two kinds of variables, similar to named groups or backreferences in regex.
+Tendril has two kinds of capturing variables, similar to named groups or backreferences in regex.
 
 **Scalars** capture exactly one item (a single primitive, or a single array or object reference):
 
@@ -223,12 +226,26 @@ Tendril has two kinds of variables, similar to named groups or backreferences in
 **Multiple solutions example**
 [ .. $x .. ] applied to ["a","b"]
 
-produces two solutions:
+finds two solutions:
+
 { x: "a" }
 { x: "b" }
 
-Because `$x` must bind to a *single* item, and each possible binding
+because `$x` must bind to a *single* item, and each possible binding
 yields a distinct solution.
+
+But: 
+
+[ .. @x .. ] applied to ["a","b"]
+
+finds four solutions:
+
+{ x: Group() }
+{ x: Group("a") }
+{ x: Group("b") }
+{ x: Group("a","b") }
+
+Note that group variables, starting with '@', get captured as 'Group' objects.
 
 "**Unification**": If the same variable appears twice, it asserts that the value in each position is the same.
 
@@ -252,7 +269,7 @@ A scalar binder `$x:(P)` succeeds exactly when the data matches P at that point 
 
 ### Paths
 
-In objects, the K:V assertions generalize to paths, chains of more than one key or index:
+In objects, the K:V assertions generalize to paths, chains of more than one key or index, PATH:V:
 
 ```
 
@@ -267,6 +284,7 @@ Use '..' to express arbitrary depth.
 
 ```
     {a.b..c:d}  // matches {'a': {'b': {'p':[{} {} {'q':{'r':{'c':'d'}}}]}}}
+    {..:_}      // matches every value at any point in the structure
 ```
 
 ## API Overview
@@ -309,7 +327,7 @@ Tendril("[@x 99 @y]").replace([1, 2, 99, 4], $ => [...$.y, 99, ...$.x])
 // Result: [4, 99, 1, 2]
 
 // Transform object structures
-Tendril("{ _(._)*.password : $p }")
+Tendril("{ ..password : $p }")
 .replaceAll(data, $ => ({p: "REDACTED"}))
 // Redacts all password fields at any depth
 ```
@@ -356,7 +374,7 @@ Tendril(`{
 
 ```javascript
 // Redact sensitive fields at any nesting level
-Tendril("{ _..password : $value }")
+Tendril("{ ..password : $value }")
 .replaceAll(data, $ => ({value: "REDACTED"}))
 ```
 

@@ -634,6 +634,26 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       const next = [];
       for (const state of solutions) {
         const {sol: s0, testedKeys} = state;
+
+        // Special handling for RootKey with ?:
+        if (term.key.type === 'RootKey') {
+          // ..key?:val always matches (breadcrumb navigation handles existence)
+          const s1 = cloneSolution(s0);
+          navigateBreadcrumbs(
+            term.breadcrumbs,
+            obj,
+            path,
+            s1,
+            (finalNode, finalPath, s2) => {
+              matchItem(term.val, finalNode, finalPath, s2, (s3) => {
+                next.push({sol: s3, testedKeys: new Set(testedKeys)});
+              }, ctx);
+            },
+            ctx
+          );
+          continue;
+        }
+
         const keys = objectKeysMatching(obj, term.key, s0.env);
 
         if (keys.length > 0) {
@@ -675,6 +695,26 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     let next = [];
     for (const state of solutions) {
       const {sol: s0, testedKeys} = state;
+
+      // Special handling for RootKey (leading .. in path like {..password:$x})
+      if (term.key.type === 'RootKey') {
+        // Start breadcrumb navigation from the object itself, not from a matched key
+        const s1 = cloneSolution(s0);
+        navigateBreadcrumbs(
+          term.breadcrumbs,
+          obj,
+          path,
+          s1,
+          (finalNode, finalPath, s2) => {
+            matchItem(term.val, finalNode, finalPath, s2, (s3) => {
+              next.push({sol: s3, testedKeys: new Set(testedKeys)});
+            }, ctx);
+          },
+          ctx
+        );
+        continue;
+      }
+
       // OPTIMIZATION: Compute keys for THIS solution's bindings
       const keys = objectKeysMatching(obj, term.key, s0.env);
       if (DEBUG) console.log(`[matchObject] term.key:`, term.key, `matched keys:`, keys);

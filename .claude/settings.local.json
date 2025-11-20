@@ -8,7 +8,9 @@
       "Bash(cat:*)",
       "Bash(npm run:*)",
       "Bash(DEBUG_REPLACE=1 node:*)",
-      "Bash(./run-all:*)"
+      "Bash(./run-all:*)",
+      "Bash(awk:*)",
+      "Bash(./test/run-all.cjs:*)"
     ],
     "deny": [],
     "ask": []

@@ -2,7 +2,7 @@
 
 import {Tendril,Group} from './dist/tendril.esm.js';
 
-console.log('Testing Tendril patterns for AppDown macros\n');
+console.log('Testing Tendril patterns for AppDown\n');
 function deepEquals(a, b) {
   if (a === b) return true;
   if (a === null || b === null) return false;

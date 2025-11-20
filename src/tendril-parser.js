@@ -13,7 +13,7 @@
 //   Bindings: SBind (scalar $x), GroupBind (group @x)
 //   Operators: Alt, Look, Quant
 //   Object: OTerm (with breadcrumbs), Spread (..)
-//   Breadcrumbs: Breadcrumb with optional B_Quant
+//   Breadcrumbs: Breadcrumb (no quantifiers in v5)
 
 import {Parser, makeRegExp} from './microparser.js';
 
@@ -34,6 +34,7 @@ const Lit = (v) => ({type: 'Lit', value: v});
 const Re = (r) => ({type: 'Re', re: r});
 const Bool = (v) => ({type: 'Bool', value: v});
 const Null = () => ({type: 'Null'});
+const RootKey = () => ({type: 'RootKey'}); // Special marker for leading .. in paths
 
 // Bindings
 const SBind = (name, pat) => ({type: 'SBind', name, pat});  // $x=(pat)
@@ -458,6 +459,11 @@ function parseORemnant(p) {
   });
   if (negRemnant) return negRemnant;
 
+  // Check for common mistake: using '..' instead of 'remainder'
+  if (p.peek('..')) {
+    p.fail('bare ".." not allowed in objects; use "remainder" or "@x=(remainder)" instead');
+  }
+
   return null;
 }
 
@@ -507,22 +513,29 @@ function parseOGroup(p) {
     p.fail('bare @x not allowed in objects; use @x=(remainder) to bind residual keys');
   }
 
-  // Reject bare '..' in object context (use 'remainder' instead)
-  if (p.peek('..')) {
-    p.fail('bare ".." not allowed in objects; use "remainder" or "@x=(remainder)" instead');
-  }
-
   // Otherwise parse O_TERM
   // O_TERM will parse KEY (including $x=(ITEM) patterns) normally via parseItem
+  // Leading .. is now allowed in OTerm for paths like {..password:$x}
   return parseOTerm(p);
 }
 
 function parseOTerm(p) {
   // O_TERM := KEY BREADCRUMB* '?'? (':' | '?:') VALUE O_QUANT?
+  //         | '..' BREADCRUMB* '?'? (':' | '?:') VALUE O_QUANT?  (leading .. for zero-depth)
 
-  // KEY BREADCRUMB* op VALUE
-  const key = parseItem(p);
+  // Check for leading .. (e.g., {..password:$x})
+  let key;
   const breadcrumbs = [];
+
+  if (p.peek('..')) {
+    // Leading .. means "start from root, match at any depth including zero"
+    // Use special RootKey marker
+    key = RootKey();
+    // Don't consume the '..' yet - it will be parsed as first breadcrumb
+  } else {
+    // KEY BREADCRUMB* op VALUE
+    key = parseItem(p);
+  }
 
   // Parse breadcrumbs (. .. or [)
   while (p.peek('.') || p.peek('..') || p.peek('[')) {
@@ -563,12 +576,17 @@ function parseOTerm(p) {
 
 function parseBreadcrumb(p) {
   // BREADCRUMB := '..' KEY          // skip levels
+  //             | '..' ':' or '?:'  // skip to any key (use _ as key)
   //             | '.' KEY            // single level
   //             | '[' KEY ']'        // array index
 
   // Skip levels: .. KEY
   if (p.peek('..')) {
     p.eat('..');
+    // Special case: '..' immediately followed by ':' or '?' means "any key at any depth"
+    if (p.peek(':') || p.peek('?:') || p.peek('?')) {
+      return Breadcrumb('skip', Any(), null);
+    }
     const key = parseItem(p);
     return Breadcrumb('skip', key, null);
   }
@@ -635,7 +653,7 @@ Parser.prototype.peekAt = function(offset, kind) {
 
 export const AST = {
   // Atoms
-  Any, Lit, Re, Bool, Null,
+  Any, Lit, Re, Bool, Null, RootKey,
   // Bindings
   SBind, GroupBind,
   // Containers
