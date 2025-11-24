@@ -21,9 +21,9 @@ test('optimization - simple variable chain', () => {
     d: 'end'
   };
 
-  const result = Tendril('{a:$x $x:$y $y:$z}').all(data);
+  const result = Tendril('{a:$x $x:$y $y:$z}').match(data).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings, {'0': data, x: 'b', y: 'c', z: 'd'});
+  assert.deepEqual(result[0].toObject(), {x: 'b', y: 'c', z: 'd'});
 });
 
 test('optimization - complex organizational graph', () => {
@@ -55,15 +55,15 @@ test('optimization - complex organizational graph', () => {
   }`;
 
   const start = Date.now();
-  const result = Tendril(pattern).all(data);
+  const result = Tendril(pattern).match(data).solutions().toArray();
   const elapsed = Date.now() - start;
 
   assert.equal(result.length, 1);
-  assert.equal(result[0].bindings.userName, 'Bob');
-  assert.equal(result[0].bindings.userId, 'u2');
-  assert.equal(result[0].bindings.managerId, 'u3');
-  assert.equal(result[0].bindings.managerPhone, '555-1111');
-  assert.equal(result[0].bindings.projectName, 'Project Beta');
+  assert.equal(result[0].userName, 'Bob');
+  assert.equal(result[0].userId, 'u2');
+  assert.equal(result[0].managerId, 'u3');
+  assert.equal(result[0].managerPhone, '555-1111');
+  assert.equal(result[0].projectName, 'Project Beta');
 
   // Performance check: should complete quickly with optimization
   assert.ok(elapsed < 100, `Took ${elapsed}ms, expected < 100ms`);
@@ -100,7 +100,7 @@ test('optimization - performance stress test', () => {
   }`;
 
   const start = Date.now();
-  const result = Tendril(pattern).all(data);
+  const result = Tendril(pattern).match(data).solutions().toArray();
   const elapsed = Date.now() - start;
 
   assert.ok(result.length > 0, 'Should find at least one solution');

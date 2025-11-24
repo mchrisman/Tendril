@@ -1,15 +1,17 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {matches, extract, extractAll, replaceAll, Tendril} from '../src/tendril-api.js';
+import {Tendril} from '../src/tendril-api.js';
 
 // console.log(Tendril('{a[$x:(_)]=$y}').occurrences({a: [1, 2, 3]}).forEach(o => console.log(JSON.stringify(o))))
 
 
 console.log(
   Tendril('[/aBcd/i]')
-  .occurrences(["abcd"])
-  .forEach(o => console.log(JSON.stringify(o,null,4))))
+  .find(["abcd"])
+  .solutions()
+  .toArray()
+  .forEach(o => console.log(JSON.stringify(o.toObject(),null,4))))
 /*
 
 ```
@@ -87,26 +89,30 @@ translates to
 
 Let's try a simpler two:'
 // expected: {a:[99,100,101]}
-console.log(replaceAll('{a[$x:(_)]=$y}', {a: [1, 2, 3]}, 
-(v)=>{ return {y:v.x+99};})) 
+const data1 = {a: [1, 2, 3]};
+Tendril('{a[$x=(_)]:$y}').find(data1).editAll((v) => ({y: v.x + 99}));
+console.log(data1);
 
 //expected: {a:[undefined,undefined,2]}, or else error if replacing keys is not supported yet
- console.log(replaceAll('{a[$x:(_)]=$y}', {a: [1, 2, 3]},
-  (v)=>{ return {x:2};})) 
-  
- // expected: { a: [ 1, 2, 3 ] } // 'out' binding does not exist, so is ignored' 
- console.log(replaceAll('{a[$x:(0)]=_}', {a: [1, 2, 3]},
- bindings => ({ $out: 99})));
+const data2 = {a: [1, 2, 3]};
+Tendril('{a[$x=(_)]:$y}').find(data2).editAll((v) => ({x: 2}));
+console.log(data2);
+
+ // expected: { a: [ 1, 2, 3 ] } // 'out' binding does not exist, so is ignored'
+const data3 = {a: [1, 2, 3]};
+Tendril('{a[$x=(0)]:_}').find(data3).editAll(bindings => ({out: 99}));
+console.log(data3);
 
 // expected, { a: [ 1, 2, 3 ] } // no replacements specified
-console.log(replaceAll('{a[$x:(0)]=_}', {a: [1, 2, 3]},
-bindings => ({})))
+const data4 = {a: [1, 2, 3]};
+Tendril('{a[$x=(0)]:_}').find(data4).editAll(bindings => ({}));
+console.log(data4);
 
 // expected: 99
- console.log(replaceAll('{a[$x:(_)]=$y}', {a: [1, 2, 3]}, (v)=>{ return {0:99};}))
- 
+console.log(Tendril('{a[$x=(_)]:$y}').find({a: [1, 2, 3]}).replaceAll(() => 99));
+
 // expected: 98
- console.log(replaceAll('{a[$x:(_)]=$y}', {a: [1, 2, 3]}, 98))
+console.log(Tendril('{a[$x=(_)]:$y}').find({a: [1, 2, 3]}).replaceAll(() => 98));
 
  
 ```

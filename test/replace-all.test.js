@@ -12,7 +12,7 @@ test('replace all scalar values in array', () => {
   const data = [1, 2, 1, 3];
 
   const t = Tendril('1');
-  const result = t.replaceAll(data, ($) => ({0: 99}));
+  const result = t.find(data).replaceAll(() => 99);
   assert.deepEqual(result, [99, 2, 99, 3]);
 });
 
@@ -24,7 +24,7 @@ test('replace all matching objects', () => {
   ];
 
   const t = Tendril('{type:"A"}');
-  const result = t.replaceAll(data, ($) => ({0: {type: 'A', val: 0}}));
+  const result = t.find(data).replaceAll(() => ({type: 'A', val: 0}));
 
   assert.equal(result[0].val, 0);
   assert.equal(result[1].val, 2);

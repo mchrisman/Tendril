@@ -8,19 +8,26 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { replaceAll } from '../src/tendril-api.js';
+import { Tendril, replaceAll } from '../src/tendril-api.js';
+
+// Helper for variable replacement with pure semantics
+function replaceVars(pattern, data, planFn) {
+  const cloned = JSON.parse(JSON.stringify(data));
+  Tendril(pattern).find(cloned).editAll(planFn);
+  return cloned;
+}
 
 test('replace value binding - all array elements', () => {
   // expected: {a:[99,100,101]}
-  const result = replaceAll('{a[$x=(_)]:$y}', {a: [1, 2, 3]}, (v) => {
-    return {y: v.x + 99};
+  const result = replaceVars('{a[$x=(_)]:$y}', {a: [1, 2, 3]}, (sol) => {
+    return {y: sol.x + 99};
   });
   assert.deepEqual(result, {a: [99, 100, 101]});
 });
 
 test('replace index binding - should error or create sparse array', () => {
   // expected: {a:[undefined,undefined,2]}, or else error if replacing keys is not supported yet
-  const result = replaceAll('{a[$x=(_)]:$y}', {a: [1, 2, 3]}, (v) => {
+  const result = replaceVars('{a[$x=(_)]:$y}', {a: [1, 2, 3]}, (sol) => {
     return {x: 2};
   });
   // TODO: should this error or create sparse array? Currently silently ignores
@@ -33,21 +40,19 @@ test('replace index binding - should error or create sparse array', () => {
 
 test('replace with non-existent binding - should be ignored', () => {
   // expected: { a: [ 1, 2, 3 ] } // 'out' binding does not exist, so is ignored
-  const result = replaceAll('{a[$x=(0)]:_}', {a: [1, 2, 3]}, bindings => ({$out: 99}));
+  const result = replaceVars('{a[$x=(0)]:_}', {a: [1, 2, 3]}, sol => ({out: 99}));
   assert.deepEqual(result, {a: [1, 2, 3]});
 });
 
 test('replace with empty plan - no changes', () => {
   // expected: { a: [ 1, 2, 3 ] } // no replacements specified
-  const result = replaceAll('{a[$x=(0)]:_}', {a: [1, 2, 3]}, bindings => ({}));
+  const result = replaceVars('{a[$x=(0)]:_}', {a: [1, 2, 3]}, sol => ({}));
   assert.deepEqual(result, {a: [1, 2, 3]});
 });
 
 test('replace $0 with function - replaces entire match', () => {
   // expected: 99
-  const result = replaceAll('{a[$x=(_)]:$y}', {a: [1, 2, 3]}, (v) => {
-    return {0: 99};
-  });
+  const result = replaceAll('{a[$x=(_)]:$y}', {a: [1, 2, 3]}, () => 99);
   assert.strictEqual(result, 99);
 });
 

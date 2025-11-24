@@ -48,7 +48,7 @@ function recordGroupSite(sol, varName, path, groupStart, groupEnd, valueRefs) {
 // Public entry: evaluate a parsed ITEM AST on input, return list of solutions.
 // Each solution: {bindings: Object, sites: Map<varName, Site[]>}
 export function match(ast, input, opts = {}) {
-  const maxSteps = opts.maxSteps ?? 20000;
+  const maxSteps = opts.maxSteps ?? 2000000;
   const debug = opts.debug;
   const ctx = {steps: 0, maxSteps, debug};
   const solutions = [];
@@ -66,7 +66,7 @@ export function match(ast, input, opts = {}) {
 
 // Scan mode: find all occurrences at any depth
 export function scan(ast, input, opts = {}) {
-  const maxSteps = opts.maxSteps ?? 20000;
+  const maxSteps = opts.maxSteps ?? 2000000;
   const debug = opts.debug;
   const ctx = {steps: 0, maxSteps, debug};
   const solutions = [];
@@ -142,95 +142,95 @@ function matchItem(item, node, path, sol, emit, ctx) {
 
   function doMatch() {
     switch (item.type) {
-    case 'Any':
-      emit(cloneSolution(sol));
-      return;
+      case 'Any':
+        emit(cloneSolution(sol));
+        return;
 
-    case 'Lit':
-      if (Object.is(node, item.value)) emit(cloneSolution(sol));
-      return;
+      case 'Lit':
+        if (Object.is(node, item.value)) emit(cloneSolution(sol));
+        return;
 
-    case 'Re':
-      if (item.re.test(String(node))) emit(cloneSolution(sol));
-      return;
+      case 'Re':
+        if (item.re.test(String(node))) emit(cloneSolution(sol));
+        return;
 
-    case 'Bool':
-      if (Object.is(node, item.value)) emit(cloneSolution(sol));
-      return;
+      case 'Bool':
+        if (Object.is(node, item.value)) emit(cloneSolution(sol));
+        return;
 
-    case 'Null':
-      if (node === null) emit(cloneSolution(sol));
-      return;
+      case 'Null':
+        if (node === null) emit(cloneSolution(sol));
+        return;
 
-    case 'Alt': {
-      for (const sub of item.alts) {
-        matchItem(sub, node, path, sol, emit, ctx);
-        guard(ctx);
-      }
-      return;
-    }
-
-    case 'Look': {
-      // Zero-width assertion; bindings from successful positive lookahead persist.
-      let matchedSol = null;
-      matchItem(item.pat, node, path, cloneSolution(sol), (s2) => {
-        if (!matchedSol) matchedSol = s2;  // capture first successful match
-      }, ctx);
-
-      const matched = (matchedSol !== null);
-      if ((matched && !item.neg) || (!matched && item.neg)) {
-        emit(matched ? matchedSol : cloneSolution(sol));
-      }
-      return;
-    }
-
-    case 'SBind': {
-      // Scalar binding: $x or $x:(pattern)
-      // Scalar bindings cannot match sequences - if pattern is Seq, no match
-      if (item.pat.type === 'Seq') {
-        // TODO: emit warning that $x:(seq) is invalid, should use @x:(seq)
-        return; // No match
-      }
-
-      // Match inner pattern, then bind variable to node if successful
-      matchItem(item.pat, node, path, sol, (s2) => {
-        const s3 = cloneSolution(s2);
-        if (bindScalar(s3.env, item.name, node)) {
-          recordScalarSite(s3, item.name, path, node);
-          if (ctx.debug?.onBind) {
-            ctx.debug.onBind('scalar', item.name, node);
-          }
-          emit(s3);
+      case 'Alt': {
+        for (const sub of item.alts) {
+          matchItem(sub, node, path, sol, emit, ctx);
+          guard(ctx);
         }
-      }, ctx);
-      return;
-    }
+        return;
+      }
 
-    case 'GroupBind': {
-      // Group binding can only appear in array/object contexts
-      // If appearing at top level, treat as error
-      throw new Error('Group binding @x cannot appear at top level');
-    }
+      case 'Look': {
+        // Zero-width assertion; bindings from successful positive lookahead persist.
+        let matchedSol = null;
+        matchItem(item.pat, node, path, cloneSolution(sol), (s2) => {
+          if (!matchedSol) matchedSol = s2;  // capture first successful match
+        }, ctx);
 
-    case 'Arr': {
-      if (!Array.isArray(node)) return;
-      matchArray(item.items, node, path, sol, emit, ctx);
-      return;
-    }
+        const matched = (matchedSol !== null);
+        if ((matched && !item.neg) || (!matched && item.neg)) {
+          emit(matched ? matchedSol : cloneSolution(sol));
+        }
+        return;
+      }
 
-    case 'Obj': {
-      if (!isObject(node)) return;
-      matchObject(item.terms, item.spread, node, path, sol, emit, ctx);
-      return;
-    }
+      case 'SBind': {
+        // Scalar binding: $x or $x:(pattern)
+        // Scalar bindings cannot match sequences - if pattern is Seq, no match
+        if (item.pat.type === 'Seq') {
+          // TODO: emit warning that $x:(seq) is invalid, should use @x:(seq)
+          return; // No match
+        }
 
-    case 'Paren': {
-      matchItem(item.item, node, path, sol, emit, ctx);
-      return;
-    }
+        // Match inner pattern, then bind variable to node if successful
+        matchItem(item.pat, node, path, sol, (s2) => {
+          const s3 = cloneSolution(s2);
+          if (bindScalar(s3.env, item.name, node)) {
+            recordScalarSite(s3, item.name, path, node);
+            if (ctx.debug?.onBind) {
+              ctx.debug.onBind('scalar', item.name, node);
+            }
+            emit(s3);
+          }
+        }, ctx);
+        return;
+      }
 
-    default:
-      throw new Error(`Unknown item type: ${item.type}`);
+      case 'GroupBind': {
+        // Group binding can only appear in array/object contexts
+        // If appearing at top level, treat as error
+        throw new Error('Group binding @x cannot appear at top level');
+      }
+
+      case 'Arr': {
+        if (!Array.isArray(node)) return;
+        matchArray(item.items, node, path, sol, emit, ctx);
+        return;
+      }
+
+      case 'Obj': {
+        if (!isObject(node)) return;
+        matchObject(item.terms, item.spread, node, path, sol, emit, ctx);
+        return;
+      }
+
+      case 'Paren': {
+        matchItem(item.item, node, path, sol, emit, ctx);
+        return;
+      }
+
+      default:
+        throw new Error(`Unknown item type: ${item.type}`);
     }
   }
 }
@@ -238,13 +238,25 @@ function matchItem(item, node, path, sol, emit, ctx) {
 // ------------- Array matching -------------
 
 function matchArray(items, arr, path, sol, emit, ctx) {
-  // Match array items anchored at start and end
+  // Optimize away trailing '..' (bare spread with no quantifier)
+  // This is redundant since it means "consume any remaining elements"
+  // Note: This only affects Spread nodes, not GroupBind nodes like @x
+  const last = items[items.length - 1];
+  const hadTrailingSpread = last && last.type === 'Spread' && last.quant == null;
+  if (hadTrailingSpread) {
+    items = items.slice(0, -1);
+  }
+
+  // Match array items anchored at start (and end if no trailing ..)
   stepItems(0, 0, sol);
 
   function stepItems(ixItem, ixArr, sIn) {
     guard(ctx);
     if (ixItem === items.length) {
-      if (ixArr === arr.length) emit(cloneSolution(sIn));
+      // If we had trailing spread, allow leftover elements; otherwise require exact match
+      if (hadTrailingSpread || ixArr === arr.length) {
+        emit(cloneSolution(sIn));
+      }
       return;
     }
     const it = items[ixItem];
@@ -341,43 +353,27 @@ function matchArray(items, arr, path, sol, emit, ctx) {
       return;
     }
 
-    // For @x:(pat*), validate using quantifier logic
+    // For @x:(pat*), use quantifier logic with solution threading
     if (groupBind.pat.type === 'Quant') {
-      const {sub, min, max} = groupBind.pat;
-      const effectiveMin = min !== null ? min : 0;
-      const effectiveMax = max !== null ? max : Infinity;
+      const {sub, min, max, op} = groupBind.pat;
+      const m = min !== null ? min : 0;
+      const n = max !== null ? max : Infinity;
+      const quantOp = op || '?';
 
-      for (let k = 0; k <= maxK; k++) {
-        const group = arr.slice(ixArr, ixArr + k);
-
-        // Check if group length satisfies quantifier bounds
-        if (group.length < effectiveMin || group.length > effectiveMax) continue;
-
-        // Validate each item matches sub-pattern
-        let allMatch = true;
-        for (let i = 0; i < group.length; i++) {
-          let foundMatch = false;
-          matchItem(sub, group[i], [...path, ixArr + i], sIn, () => {
-            foundMatch = true;
-          }, ctx);
-          if (!foundMatch) {
-            allMatch = false;
-            break;
-          }
-        }
-        if (!allMatch) continue;
-
-        // Try binding this group
-        const s2 = cloneSolution(sIn);
+      return quantOnArray(sub, m, n, quantOp, ixItem, ixArr, sIn, (st) => {
+        const start = ixArr;
+        const end = st.idx;
+        const group = arr.slice(start, end);
+        const s2 = cloneSolution(st.sol);
         const groupValue = Group.array(...group);
         if (bindGroup(s2.env, groupBind.name, groupValue)) {
-          recordGroupSite(s2, groupBind.name, path, ixArr, ixArr + k, group);
+          recordGroupSite(s2, groupBind.name, path, start, end, group);
           if (ctx.debug?.onBind) {
             ctx.debug.onBind('group', groupBind.name, groupValue);
           }
-          stepItems(ixItem + 1, ixArr + k, s2);
+          stepItems(ixItem + 1, end, s2);
         }
-      }
+      });
     } else {
       // Non-quantified pattern: @x:(pattern) means exactly one item matching pattern
       if (ixArr < arr.length) {
@@ -397,12 +393,16 @@ function matchArray(items, arr, path, sol, emit, ctx) {
     }
   }
 
-  function quantOnArray(sub, m, n, op, ixItem, ixArr, sIn) {
+  function quantOnArray(sub, m, n, op, ixItem, ixArr, sIn, cont) {
     // Consume exactly k repetitions for some k ∈ [m..n]
     const maxRep = Math.min(n, arr.length - ixArr);
 
     // Determine if this is possessive (commit to first match, no backtracking)
     const isPossessive = op && (op.startsWith('*{') || op.endsWith('+'));
+
+    const continueWith = cont
+      ? (st) => cont(st)
+      : (st) => stepItems(ixItem + 1, st.idx, st.sol);
 
     // DP-like iterative expansion to avoid deep recursion explosion
     let frontier = [{idx: ixArr, sol: cloneSolution(sIn), reps: 0}];
@@ -438,7 +438,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
       }
       // Emit only the longest match (possessive - no backtracking)
       for (const st of frontier) {
-        stepItems(ixItem + 1, st.idx, st.sol);
+        continueWith(st);
       }
     } else {
       // Non-possessive: try all lengths from m to n (backtracking allowed)
@@ -464,7 +464,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
       // Emit in reverse order: longest matches first (greedy)
       for (let i = allFrontiers.length - 1; i >= 0; i--) {
         for (const st of allFrontiers[i]) {
-          stepItems(ixItem + 1, st.idx, st.sol);
+          continueWith(st);
         }
       }
     }

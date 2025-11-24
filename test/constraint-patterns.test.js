@@ -9,64 +9,64 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Tendril, Group } from '../src/tendril-api.js';
+import { Tendril } from '../src/tendril-api.js';
 
 // ============================================================================
 // NEGATIVE ASSERTIONS - What Works
 // ============================================================================
 
 test('simple negative assertion - key does not exist', () => {
-  const result = Tendril('{(?!c:_) a:1}').all({a: 1});
+  const result = Tendril('{(?!c:_) a:1}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
 test('simple negative assertion - key exists (should fail)', () => {
-  const result = Tendril('{(?!c:_) a:1}').all({a: 1, c: 2});
+  const result = Tendril('{(?!c:_) a:1}').match({a: 1, c: 2}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
 test('negative assertion - value does not exist', () => {
-  const result = Tendril('{(?!_:1) a:2}').all({a: 2});
+  const result = Tendril('{(?!_:1) a:2}').match({a: 2}).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
 test('negative assertion - value exists (should fail)', () => {
-  const result = Tendril('{(?!_:1) a:2}').all({a: 1});
+  const result = Tendril('{(?!_:1) a:2}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
 test('negative assertion with already-bound variable', () => {
   // $x bound to value first, then checked in negation
-  const result = Tendril('{a:$x (?!b:$x)}').all({a: 5});
+  const result = Tendril('{a:$x (?!b:$x)}').match({a: 5}).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.equal(result[0].bindings.x, 5);
+  assert.equal(result[0].x, 5);
 });
 
 test('negative assertion with already-bound variable - fails when present', () => {
-  const result = Tendril('{a:$x (?!b:$x)}').all({a: 5, b: 5});
+  const result = Tendril('{a:$x (?!b:$x)}').match({a: 5, b: 5}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
 test('closed object assertion - no residual keys', () => {
-  const result = Tendril('{a:1 (?!remainder)}').all({a: 1});
+  const result = Tendril('{a:1 (?!remainder)}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
 test('closed object assertion - fails with extra keys', () => {
-  const result = Tendril('{a:1 (?!remainder)}').all({a: 1, b: 2});
+  const result = Tendril('{a:1 (?!remainder)}').match({a: 1, b: 2}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
 test('multiple negative assertions', () => {
-  const result = Tendril('{(?!a:_) (?!b:_) c:1}').all({c: 1});
+  const result = Tendril('{(?!a:_) (?!b:_) c:1}').match({c: 1}).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
 test('negative assertion does not leak bindings', () => {
   // Variables bound inside (?!remainder) should not escape
-  const result = Tendril('{(?!$x:1) a:2}').all({a: 2});
+  const result = Tendril('{(?!$x:1) a:2}').match({a: 2}).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.equal(result[0].bindings.x, undefined); // x should not be bound
+  assert.equal(result[0].x, undefined); // x should not be bound
 });
 
 // ============================================================================
@@ -77,14 +77,14 @@ test.skip('LIMITATION: bidirectional constraint - negation before binding', () =
   // This pattern SHOULD constrain $x to not equal any existing value
   // But current implementation cannot handle this due to evaluation order
   // See doc/v5-constraints-limitations.md
-  const result = Tendril('{(?!_:$x) $x:_}').all({a: 1, b: 2});
+  const result = Tendril('{(?!_:$x) $x:_}').match({a: 1, b: 2}).solutions().toArray();
   // Would need constraint propagation to work correctly
   assert.equal(result.length, 0); // Should fail but currently succeeds
 });
 
 test('WORKAROUND: bind variable before negation', () => {
   // This works because $x is bound before the negation checks it
-  const result = Tendril('{$x:_ (?!_:$x)}').all({a: 1});
+  const result = Tendril('{$x:_ (?!_:$x)}').match({a: 1}).solutions().toArray();
   // This checks: "for all OTHER keys, value != $x"
   // But this is NOT the same as the bidirectional constraint above
   assert.equal(result.length, 1);
@@ -95,39 +95,39 @@ test('WORKAROUND: bind variable before negation', () => {
 // ============================================================================
 
 test('array group binding - middle group', () => {
-  const result = Tendril('[1 @x 5]').all([1, 2, 3, 4, 5]);
+  const result = Tendril('[1 @x 5]').match([1, 2, 3, 4, 5]).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual([...result[0].bindings.x], [2, 3, 4]);
+  assert.deepEqual([...result[0].x], [2, 3, 4]);
 });
 
 test('array group binding - end group', () => {
-  const result = Tendril('[1 @x]').all([1, 2, 3]);
+  const result = Tendril('[1 @x]').match([1, 2, 3]).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual([...result[0].bindings.x], [2, 3]);
+  assert.deepEqual([...result[0].x], [2, 3]);
 });
 
 test('array group binding - empty group', () => {
-  const result = Tendril('[1 @x 2]').all([1, 2]);
+  const result = Tendril('[1 @x 2]').match([1, 2]).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.equal(result[0].bindings.x.length, 0);
+  assert.equal(result[0].x.length, 0);
 });
 
 test('array group binding with pattern - specific sequence', () => {
-  const result = Tendril('[@x=(1 2) 3]').all([1, 2, 3]);
+  const result = Tendril('[@x=(1 2) 3]').match([1, 2, 3]).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual([...result[0].bindings.x], [1, 2]);
+  assert.deepEqual([...result[0].x], [1, 2]);
 });
 
 test('array group binding with pattern - quantified', () => {
-  const result = Tendril('[@x=((1|2)*) 3]').all([1, 2, 1, 3]);
+  const result = Tendril('[@x=((1|2)*) 3]').match([1, 2, 1, 3]).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual([...result[0].bindings.x], [1, 2, 1]);
+  assert.deepEqual([...result[0].x], [1, 2, 1]);
 });
 
 test('array group binding with pattern - any elements', () => {
-  const result = Tendril('[@x=(_*) 5]').all([1, 2, 3, 4, 5]);
+  const result = Tendril('[@x=(_*) 5]').match([1, 2, 3, 4, 5]).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual([...result[0].bindings.x], [1, 2, 3, 4]);
+  assert.deepEqual([...result[0].x], [1, 2, 3, 4]);
 });
 
 // ============================================================================
@@ -135,21 +135,21 @@ test('array group binding with pattern - any elements', () => {
 // ============================================================================
 
 test('object group binding - residual keys', () => {
-  const result = Tendril('{a:1 @x=(remainder)}').all({a: 1, b: 2, c: 3});
+  const result = Tendril('{a:1 @x=(remainder)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings.x, Group.object({b: 2, c: 3}));
+  assert.deepEqual(result[0].x, {b: 2, c: 3});
 });
 
 test('object group binding - empty residual', () => {
-  const result = Tendril('{a:1 @x=(remainder)}').all({a: 1});
+  const result = Tendril('{a:1 @x=(remainder)}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings.x, Group.object({}));
+  assert.deepEqual(result[0].x, {});
 });
 
 test('object group binding with pattern - match subset', () => {
-  const result = Tendril('{@x=(a:1 b:2) c:3}').all({a: 1, b: 2, c: 3});
+  const result = Tendril('{@x=(a:1 b:2) c:3}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings.x, Group.object({a: 1, b: 2}));
+  assert.deepEqual(result[0].x, {a: 1, b: 2});
 });
 
 // ============================================================================
@@ -157,23 +157,23 @@ test('object group binding with pattern - match subset', () => {
 // ============================================================================
 
 test('variable unification across assertions', () => {
-  const result = Tendril('{a:$x b:$x}').all({a: 5, b: 5});
+  const result = Tendril('{a:$x b:$x}').match({a: 5, b: 5}).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.equal(result[0].bindings.x, 5);
+  assert.equal(result[0].x, 5);
 });
 
 test('variable unification fails with conflicting values', () => {
-  const result = Tendril('{a:$x b:$x}').all({a: 5, b: 3});
+  const result = Tendril('{a:$x b:$x}').match({a: 5, b: 3}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
 test('variable unification with negation', () => {
-  const result = Tendril('{a:$x b:$x (?!c:$x)}').all({a: 5, b: 5});
+  const result = Tendril('{a:$x b:$x (?!c:$x)}').match({a: 5, b: 5}).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
 test('variable unification with negation - fails when present', () => {
-  const result = Tendril('{a:$x b:$x (?!c:$x)}').all({a: 5, b: 5, c: 5});
+  const result = Tendril('{a:$x b:$x (?!c:$x)}').match({a: 5, b: 5, c: 5}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
@@ -183,18 +183,18 @@ test('variable unification with negation - fails when present', () => {
 
 test('existential key matching - creates branches', () => {
   // Pattern {$k=1} should match any key with value 1
-  const result = Tendril('{$k:1}').all({a: 1, b: 1});
+  const result = Tendril('{$k:1}').match({a: 1, b: 1}).solutions().toArray();
   assert.equal(result.length, 2); // Two solutions: k="a" and k="b"
-  const keys = result.map(r => r.bindings.k).sort();
+  const keys = result.map(r => r.k).sort();
   assert.deepEqual(keys, ['a', 'b']);
 });
 
 test('existential matching with unification', () => {
   // Pattern {$k=$v $k=$v} should match keys where key appears once with consistent value
-  const result = Tendril('{$k:$v $k:$v}').all({a: 1});
+  const result = Tendril('{$k:$v $k:$v}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.equal(result[0].bindings.k, 'a');
-  assert.equal(result[0].bindings.v, 1);
+  assert.equal(result[0].k, 'a');
+  assert.equal(result[0].v, 1);
 });
 
 // ============================================================================
@@ -202,23 +202,23 @@ test('existential matching with unification', () => {
 // ============================================================================
 
 test('group binding with negation', () => {
-  const result = Tendril('{@x=(a:1) (?!b:_)}').all({a: 1, c: 2});
+  const result = Tendril('{@x=(a:1) (?!b:_)}').match({a: 1, c: 2}).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings.x, Group.object({a: 1}));
+  assert.deepEqual(result[0].x, {a: 1});
 });
 
 test('multiple groups and negations', () => {
-  const result = Tendril('{@x=(a:1) @y=(c:3) (?!d:_)}').all({a: 1, b: 2, c: 3});
+  const result = Tendril('{@x=(a:1) @y=(c:3) (?!d:_)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual(result[0].bindings.x, Group.object({a: 1}));
-  assert.deepEqual(result[0].bindings.y, Group.object({c: 3}));
+  assert.deepEqual(result[0].x, {a: 1});
+  assert.deepEqual(result[0].y, {c: 3});
 });
 
 test('nested arrays with groups', () => {
-  const result = Tendril('[[@x=(1*) @y=(2*)]]').all([[1, 1, 2, 2]]);
+  const result = Tendril('[[@x=(1*) @y=(2*)]]').match([[1, 1, 2, 2]]).solutions().toArray();
   assert.equal(result.length, 1);
-  assert.deepEqual([...result[0].bindings.x], [1, 1]);
-  assert.deepEqual([...result[0].bindings.y], [2, 2]);
+  assert.deepEqual([...result[0].x], [1, 1]);
+  assert.deepEqual([...result[0].y], [2, 2]);
 });
 
 console.log('\n✓ All constraint pattern tests defined\n');

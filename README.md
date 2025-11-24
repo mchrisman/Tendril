@@ -1,18 +1,42 @@
-# **Tendril: Pattern Matching and Transformation for Tree Structures**
+# Tendril: Pattern Matching for Tree Structures
 
-## 1. Overview
+**Tendril** is a declarative language for matching, transforming, and querying JSON-like tree data. It combines the familiar syntax of regex with Prolog-style unification, offering a sweet spot between simple path queries (JSONPath, jq) and full logic programming.
 
-**Tendril** is a small declarative language for **structural matching, transforming, extracting, or joining** JSON-like tree data (objects, arrays, primitives).
+Patterns resemble the data they match. Arrays use regex-like operators. Objects use declarative assertions. Variables capture and unify across the pattern.
 
-Tendril is:
+## Quick Start
 
-* **Regex**, but on **trees** instead of strings
-* **Prolog-style unification**, without requiring logic programming knowledge
-* **Right between** JSONPath/jq and Prolog in both power and ease.
+Tendril patterns look like the data they match:
 
-Patterns resemble the data they match, with minimal extra syntax, and with syntax familiar to Regex and JSON users.
+```javascript
+// Extract a value
+Tendril("{ name: $x }")
+  .match({name: "Alice", age: 30})
+  .solutions()
+  .first()
+// → {x: "Alice"}
 
-```js
+// Match array patterns
+Tendril("[1 2 $x]")
+  .match([1, 2, 3])
+  .solutions()
+  .first()
+// → {x: 3}
+
+// Use wildcards
+Tendril("[1 .. 5]")
+  .match([1, 2, 3, 4, 5])
+  .hasMatch()
+// → true
+```
+
+Variables starting with `$` capture single values. The pattern must match for the query to succeed. If the same variable appears twice, unification ensures both occurrences match the same value (using structural equality).
+
+## Example: Relational Joins
+
+Tendril excels at joining data across different paths in a structure, much like SQL joins but for nested JSON:
+
+```javascript
 // "Hello, worlds"
 const data = {
   planets: {
@@ -37,10 +61,12 @@ const pattern = `{
 }`
 
 Tendril(pattern)
-  .solutions(data)
+  .match(data)
+  .solutions()
+  .toArray()
   .map(solution => `Hello, ${solution.size} world ${solution.alias}`)
 
-// output  
+// output
 [
   "Hello, big world Jupiter",
   "Hello, big world Jove",
@@ -52,291 +78,429 @@ Tendril(pattern)
 ]
 ```
 
+This pattern extracts planet names from keys in the `planets` object, finds their sizes, then searches through the nested `aka` arrays to find all aliases for each planet. The `(?=$name)` lookahead asserts that the first element of each alias array must equal the already-bound planet name. The `..` wildcards match any subsequence, making the pattern resilient to array structure.
+
 ---
 
-## Core Concepts
+# Core Concepts
 
-### Primitives
+## Primitives
 
-```
+Tendril matches primitives using literal values or patterns:
+
+```javascript
 foo            // matches the exact string "foo" (bare identifier)
 "foo bar"      // quoted strings match strings containing spaces or punctuation
 
-/foo/          // regex matches *any substring* — "seafood" matches (contains "foo")
-/foo/i         // case-insensitive substring match — "FOOdish", "seaFOOd" both match
-/^[A-Z]{2,}$/  // regex anchors to whole string — matches "NASA", "OK", but not "Ok!"
+/foo/          // regex matches any substring — "seafood" matches (contains "foo")
+/foo/i         // case-insensitive — "FOOdish", "seaFOOd" both match
+/^[A-Z]{2,}$/  // regex anchors match whole string — "NASA", "OK", not "Ok!"
 
 123            // matches numeric value 123 (123 and 123.0 equivalent)
-
 true           // matches Boolean true only
 false          // matches Boolean false only
 null           // matches null only
+_              // wildcard matches any single value
 ```
 
-### Arrays
+Strings can be written as barewords (alphanumeric identifiers) or quoted. Regex patterns use JavaScript regex syntax and match against string values only.
 
-```
-[1,2,3]        // matches [1,2,3]
-[1 2 3]        // matches [1,2,3]. Commas are optional.
-[1 2]          // ❌does not match [1,2,3].
-[1 2 _]        // matches [1,2,3]. Wildcard _ matches a single item
-[1 _]          // ❌does not match [1,2,3]. Wildcard _ does not match multiple items
-[1 ..]         // matches [1,2,3]. Wildcard '..' matches any subsequence (a more readable equivalent to `_*?`).
-[.. 1 2 3 ..]  // matches [1,2,3]. '..' can even match zero-length subsequences.
+## Arrays
 
-// Whitespace is insignificant, *except* as a token delimiter.
-[ foobar ]     // matches ["foobar"], ❌does not match ["foo","bar"]
-[ foo bar ]    // matches ["foo","bar"], ❌does not match ["foo bar"]
+Arrays are matched positionally, similar to regex. Patterns specify exact sequences unless wildcards are used:
 
+```javascript
+[1 2 3]        // matches [1,2,3] exactly
+[1 2]          // does NOT match [1,2,3] — too short
+[1 2 _]        // matches [1,2,3] — wildcard _ matches the third item
+[1 .. 3]       // matches [1,2,3] — .. matches any subsequence
+[1 ..]         // matches [1,2,3] and [1] and [1,99,100]
+[.. 1 2 3 ..]  // matches [1,2,3] — .. can match zero elements
 ```
 
-### Operators in arrays
+Commas are optional. Whitespace separates items but is otherwise insignificant. Whitespace acts as a delimiter: `[foobar]` matches a one-element array containing the string "foobar", while `[foo bar]` matches a two-element array.
 
-In arrays, all operators borrow their familiar meanings from regexes:
+### Array Operators
 
-```
+Tendril borrows quantifiers from regex, applying them to array elements rather than characters:
+
+```javascript
 [a c* d]           // matches ['a', 'c', 'c', 'c', 'd']
-                   // The * repeats the item 'c', not characters within a string
-[a c* d]           // ❌does not match ['a', 'ccc', 'd']
-                   // 'ccc' is a different item (a single string), not three 'c' items
-[a /c*/ d]         // ✓ matches ['a', 'ccc', 'd']
-                   // Regex /c*/ matches the string 'ccc'
- 
-?, ??, ?+          // Optional greedy, optional nongreedy, optional greedy posessive
-*, *?, *+          // zero or more greedy, zero or more nongreedy, zero or more greedy posessive
-+, +?, ++          // one or more greedy, one or more nongreedy, one or more greedy posessive
+                   // * repeats the item 'c', not characters in a string
+[a c* d]           // does NOT match ['a', 'ccc', 'd']
+                   // 'ccc' is a different string, not three 'c' items
+[a /c*/ d]         // matches ['a', 'ccc', 'd']
+                   // regex /c*/ matches the string 'ccc'
 
-{m,n}, {m,}, {,n}, {m}   // Specific numbers of repetitions, greedy
+?, ??, ?+          // optional (greedy, lazy, possessive)
+*, *?, *+          // zero or more (greedy, lazy, possessive)
++, +?, ++          // one or more (greedy, lazy, possessive)
+{m,n}, {m,}, {m}   // specific repetitions (greedy, possessive)
 
-(?=PATTERN)        // lookahead
-(?!PATTERN)        // negative lookahead
+..                 // lazy wildcard group (equivalent to _*?)
 ```
 
-Use parentheses to apply operators to groups.
+Parentheses group elements for operators:
 
-```
+```javascript
 [1 (2 3)*]         // matches [1, 2, 3, 2, 3, 2, 3]
-[(3 (4|5)?)*]      // matches [3 4 3 5 3 3 3 5 3 4]
-[1 2 (3 4|5 6)]    // matches [1, 2, 5, 6]  
-[(?! .. 3 4) ..]   // matches [4, 3, 2, 1] but not [1, 2, 3, 4]
-                   // (matches arrays *not* containing the subsequence [3,4])
+[(3 (4|5)?)*]      // matches [3, 4, 3, 5, 3, 3, 3, 5, 3, 4]
+[1 2 (3 4|5 6)]    // matches [1, 2, 5, 6] — alternation
 ```
 
-### Objects
+The `|` operator creates alternatives. Quantifiers bind tighter than adjacency. Lookaheads test without consuming:
 
-Array patterns are regex-like, but object patterns are different. An object pattern is an unordered set of predicates, each of the form
-
-- `K?:V`, which means for all key/value properties in the object, if the key matches K then the value must match V;
-- `K:V`, which means the same thing **and** that there exists at least one key matching K.
-
-```
-{ /[ab]/:/[cd]/ }   // matches object {"a":"c"}. Does not match any array or string.
-{ a:b, c:d }    // matches {"a":"b", "c":"d", "e":"f"}.  All predicates are satisfied.
-{ a:b, x:y }    // ❌does not match {"a":"b", "c":"d", "e":"f"}.  `x:y` not satisfied.
-{ a:b, x?:y }   // matches {"a":"b", "c":"d", "e":"f"}.  `x?:y` is trivially satisfied.
-{ a:b, x?:y }   // ❌does not match {"a":"b", "c":"d", "x":"w"}. `x?:y` not satisfied.
-
-{ /a|b/:/x/  /b|c/:/y/ }  // matches {"a":"x", "b":"y"}. Commas are optional.
-
-Every predicate must be satisfied by at least one key-value pair, but the same key-value pair may satisfy multiple predicates:
-
-{ /a|b/:/x/  /b|c/:/y/ }  //matches { b: "xy" }
-{ /a|b/:/x/ /b|c/:/y/ }  // does not match {"b":"x"}. 
-
-
+```javascript
+[(?! .. 3 4) ..]   // matches arrays NOT containing subsequence [3,4]
+                   // e.g., [4, 3, 2, 1] matches, [1, 2, 3, 4] doesn't
 ```
 
-The keyword `remainder` signifies the set of key/value properties whose keys didn't match any of the predicates' conditions.
+## Objects
 
-```
-{ a:b }           // matches {"a":"c", "b":"c", "e":"f"}. Remainder is {"b":"c", "e":"f"}.
+Object patterns differ fundamentally from array patterns. Rather than matching positionally, object patterns are sets of assertions. Each assertion tests whether certain key-value pairs exist and satisfy conditions.
 
-{ a:b remainder }         // ❌does not match {"a":"b"}. The `remainder` asserts a nonempty remainder.
-{ a:b (?!remainder) }     // ❌does not match {"a":"b", "c":"d"}. The '(?!remainder)' asserts an empty remainder.
+An assertion `K:V` means: "There exists at least one key matching K with value matching V, and for every key matching K, the value must match V."
 
-// Important idioms:
-{ a:b @rest=(remainder) } // @rest binds to a nonempty remainder
-{ a:b @rest=(remainder?) } // @rest binds to a nonempty or empty remainder
+An assertion `K?:V` means: "For every key matching K (if any exist), the value must match V."
 
-{ a:_ (?!remainder) } // matches iff 'a' is the only key
-{ a:_ remainder } // matches iff 'a' is not the only key
-```
+```javascript
+{ a:b, c:d }       // matches {"a":"b", "c":"d", "e":"f"}
+                   // All assertions satisfied; "e":"f" is extra (allowed)
 
-### Operators on key/value predicates
+{ a:b, x:y }       // does NOT match {"a":"b", "c":"d", "e":"f"}
+                   // x:y assertion not satisfied (no "x" key)
 
-You can use the alternation operator on individual key patterns or value patterns.
+{ a:b, x?:y }      // matches {"a":"b", "c":"d", "e":"f"}
+                   // x?:y is optional — satisfied trivially (no "x" key)
 
-```
-{ (a|b):c }        // matches if the key is 'a' or 'b', and the value is 'c'
-{ a:(b|c) }        // matches if the key is 'a', and the value is 'b' or 'c'
+{ a:b, x?:y }      // does NOT match {"a":"b", "c":"d", "x":"w"}
+                   // x?:y not satisfied ("x" exists but value != "y")
 ```
 
-You can use the alternation or optional operators on K:V predicates:
+Commas are optional. Assertions are unordered. Multiple assertions can match the same key-value pair:
 
-```
-{ a:b | c:d }     // matches either one
-
-{ (a:b)? }        // matches any object including {"a":"c"}
-                  // (useful only if you add a binding);
-{ a?:b }          // In contrast, does not match {"a":"c"}
+```javascript
+{ /a|b/:/x/ /b|c/:/y/ }  // matches {"a":"x", "b":"xy"}
+                         // "b":"xy" satisfies both assertions
 ```
 
-You can negate one or more K:V predicates: `(?! pattern )` means the pattern must NOT match.
+### Remainder
+
+The keyword `remainder` refers to all key-value pairs whose keys didn't match any assertion:
+
+``` 
+{ a:b }                    // matches {"a":"b", "c":"d"}
+                           // remainder is {"c":"d"}
+
+{ a:b remainder }          // does NOT match {"a":"b"}
+                           // remainder assertion requires nonempty remainder
+
+{ a:b (?!remainder) }      // does NOT match {"a":"b", "c":"d"}
+                           // (?!remainder) asserts empty remainder
+
+{ a:_ (?!remainder) }      // matches iff 'a' is the only key
+```
+
+Bind the remainder to capture it:
+
+``` 
+
+// CAUTION: this form asserts that the remainder is nonempty
+{ a:b @rest=(remainder) }  // matches {"a":"b", "c":"d"}, binds {"c":"d"} to @rest
+
+// Common idiom: bind the remainder without asserting it's nonempty:
+{ a:b @rest=(remainder?) }
+```
+
+### Operators on Predicates
+
+Alternation applies to keys, values, or entire predicates:
 
 ```
-{ (?! a:1) }          // a:1 must not exist
-
-{ (?! a:1 b:2) }      // Can't have both a:1 and b:2
-                      // (having just one is OK)
-
-{ (?! a:1) (?! b:2) } // Can't have a:1, can't have b:2
-                      // (can't have either one)
-
-{ a:1 (?! remainder) }    // Matches exactly {'a':1} and nothing else. ('remainder' also represents a group, the properties that didn't match any predicate.)
-
+{ (a|b):c }        // key is 'a' or 'b', value is 'c'
+{ a:(b|c) }        // key is 'a', value is 'b' or 'c'
+{ a:b | c:d }      // either predicate (or both)
 ```
 
-### Precedence
+Negation uses lookahead syntax:
 
-**High to low**:
-binding `=`
-optional `?`, quantifiers `+`, etc.
-breadcrumb operators  `.` and `[]`
-adjacency/commas inside arrays and objects
-`|`
-`:`, `?:`
+```
+{ (?! a:1) }           // key 'a' must not have value 1
+{ (?! a?:1) }          // key 'a' exists and its value must not be 1.
+{ (?! a:1 b:2) }       // can't have BOTH a:1 and b:2 (one is OK)
+{ (?! a:1) (?! b:2) }  // can't have a:1 AND can't have b:2
+```
+
+## Binding Variables
+
+Tendril has two kinds of variables. **Scalar variables** (prefix `$`) capture single values.  **Group variables** (prefix `@`) capture contiguous subsequences in arrays, or subsets of properties of objects. Groups are like slices, neither a single element nor the entire array/object.
+
+The syntax for variable binding is `$x=(pattern)` or `@x=(pattern)`. **Parentheses are mandatory**. 
+```
+Tendril([1 2 3 4 5]).match("[.. $x=(2|4) $y=(_) ..]"  // two solutions: {x:2,y:3} and {x:4,y:5}
+```
+
+`$x` (without the pattern) is short for `$x=(_)`, and `@x` is short for `@x=(_*)`.  
+
+```
+Tendril("[3 4 $x $y]").match([3,4,5,6])  // one match, with bindings {x:5, y:6}
+Tendril("[3 4 $x]").match([3,4,5,6])     // Does not match; scalar $x must match exactly one element
+Tendril("[3 4 @x]").match([3,4,5,6])     // one match, with {x:[5,6]} interpreted as a slice because x is a group variable
+Tendril("[3 4 $x]").match([3,4,[5,6]])   // one match, with {x:[5,6]} interpreted as a single item because x is a scalar
+
+Tendril("[$x @y]").match([3,4,5,6])      // one match, with {x:3, y:[4,5,6]}
+Tendril("[@x @y]").match([3,4,5,6])      // five matches, {x:[], y:[3,4,5,6]}, {x:[3], y:[4,5,6]}, {x:[3,4], y:[5,6]}, etc.
+
+```
+The type of variable matters **when performing replacements/edits**:
+```
+Tendril("[$x $x]").find([1, [2, 2]]).editAll({x:_=>['the','replacement']) // ['the','replacement'] treated as a scalar 
+   // -> [1, ['the','replacement'],['the','replacement']]]
+    
+Tendril("[@x @x]").find([1, [2, 2]]).editAll({x:_=>['the','replacement'])  // ['the','replacement'] treated as a group/slice
+   // -> [1, ['the','replacement', 'the','replacement']]]
+```
+
+**Groups in object patterns**
+
+Object patterns only support group variables. Group one or more predicates, and the variable will bind to the set of key-value pairs that match at least one of them.
+
+Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}) // matches with binding {x:{Big:1, Alice:3}}
+Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}).edit({x:_=>{foo:"bar"}}) // -> {foo:"bar",Cute:2}
+
+
+### Scalars
+
+Scalars capture exactly one item. In arrays, this means one element. In objects, one key or one value:
+
+```javascript
+// Multiple solutions
+Tendril("[ .. $x .. ]")
+  .match(["a", "b"])
+  .solutions()
+// → SolutionSet with {x: "a"}, {x: "b"}
+
+// First solution only
+Tendril("[ $x .. ]")
+  .match(["a", "b"])
+  .solutions()
+  .first()
+// → {x: "a"}
+```
+
+Each possible binding creates a separate solution. The scalar `$x` must bind to a single value, so the first pattern generates two solutions (one for each element), while the second generates only one (binding to the first element).
+
+### Groups
+
+Groups capture zero or more items. In arrays, they capture subsequences. In objects, they capture sets of key-value pairs:
+
+```javascript
+Tendril("[ @x .. ]")
+  .match(["a", "b"])
+  .solutions()
+  .toArray()
+// → [
+//   {x: Group()},
+//   {x: Group("a")},
+//   {x: Group("a", "b")}
+// ]
+
+Tendril("[ $x @y ]")
+  .match([[1,2], [3,4]])
+  .solutions()
+  .first()
+// → {x: [1,2], y: Group([3,4])}
+```
+
+Groups are represented as `Group` objects to distinguish them from array references. Groups are like slices: neither a single object, nor the entire array.
+
+### Unification
+
+When the same variable appears multiple times, all occurrences must match the same value (structural equality):
+
+```javascript
+[ $x .. $x ]       // matches ["a", "stuff", "stuff", "a"]
+                   // $x unifies to "a"
+
+[ $x .. $x ]       // does NOT match ["a", "other", "b"]
+                   // $x can't be both "a" and "b"
+
+[ $x $x=(/[ab]/) $y ]  // matches ['a', 'a', 'y']
+                       // $x binds to 'a', matches /[ab]/, unifies
+
+[ $x $x=(/[ab]/) $y ]  // does NOT match ['a', 'b', 'y']
+                       // $x='a' doesn't unify with $x='b'
+```
+
+The syntax `$x=(PATTERN)` binds variable `$x` if `PATTERN` matches and the matched value is a single item. Bare `$x` is shorthand for `$x=(_)`.
+
+### Using scalars to force single-item matches
+
+Scalar variables are constrained to match only single items, not groups. This effectively adds another constraint:
+```
+[1? 2?]            // matches [], [1], [2], [1,2]
+
+[$x=(1? 2?)]       // matches only [1] or [2]
+                   // $x must bind to a scalar, so can't match [] nor [1,2]
+
+[@x=(1? 2?)]       // matches [], [1], [2], [1,2]
+                   // @x can bind to zero, one, or two elements
+```
+
+## Paths
+
+Object assertions can navigate through nested structures using path notation:
+
+```javascript
+{ a.b.c:d }        // equivalent to { a:{ b:{ c:d } } }
+                   // descends through nested objects
+
+{ a[3].c:d }       // equivalent to { a:[_ _ _ { c:d } ..] }
+                   // array index then object key
+
+Tendril("{ a.b.c[3].e:f }").match(object).hasMatch()   // like object?.a?.b?.c?.[3]?.e === "f"
+```
+
+The `..` operator skips arbitrary levels of nesting:
+
+```javascript
+{ a.b..c:d }       // matches 'c' at any depth under a.b
+                   // e.g., {a: {b: {p: {q: {c: "d"}}}}}
+
+{ ..password:$p }  // matches 'password' at any depth (including top-level)
+                   // e.g., {password: "x"} or {user: {password: "x"}}
+
+{ ..:_ }           // matches every value at any depth
+```
+
+Leading `..` means "start from root, navigate to any depth." Paths can combine dots, brackets, and skip operators freely.
+
+## Quantifiers on Objects
+
+Object quantifiers count matching key-value pairs after all matches are found (no backtracking):
+
+```javascript
+{ /a.*/:_ #{2,4} }     // object has 2-4 keys matching /a.*/
+{ /a.*/:_ #{0} }       // object has no keys matching /a.*/
+{ a:b remainder #{0} } // require no residual pairs (closed object)
+```
+
+The `#` quantifier follows an assertion and requires a specific count range. Unlike array quantifiers, object quantifiers operate globally over all key-value pairs, not sequentially.
+
+## Lookaheads
+
+Lookaheads test conditions without consuming data or committing bindings:
+
+```javascript
+(?=PATTERN)        // positive lookahead (must match)
+(?!PATTERN)        // negative lookahead (must not match)
+```
+
+In arrays:
+
+```javascript
+[ (?= $x=(/[ab]/)) $x .. ]  // first element must match /[ab]/
+
+[ (?! .. 3 4) .. ]           // array must not contain [3,4] subsequence
+```
+
+In objects, lookaheads typically test for key existence or conditions.
+
+## Precedence
+
+**High to low:**
+
+1. Binding `=`
+2. Optional `?`, quantifiers `+`, `*`, etc.
+3. Breadcrumb operators `.`, `..`, `[]`
+4. Adjacency/commas (in arrays and objects)
+5. Alternation `|`
+6. Key-value separator `:`, `?:`
+
 Parentheses override precedence. Lookaheads always require parentheses.
 
-### Capturing variables: Scalars and groups
+---
 
-Tendril has two kinds of capturing variables, similar to named groups or backreferences in regex.
+# API Overview
 
-**Scalars** capture exactly one item (a single primitive, or a single array or object reference):
+## Query API
 
-- In arrays: one array entry
-- In objects: one key, or one value
-- Syntax: `$name`
-
-**groups** capture zero or more items (scoped using parentheses):
-
-- In arrays: a subsequence
-- In objects: a subset of key-value pairs
-- Syntax: `@name`
-
-**Multiple solutions example**
-[ .. $x .. ] applied to ["a","b"]
-
-finds two solutions:
-
-{ x: "a" }
-{ x: "b" }
-
-because `$x` must bind to a *single* item, and each possible binding
-yields a distinct solution.
-
-But: 
-
-[ .. @x .. ] applied to ["a","b"]
-
-finds four solutions:
-
-{ x: Group() }
-{ x: Group("a") }
-{ x: Group("b") }
-{ x: Group("a","b") }
-
-Note that group variables, starting with '@', get captured as 'Group' objects.
-
-"**Unification**": If the same variable appears twice, it asserts that the value in each position is the same.
-
-```
-[ $x .. $x ]  // matches ["a", "some", "other", "stuff", "a"]
-              // $x unifies to "a" (appears twice, must be equal)
-
-[ @x @x @y ]     // matches [5, 5, 5, 5, 5]
-              // Multiple solutions by different splits:
-              // {x:Group(5, 5), y:Group(5)}
-              // {x:Group(5), y:Group(5, 5, 5)}
-              // {x:Group(), y:Group(5, 5, 5, 5, 5)}
-```
-
-A scalar binder `$x:(P)` succeeds exactly when the data matches P at that point AND the matched value is a single value AND unification succeeds.
-
-```
-    [ 1? 2? ]         matches any of  [], [1], [2], [1,2]
-    [ $x:(1? 2?) ]    matches only [1], [2], because $x must bind to a scalar.
-```
-
-### Paths
-
-In objects, the K:V assertions generalize to paths, chains of more than one key or index, PATH:V:
-
-```
-
-    { a.b.c : d }              // Descend through nested objects
-    { a[3].c : d }             // Array index then object key
-
-    { a.b.c[3].e:f }  // satisfied iff `object?.a?.b?.c?[3]?.e=="f"`
-                      // equivalent to the pattern `{a:{b:{c:[_ _ _ {e:f} ..]}}}`
-```
-
-Use '..' to express arbitrary depth.
-
-```
-    {a.b..c:d}  // matches {'a': {'b': {'p':[{} {} {'q':{'r':{'c':'d'}}}]}}}
-    {..:_}      // matches every value at any point in the structure
-```
-
-## API Overview
-
-**Query API:**
+The v5 API uses a fluent, chainable interface:
 
 ```javascript
-const matcher = Tendril(pattern);
+// Start by compiling your pattern. 
+const tendril = Tendril(pattern);
 
-// Get all solutions
-matcher.solutions(data)  // Returns array of binding objects
+// match pattern to data
+let matcher = pattern.match(data) // match it to the entirety of your data
+let matcher = pattern.find(data)  // find the pattern within your data (maybe multiple occurrences)
+let matcher = pattern.first(data) // find the first occurrence
 
-// Example
-Tendril("{ users.$id.name:$name }")
-.solutions(data)
-.forEach($ => console.log($.id, $.name));
-```
+// At this point, you will be interested in focusing on either the **occurrences** of the pattern 
+// in your data, or the **solutions**, i.e. variable bindings (Prolog style).
+let matches = matcher.matches()   // -> MatchSet (iterator of unique Match (location0)
+let solutions = matcher.solutions() // -> iterator of unique Solution
 
-**Transformation API:**
+type MatchSet // itself is iterable of Match
 
-Replacements modify the input structure in place; clone the data first if immutability is desired.
+    // 'replaceAll' operates on a **copy** and replaces the **entire match**
+    matches.replaceAll(expr /* not depending on bindings*/)  // uses first solution of match
+    matches.replaceAll(bindings=>expr)                       // uses first solution of match
 
-```javascript
-// Replace entire input using first (longest) match
-matcher.replace(data, vars => newValue)
+    // 'editAll' mutates the original data and replaces **named groups**
+    matches.editAll("x", $=>($.x * 2))  // string,func: replace $x only
+    matches.editAll($=>{x:$.y, y:$.x})  // (=>plan)
+    matches.editAll({x:$=>$.y, y:$=>$.x})  // plan = obj<key,replacement>; replacement = (vars=>any) | any
 
-// Replace all non-overlapping occurrences
-matcher.replaceAll(data, vars => ({varName: newValue}))
+type Match:
+    path()          // breadcrumb locating the match point from root
+    value()         // $0
+    solutions()     // iterator of Solution for this match
+
+type Solution // itself, is an object representing bindings
+    matches()       // iterator of Match with this solution
+
+
+// Example: iterate over solutions
+for (const $ of Tendril("{ users.$id.name:$name }").match(data).solutions()) {
+  console.log($.id, $.name);
+}
+
+// Find occurrences at any depth (recursive scan)
+const matches = tendril.find(data);          // Returns MatchSet with all deep matches
+
+// Replace using first match - returns new structure
+const result = tendril.find(data).replaceAll($ => newValue);
+
+// Edit in place - modifies data
+tendril.find(data).editAll($ => ({varName: newValue}));
 ```
 
 **Replacement examples:**
 
 ```javascript
 // Swap array elements
-Tendril("[$x $y]").replace([3, 4], $ => [$.y, $.x])
+Tendril("[$x $y]").find([3, 4]).replaceAll($ => [$.y, $.x])
 // Result: [4, 3]
 
-// Replace group variables
-Tendril("[@x 99 @y]").replace([1, 2, 99, 4], $ => [...$.y, 99, ...$.x])
-// Result: [4, 99, 1, 2]
+// Redact passwords at any depth - two equivalent approaches:
+const data1 = {user: {password: "secret", name: "Alice"}};
 
-// Transform object structures
-Tendril("{ ..password : $p }")
-.replaceAll(data, $ => ({p: "REDACTED"}))
-// Redacts all password fields at any depth
+// Approach 1: Use .. with match() to search at any depth
+Tendril("{ ..password:$p }").match(data1).editAll($ => ({p: "REDACTED"}));
+
+// Approach 2: Use find() without .. to search at any depth
+Tendril("{ password:$p }").find(data1).editAll($ => ({p: "REDACTED"}));
+
+// ⚠️ Anti-pattern: Don't combine .. with find() - it's redundant!
+// Tendril("{ ..password:$p }").find(data) // DON'T DO THIS
 ```
 
 ---
 
-## When to Use Tendril
+# When to Use Tendril
 
-### ✅ **Perfect fit (10%):**
+### ✅ Perfect fit
 
 **1. Structural tree transformations (AST/VDOM manipulation)**
 
@@ -344,17 +508,17 @@ Tendril("{ ..password : $p }")
 // Macro expansion: <When>/<Else> → If node
 Tendril(`[
   ..
-  @whenelse:(
-    {tag : /^when$/i, children : $then}
-    {tag : /^else$/i, children : $else}?
+  @whenelse=(
+    {tag:/^when$/i children:$then}
+    {tag:/^else$/i children:$else}?
   )
   ..
-]`).replaceAll(vdom, $ => ({
-  whenelse: group.array({
+]`).find(vdom).editAll($ => ({
+  whenelse: [{
     tag: 'If',
     thenChildren: $.then,
     elseChildren: $.else || []
-  })
+  }]
 }))
 ```
 
@@ -363,29 +527,31 @@ Tendril(`[
 ```javascript
 // Join users with their projects by ID
 Tendril(`{
-  users.$userId.name : $userName
-  users.$userId.managerId : $managerId  
-  projects.$projectId.assigneeId : $userId
-  projects.$projectId.name : $projectName
-}`).solutions(data)
+  users:$userId.name:$userName
+  users:$userId.managerId:$managerId
+  projects:$projectId.assigneeId:$userId
+  projects:$projectId.name:$projectName
+}`).match(data).solutions()
 ```
 
 **3. Deep search-and-replace with structural awareness**
 
 ```javascript
 // Redact sensitive fields at any nesting level
-Tendril("{ ..password : $value }")
-.replaceAll(data, $ => ({value: "REDACTED"}))
+Tendril("{ password:$value }")
+  .find(data)
+  .editAll($ => ({value: "REDACTED"}))
 ```
 
-#### ⚠️ **Works adequately (40%):**
+**4. Data extraction from semi-structured formats**
+
+### ⚠️ Works adequately
 
 - Complex validation ("does this data match this schema?")
-- Data extraction from semi-structured formats
 - Tree walking with pattern-based filtering
 - Structural refactoring of configuration files
 
-#### ❌ **Wrong tool (50%):**
+### ❌ Wrong tool
 
 - **Simple path queries** - Use JSONPath/Lodash instead
 - **Statistical analysis** - Use dedicated data libraries
@@ -395,11 +561,160 @@ Tendril("{ ..password : $value }")
 
 ---
 
-## Advanced examples
+# Reference
 
-Alternating predicate vs. alternating value:
+## Grammar
+
+The complete Tendril grammar in informal EBNF follows. Whitespace and C-style comments (`/* */`, `//`) are allowed between tokens. Whitespace is significant only as a token delimiter in array sequences.
+
+### Literals
 
 ```
-{ @x:(a:b|c:d|) } // Matches anything; @x will be one of {"a":"b"}, {"c":"d"}, or {}.
-{ @x:(a:(b|c|)) } // Matches iff key 'a' is present; @x will be one of {"a","b"}, {"a","c"}, {"a",null}.
+INTEGER         := decimal integer (matches Number type)
+BOOLEAN         := true | false
+QUOTED_STRING   := quoted string literal
+REGEX           := /pattern/flags (JS regex literal)
+BAREWORD        := [A-Za-z_][A-Za-z0-9_]* unless keyword
+_               := singleton wildcard (matches any single value)
+
+LITERAL := INTEGER | BOOLEAN | QUOTED_STRING | REGEX | BAREWORD
+
+IDENT := /[a-zA-Z]\w*/
 ```
+
+### Core Productions
+
+```
+ROOT_PATTERN := ITEM
+
+S_ITEM   := '$' IDENT
+S_GROUP  := '@' IDENT
+
+ITEM := '(' ITEM ')'
+      | S_ITEM
+      | S_ITEM '=' '(' ITEM ')'
+      | '_'
+      | LITERAL
+      | OBJ
+      | ARR
+      | ITEM '|' ITEM
+```
+
+### Arrays
+
+```
+ARR := '[' A_BODY ']'
+
+A_BODY := (A_GROUP (','? A_GROUP)*)?
+
+A_GROUP := '(' A_BODY ')'
+         | S_GROUP
+         | S_GROUP '=' '(' A_GROUP ')'
+         | S_ITEM
+         | S_ITEM '=' '(' A_GROUP ')'
+         | ITEM
+         | OBJ
+         | ARR
+         | A_GROUP A_QUANT
+         | A_GROUP '|' A_GROUP
+         | '(?=' A_GROUP ')'
+         | '(?!' A_GROUP ')'
+
+A_QUANT := '?'
+         | '+' | '+?' | '++'
+         | '*' | '*?' | '*+'
+         | '*{' INTEGER '}'
+         | '*{' INTEGER ',' INTEGER '}'
+         | '*{' INTEGER ',' '}'
+         | '*{' ',' INTEGER '}'
+```
+
+The `*{m,n}` syntax is used (rather than `{m,n}`) to mirror the `#` quantifier for objects and to suggest multiplication/repetition.
+
+### Objects
+
+```
+OBJ := '{' O_BODY '}'
+
+O_BODY := (O_GROUP (','? O_GROUP)*)?
+
+O_GROUP := '(' O_BODY ')'
+         | S_GROUP
+         | S_GROUP '=' '(' O_GROUP* ')'
+         | O_TERM
+
+KEY   := ITEM
+VALUE := ITEM
+
+O_TERM := KEY BREADCRUMB* (':' | '?:') VALUE O_QUANT?
+        | 'remainder' O_QUANT?
+        | '..' BREADCRUMB* (':' | '?:') VALUE O_QUANT?
+        | S_ITEM '=' '(' O_TERM ')'
+
+BREADCRUMB := '.' KEY
+            | '..' KEY
+            | '[' KEY ']'
+
+O_QUANT := '#' ('?' | '{' INTEGER (',' INTEGER?)? '}')
+```
+
+Leading `..` in `O_TERM` enables paths like `{..password:$x}` (match at any depth including zero).
+
+## Semantics
+
+### Matching Rules
+
+- **Numbers:** strict equality for finite numbers; NaN and Infinity do not match numeric patterns
+- **Booleans:** strict equality
+- **Strings:** strict equality for literals; regex patterns match substrings unless anchored
+- **null:** matches only `null` or `_`
+- **Arrays:** matched positionally with backtracking
+- **Objects:** matched via assertions (non-consuming, conjunctive, non-exclusive)
+
+### Binding and Unification
+
+Scalar bindings (`$x`) succeed when:
+1. The pattern matches
+2. The matched value is a single item (not a subsequence)
+3. If `$x` was previously bound, the new value equals the old value (structural equality)
+
+Group bindings (`@x`) succeed when:
+1. The pattern matches (may match zero or more items)
+2. If `@x` was previously bound, the new group equals the old group (structural equality)
+
+Bare variables are shorthand: `$x` ≡ `$x=(_)`, `@x` ≡ `@x=(_*)`.
+
+### Object Assertions
+
+Each `K:V` assertion means:
+1. For all key-value pairs in the object, if the key matches K, then the value must match V
+2. At least one key must match K
+
+Each `K?:V` assertion means:
+1. For all key-value pairs in the object, if the key matches K, then the value must match V
+2. (No existence requirement)
+
+Assertions are evaluated non-exclusively: a single key-value pair may satisfy multiple assertions.
+
+### Quantifiers
+
+**Array quantifiers** operate sequentially with backtracking. Greedy quantifiers consume as much as possible, lazy quantifiers as little as possible, possessive quantifiers do not backtrack.
+
+**Object quantifiers** count matching pairs globally after all matches are found, then assert the count is within range. No backtracking.
+
+### Lookaheads
+
+Lookaheads (`(?=P)`, `(?!P)`) test whether pattern P matches at the current position without consuming input or committing bindings. Negative lookaheads (`(?!P)`) assert that P does NOT match.
+
+## Conventions
+
+`~=` and `===` appear in examples as shorthand for illustration only. They are not part of Tendril syntax.
+
+- `foo ~= bar` means `Tendril("foo").matches(bar) === true`
+- `p1 === p2` indicates semantic or syntactic equivalence
+
+The data model is JSON-like: objects, arrays, strings, numbers, booleans, null. Regex literals use JavaScript regex syntax.
+
+---
+
+**End of Specification**

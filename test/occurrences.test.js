@@ -1,5 +1,5 @@
 /**
- * Unit tests for occurrences() scan mode
+ * Unit tests for find() scan mode (formerly occurrences())
  *
  * Run with: node test/occurrences.test.js
  */
@@ -20,8 +20,8 @@ test('find scalar at multiple depths', () => {
   };
 
   const t = Tendril('42');
-  const sols = t.occurrences(data).toArray();
-  assert.equal(sols.length, 3, 'Should find 3 occurrences');
+  const matches = t.find(data).toArray();
+  assert.equal(matches.length, 3, 'Should find 3 occurrences');
 });
 
 test('find patterns in nested structures', () => {
@@ -33,9 +33,9 @@ test('find patterns in nested structures', () => {
   };
 
   const t = Tendril('{tag:"foo"}');
-  const sols = t.occurrences(data).toArray();
-  assert.equal(sols.length, 1, 'Should find nested object');
-  assert.equal(sols[0].bindings['0'].tag, 'foo');
+  const matches = t.find(data).toArray();
+  assert.equal(matches.length, 1, 'Should find nested object');
+  assert.equal(matches[0].value().tag, 'foo');
 });
 
 test('find all matching objects', () => {
@@ -46,21 +46,21 @@ test('find all matching objects', () => {
   ];
 
   const t = Tendril('{type:"user" name:$n}');
-  const sols = t.occurrences(data).toArray();
+  const sols = t.find(data).solutions().toArray();
   assert.equal(sols.length, 2, 'Should find 2 users');
 });
 
-test('occurrences vs solutions - different results', () => {
+test('find vs match - different results', () => {
   const data = [1, 2, 3];
 
   const t = Tendril('$x');
-  const solCount = t.solutions(data).count();
-  const occCount = t.occurrences(data).count();
+  const solCount = t.match(data).solutions().count();
+  const occCount = t.find(data).solutions().count();
 
-  // solutions: matches root (the array [1,2,3])
-  // occurrences: matches root + each element (1, 2, 3)
-  assert.equal(solCount, 1, 'Solutions finds root only');
-  assert.equal(occCount, 4, 'Occurrences finds root + 3 elements');
+  // match: matches root (the array [1,2,3])
+  // find: matches root + each element (1, 2, 3)
+  assert.equal(solCount, 1, 'match finds root only');
+  assert.equal(occCount, 4, 'find finds root + 3 elements');
 });
 
 console.log('\n✓ All occurrences tests defined\n');

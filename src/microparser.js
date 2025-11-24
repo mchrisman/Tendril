@@ -1,6 +1,8 @@
 // microparser.js — minimal tokenizer + parser skeleton for Tendril
 // Focus: correctness & brevity; serves as the base for parser/engine.
 
+import { deepEqual } from './tendril-util.js';
+
 // ---------- Tokenizer ----------
 
 /**
@@ -287,14 +289,15 @@ export function isBound(env, name) {
 export function bindScalar(env, name, val) {
   const cur = env.get(name);
   if (!cur) { env.set(name, { kind: 'scalar', value: val }); return true; }
-  return cur.kind === 'scalar' && Object.is(cur.value, val);
+  return cur.kind === 'scalar' && deepEqual(cur.value, val);
 }
 
 export function bindGroup(env, name, group) {
   const cur = env.get(name);
   if (!cur) { env.set(name, { kind: 'group', value: group }); return true; }
-  // No unification between existing bindings for groups (and never group<->scalar)
-  return false;
+  if (cur.kind !== 'group') return false; // Never group<->scalar
+  // Unify groups using structural equality
+  return deepEqual(cur.value, group);
 }
 
 // Utilities to build real RegExp at parse-time when convenient

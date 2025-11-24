@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Tendril, Group } from '../src/tendril-api.js';
+import { Tendril } from '../src/tendril-api.js';
 
 test('match When+Else pair with specific key binding', () => {
   const data = [
@@ -19,13 +19,13 @@ test('match When+Else pair with specific key binding', () => {
     {tag: "Else", children: $else, remainder}?
   ]`);
 
-  const sol = pattern.solutions(data).first();
+  const sol = pattern.match(data).solutions().first();
   assert.ok(sol, 'Should match When+Else pair');
-  assert.equal(sol.bindings.testKey, 'a:test');
-  assert.equal(sol.bindings.testAttr, '{x > 5}');
-  assert.deepEqual(sol.bindings.then, ['Yes']);
-  assert.equal(sol.bindings.id, 'w1');
-  assert.deepEqual(sol.bindings.else, ['No']);
+  assert.equal(sol.testKey, 'a:test');
+  assert.equal(sol.testAttr, '{x > 5}');
+  assert.deepEqual(sol.then, ['Yes']);
+  assert.equal(sol.id, 'w1');
+  assert.deepEqual(sol.else, ['No']);
 });
 
 test('match When+Else with case-insensitive tag and attrs binding', () => {
@@ -39,15 +39,15 @@ test('match When+Else with case-insensitive tag and attrs binding', () => {
     {tag: /^[Ee]lse$/, children: $else, remainder}?
   ]`);
 
-  const sol = pattern.solutions(data).first();
+  const sol = pattern.match(data).solutions().first();
   assert.ok(sol, 'Should match with case-insensitive tag');
-  assert.deepEqual(sol.bindings.attrs, {'a:test': '{x > 5}'});
-  assert.deepEqual(sol.bindings.then, ['Yes']);
-  assert.equal(sol.bindings.id, 'w1');
-  assert.deepEqual(sol.bindings.else, ['No']);
+  assert.deepEqual(sol.attrs, {'a:test': '{x > 5}'});
+  assert.deepEqual(sol.then, ['Yes']);
+  assert.equal(sol.id, 'w1');
+  assert.deepEqual(sol.else, ['No']);
 
   // Verify we can extract test attribute
-  const testAttr = sol.bindings.attrs['a:test'] || sol.bindings.attrs['test'];
+  const testAttr = sol.attrs['a:test'] || sol.attrs['test'];
   assert.equal(testAttr, '{x > 5}');
 });
 
@@ -68,13 +68,13 @@ test('match When+Else with surrounding nodes using group bindings', () => {
     ..
   ]`);
 
-  const sol = pattern.solutions(data).first();
+  const sol = pattern.match(data).solutions().first();
   assert.ok(sol, 'Should match with surrounding nodes');
-  assert.ok(sol.bindings.whenelse, 'Should bind whenelse group');
-  assert.ok(sol.bindings.attrs, 'Should bind attrs group');
-  assert.deepEqual(sol.bindings.then, ['A']);
-  assert.ok(sol.bindings.other, 'Should bind other group');
-  assert.deepEqual(sol.bindings.else, ['B']);
+  assert.ok(sol.whenelse, 'Should bind whenelse group');
+  assert.ok(sol.attrs, 'Should bind attrs group');
+  assert.deepEqual(sol.then, ['A']);
+  assert.ok(sol.other, 'Should bind other group');
+  assert.deepEqual(sol.else, ['B']);
 });
 
 test('replaceAll transforms When+Else to If node', () => {
@@ -94,16 +94,17 @@ test('replaceAll transforms When+Else to If node', () => {
     ..
   ]`);
 
-  const result = pattern.replaceAll(data, $ => {
+  const cloned = JSON.parse(JSON.stringify(data));
+  pattern.find(cloned).editAll($ => {
     return {
-      whenelse: Group.array({
+      whenelse: [{
         tag: 'If',
         ...($.attrs||{}),
         ...($.other || {}),
         thenChildren: $.then,
         elseChildren: $.else || [],
         bindingName: null
-      })
+      }]
     };
   });
 
@@ -113,7 +114,7 @@ test('replaceAll transforms When+Else to If node', () => {
     {tag: 'div', children: ['after']}
   ];
 
-  assert.deepEqual(result, expected);
+  assert.deepEqual(cloned, expected);
 });
 
 console.log('\n✓ All macro transformation tests defined\n');
