@@ -792,11 +792,19 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
         const {sol: s0, testedKeys} = state;
         const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
 
-        // Check quantifier constraints: bare remainder requires nonempty, remainder? allows empty
+        // Check quantifier constraints: bare remainder requires nonempty; remainder? allows empty and no upper bound
         let {min, max} = parseQuantRange(spread.pat?.quant);
-        if (!spread.pat?.quant) min = 1;  // Bare @var=(remainder) requires nonempty
-        if (residualKeys.length < min || (max !== Infinity && residualKeys.length > max)) {
-          continue;  // Skip this branch - doesn't satisfy quantifier constraint
+        if (!spread.pat?.quant) {
+          // @var=(remainder) requires at least one key
+          min = 1;
+          max = Infinity;
+        } else if (spread.pat.quant === '?') {
+          // @var=(remainder?) allows empty remainder and unlimited keys
+          min = 0;
+          max = Infinity;
+        }
+        if (residualKeys.length < min || residualKeys.length > max) {
+          continue;
         }
 
         const residualObj = {};
