@@ -208,7 +208,7 @@ Bind the remainder to capture it:
 // CAUTION: this form asserts that the remainder is nonempty
 { a:b @rest=(remainder) }  // matches {"a":"b", "c":"d"}, binds {"c":"d"} to @rest
 
-// Common idiom: bind the remainder without asserting it's nonempty:
+// Special idiom: bind the remainder without asserting it's nonempty:
 { a:b @rest=(remainder?) }
 ```
 
@@ -655,7 +655,7 @@ BREADCRUMB := '.' KEY
             | '..' KEY
             | '[' KEY ']'
 
-O_QUANT := '#' ('?' | '{' INTEGER (',' INTEGER?)? '}')
+O_QUANT := '?' | '#' '{' INTEGER (',' INTEGER?)? '}'
 ```
 
 Leading `..` in `O_TERM` enables paths like `{..password:$x}` (match at any depth including zero).

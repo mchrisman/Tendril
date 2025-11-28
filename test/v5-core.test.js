@@ -201,7 +201,8 @@ test('object multiple properties', () => {
 });
 
 test('object with remainder binding', () => {
-  assert.ok(matches('{a:1 @x=(remainder)}', {a: 1}));
+  // Use remainder? to allow empty residual (bare remainder requires nonempty)
+  assert.ok(matches('{a:1 @x=(remainder?)}', {a: 1}));
   assert.ok(matches('{a:1 @x=(remainder)}', {a: 1, b: 2, c: 3}));
   assert.ok(!matches('{a:1 @x=(remainder)}', {b: 2}));
 });
@@ -487,9 +488,10 @@ test('greedy quantifiers - optional object emits longest match first', () => {
     {tag: 'span', children: 'after'}
   ];
 
+  // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern = `[.. @whenelse=(
     {tag:/^when$/i @otherProps=(remainder)}
-    {tag:/^else$/i children:$else remainder}?
+    {tag:/^else$/i children:$else remainder?}?
   ) ..]`;
 
   const solutions = Tendril(pattern).match(input).solutions().toArray();
@@ -514,9 +516,10 @@ test('replace uses first solution only (longest match)', () => {
     {tag: 'span', children: 'after'}
   ];
 
+  // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern = `[.. @whenelse=(
     {tag:/^when$/i @otherProps=(remainder)}
-    {tag:/^else$/i children:$else remainder}?
+    {tag:/^else$/i children:$else remainder?}?
   ) ..]`;
 
   const cloned = JSON.parse(JSON.stringify(input));

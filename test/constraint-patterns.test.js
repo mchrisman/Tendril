@@ -141,7 +141,8 @@ test('object group binding - residual keys', () => {
 });
 
 test('object group binding - empty residual', () => {
-  const result = Tendril('{a:1 @x=(remainder)}').match({a: 1}).solutions().toArray();
+  // Use remainder? to allow empty residual (bare remainder requires nonempty)
+  const result = Tendril('{a:1 @x=(remainder?)}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {});
 });

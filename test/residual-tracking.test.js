@@ -90,18 +90,20 @@ test('residual with regex key', () => {
 // ==================:: Empty Residuals ==================::
 
 test('empty residual when all keys matched', () => {
-  // {a:1 b:2 @r=(remainder)} against {a:1, b:2}
+  // {a:1 b:2 @r=(remainder?)} against {a:1, b:2}
   // All keys matched, residual should be empty object
-  const results = Tendril('{a:1 b:2 @r=(remainder)}').match({a: 1, b: 2}).solutions().toArray();
+  // Note: Use remainder? to allow empty residual (bare remainder requires nonempty)
+  const results = Tendril('{a:1 b:2 @r=(remainder?)}').match({a: 1, b: 2}).solutions().toArray();
 
   assert.equal(results.length, 1);
   assert.deepEqual(results[0].r, {});
 });
 
 test('empty residual with wildcard key', () => {
-  // {_:1 _:2 @r=(remainder)} against {a:1, b:2}
+  // {_:1 _:2 @r=(remainder?)} against {a:1, b:2}
   // Both keys matched by wildcard patterns, residual empty
-  const results = Tendril('{_:1 _:2 @r=(remainder)}').match({a: 1, b: 2}).solutions().toArray();
+  // Note: Use remainder? to allow empty residual (bare remainder requires nonempty)
+  const results = Tendril('{_:1 _:2 @r=(remainder?)}').match({a: 1, b: 2}).solutions().toArray();
 
   // Should have 2 solutions (a:1,b:2 or b:1,a:2... wait, values must match)
   // Actually: _:1 matches a:1, _:2 matches b:2 → residual empty

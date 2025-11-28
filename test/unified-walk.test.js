@@ -137,11 +137,12 @@ test('match When/Else control flow pattern', () => {
     {tag: 'div', children: ['after']}
   ];
 
+  // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern3 = Tendril(`[
     ..
     @whenelse=(
-      {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, remainder}
-      {tag: /^[Ee]lse$/, children: $else, remainder}?
+      {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, remainder?}
+      {tag: /^[Ee]lse$/, children: $else, remainder?}?
     )
     ..
   ]`);
@@ -174,11 +175,12 @@ test('replace group binding', () => {
     {tag: 'div', children: ['after']}
   ];
 
+  // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern4 = Tendril(`[
     ..
     @whenelse=(
-      {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, remainder}
-      {tag: /^[Ee]lse$/, children: $else, remainder}?
+      {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, remainder?}
+      {tag: /^[Ee]lse$/, children: $else, remainder?}?
     )
     ..
   ]`);

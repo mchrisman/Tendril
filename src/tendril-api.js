@@ -876,6 +876,11 @@ class PatternImpl {
 // ------------------- Fluent factory -------------------
 
 export function Tendril(pattern) {
+  if (typeof pattern !== 'string') {
+    throw new TypeError(
+      `Tendril(): pattern must be a string, got ${typeof pattern}`
+    );
+  }
   return new PatternImpl(pattern);
 }
 

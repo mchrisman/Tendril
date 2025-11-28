@@ -419,11 +419,11 @@ function parseObj(p) {
 }
 
 function parseORemnant(p) {
-  // O_REMNANT := S_GROUP '=' '(' 'remainder' ')'
+  // O_REMNANT := S_GROUP '=' '(' 'remainder' '?'? ')'
   //            | '(?!' 'remainder' ')'
-  //            | 'remainder'
+  //            | 'remainder' '?'?
 
-  // Try @x=(remainder)
+  // Try @x=(remainder) or @x=(remainder?)
   const bindRemnant = p.backtrack(() => {
     if (!p.peek('@')) return null;
     p.eat('@');
@@ -432,18 +432,20 @@ function parseORemnant(p) {
     p.eat('(');
     if (!(p.peek('id') && p.peek().v === 'remainder')) return null;
     p.eat('id');
+    const quant = p.maybe('?') ? '?' : null;
     p.eat(')');
     p.maybe(',');
-    return GroupBind(name, Spread(null));
+    return GroupBind(name, Spread(quant));
   });
   if (bindRemnant) return bindRemnant;
 
-  // Try bare 'remainder'
+  // Try bare 'remainder' or 'remainder?'
   const bareRemnant = p.backtrack(() => {
     if (!(p.peek('id') && p.peek().v === 'remainder')) return null;
     p.eat('id');
+    const quant = p.maybe('?') ? '?' : null;
     p.maybe(',');
-    return Spread(null);
+    return Spread(quant);
   });
   if (bareRemnant) return bareRemnant;
 

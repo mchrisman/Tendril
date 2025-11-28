@@ -14,9 +14,10 @@ test('match When+Else pair with specific key binding', () => {
     {tag: 'Else', children: ['No'], srcId: 'e1'}
   ];
 
+  // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern = Tendril(`[
-    {tag: "When", attrs: {$testKey: $testAttr, remainder}, children: $then, srcId: $id, remainder}
-    {tag: "Else", children: $else, remainder}?
+    {tag: "When", attrs: {$testKey: $testAttr, remainder?}, children: $then, srcId: $id, remainder?}
+    {tag: "Else", children: $else, remainder?}?
   ]`);
 
   const sol = pattern.match(data).solutions().first();
@@ -34,9 +35,10 @@ test('match When+Else with case-insensitive tag and attrs binding', () => {
     {tag: 'Else', children: ['No'], srcId: 'e1'}
   ];
 
+  // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern = Tendril(`[
-    {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, remainder}
-    {tag: /^[Ee]lse$/, children: $else, remainder}?
+    {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, remainder?}
+    {tag: /^[Ee]lse$/, children: $else, remainder?}?
   ]`);
 
   const sol = pattern.match(data).solutions().first();
@@ -59,11 +61,12 @@ test('match When+Else with surrounding nodes using group bindings', () => {
     {tag: 'div', children: ['after']}
   ];
 
+  // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern = Tendril(`[
     ..
     @whenelse=(
-      {tag: /^[Ww]hen$/, @attrs=(attrs:_), children: $then, @other=(remainder)}
-      {tag: /^[Ee]lse$/, children: $else, remainder}?
+      {tag: /^[Ww]hen$/, @attrs=(attrs:_), children: $then, @other=(remainder?)}
+      {tag: /^[Ee]lse$/, children: $else, remainder?}?
     )
     ..
   ]`);
@@ -85,11 +88,12 @@ test('replaceAll transforms When+Else to If node', () => {
     {tag: 'div', children: ['after']}
   ];
 
+  // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern = Tendril(`[
     ..
     @whenelse=(
-      {tag: /^[Ww]hen$/, @attrs=(attrs:_), children: $then, @other=(remainder)}
-      {tag: /^[Ee]lse$/, children: $else, remainder}?
+      {tag: /^[Ww]hen$/, @attrs=(attrs:_), children: $then, @other=(remainder?)}
+      {tag: /^[Ee]lse$/, children: $else, remainder?}?
     )
     ..
   ]`);

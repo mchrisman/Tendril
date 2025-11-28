@@ -786,11 +786,19 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       }
       solutions = next;
     } else if (spread.type === 'GroupBind') {
-      // @var=(remainder) - bind residual keys to group variable
+      // @var=(remainder) or @var=(remainder?) - bind residual keys to group variable
       const next = [];
       for (const state of solutions) {
         const {sol: s0, testedKeys} = state;
         const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
+
+        // Check quantifier constraints: bare remainder requires nonempty, remainder? allows empty
+        let {min, max} = parseQuantRange(spread.pat?.quant);
+        if (!spread.pat?.quant) min = 1;  // Bare @var=(remainder) requires nonempty
+        if (residualKeys.length < min || (max !== Infinity && residualKeys.length > max)) {
+          continue;  // Skip this branch - doesn't satisfy quantifier constraint
+        }
+
         const residualObj = {};
         for (const k of residualKeys) {
           residualObj[k] = obj[k];
@@ -817,10 +825,12 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       solutions = next;
     } else {
       // Bare 'remainder' - just check count per branch
+      // Default for remainder is min:1 (requires nonempty), unlike array spread which defaults to min:0
       const next = [];
       for (const state of solutions) {
         const {sol: s0, testedKeys} = state;
-        const {min, max} = parseQuantRange(spread.quant);
+        let {min, max} = parseQuantRange(spread.quant);
+        if (!spread.quant) min = 1;  // Bare 'remainder' requires nonempty
         const untestedCount = Object.keys(obj).filter(k => !testedKeys.has(k)).length;
         if (untestedCount >= min && (max === null || untestedCount <= max)) {
           next.push(state);
