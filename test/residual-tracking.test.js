@@ -116,4 +116,12 @@ test('empty residual with wildcard key', () => {
   assert.ok(emptyResidual, 'Should have solution with empty residual');
 });
 
+test('remainder? binds multiple residual keys', () => {
+  // {a:1 @r=(remainder?)} against {a:1, b:2, c:3}
+  // remainder? allows empty and unlimited keys
+  const results = Tendril('{a:1 @r=(remainder?)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
+  assert.equal(results.length, 1);
+  assert.deepEqual(results[0].r, {b: 2, c: 3});
+});
+
 console.log('\n✓ All residual tracking tests defined\n');
