@@ -10,7 +10,9 @@
       "Bash(DEBUG_REPLACE=1 node:*)",
       "Bash(./run-all:*)",
       "Bash(awk:*)",
-      "Bash(./test/run-all.cjs:*)"
+      "Bash(./test/run-all.cjs:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

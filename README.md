@@ -180,8 +180,7 @@ An assertion `K?:V` means: "For every key matching K (if any exist), the value m
 Commas are optional. Assertions are unordered. Multiple assertions can match the same key-value pair:
 
 ```javascript
-{ /a|b/:/x/ /b|c/:/y/ }  // matches {"a":"x", "b":"xy"}
-                         // "b":"xy" satisfies both assertions
+{ /a|b/:/x/ /b|c/:/y/ }  // matches {"b":"xy"} - "b":"xy" satisfies both assertions
 ```
 
 ### Remainder
@@ -193,10 +192,10 @@ The keyword `remainder` refers to all key-value pairs whose keys didn't match an
                            // remainder is {"c":"d"}
 
 { a:b remainder }          // does NOT match {"a":"b"}
-                           // remainder assertion requires nonempty remainder
+                           // 'remainder' asserts a nonempty remainder
 
 { a:b (?!remainder) }      // does NOT match {"a":"b", "c":"d"}
-                           // (?!remainder) asserts empty remainder
+                           // (?!remainder) asserts an empty remainder
 
 { a:_ (?!remainder) }      // matches iff 'a' is the only key
 ```
@@ -370,7 +369,7 @@ The `..` operator skips arbitrary levels of nesting:
 { ..password:$p }  // matches 'password' at any depth (including top-level)
                    // e.g., {password: "x"} or {user: {password: "x"}}
 
-{ ..:_ }           // matches every value at any depth
+{ ..:$node }           // matches every node (Both leaves and internal nodes.)
 ```
 
 Leading `..` means "start from root, navigate to any depth." Paths can combine dots, brackets, and skip operators freely.
@@ -527,10 +526,10 @@ Tendril(`[
 ```javascript
 // Join users with their projects by ID
 Tendril(`{
-  users:$userId.name:$userName
-  users:$userId.managerId:$managerId
-  projects:$projectId.assigneeId:$userId
-  projects:$projectId.name:$projectName
+  users[$userId].name: $userName
+  users[$userId].manager: $managerId
+  projects[$projectId].owner: $managerId
+  projects[$projectId].name: $projectName
 }`).match(data).solutions()
 ```
 
@@ -544,6 +543,8 @@ Tendril("{ password:$value }")
 ```
 
 **4. Data extraction from semi-structured formats**
+
+todo: example
 
 ### ⚠️ Works adequately
 
