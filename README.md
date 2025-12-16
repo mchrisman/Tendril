@@ -388,22 +388,31 @@ The `#` quantifier follows an assertion and requires a specific count range. Unl
 
 ## Lookaheads
 
-Lookaheads test conditions without consuming data or committing bindings:
+Lookaheads test conditions without consuming data:
 
 ```javascript
 (?=PATTERN)        // positive lookahead (must match)
 (?!PATTERN)        // negative lookahead (must not match)
 ```
 
+**Binding behavior:**
+- Positive lookaheads (`(?=P)`) commit bindings on success. If the pattern can match multiple ways (e.g., with wildcard keys), all binding possibilities are enumerated.
+- Negative lookaheads (`(?!P)`) never commit bindings, since the pattern must fail to match.
+
 In arrays:
 
 ```javascript
-[ (?= $x=(/[ab]/)) $x .. ]  // first element must match /[ab]/
+[ (?= $x=(/[ab]/)) $x .. ]  // first element must match /[ab]/, bind to $x
 
 [ (?! .. 3 4) .. ]           // array must not contain [3,4] subsequence
 ```
 
-In objects, lookaheads typically test for key existence or conditions.
+In objects:
+
+```javascript
+{ (?= a:$x) b:$x }           // assert a exists, bind its value, require b equals it
+{ (?! secret:_) .. }         // assert no key named 'secret' exists
+```
 
 ## Precedence
 
@@ -705,7 +714,7 @@ Assertions are evaluated non-exclusively: a single key-value pair may satisfy mu
 
 ### Lookaheads
 
-Lookaheads (`(?=P)`, `(?!P)`) test whether pattern P matches at the current position without consuming input or committing bindings. Negative lookaheads (`(?!P)`) assert that P does NOT match.
+Lookaheads (`(?=P)`, `(?!P)`) test whether pattern P matches at the current position without consuming input. Positive lookaheads commit bindings from successful matches and enumerate all binding possibilities. Negative lookaheads (`(?!P)`) assert that P does NOT match and never commit bindings.
 
 ## Conventions
 

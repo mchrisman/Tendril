@@ -45,6 +45,53 @@ function recordGroupSite(sol, varName, path, groupStart, groupEnd, valueRefs) {
   });
 }
 
+/**
+ * Check if a pattern AST contains any binding nodes (SBind or GroupBind).
+ * Used to optimize lookaheads: if no bindings, we can stop at first match.
+ * Result is lazily cached on the node as _hasBindings.
+ */
+function patternHasBindings(ast) {
+  if (!ast || typeof ast !== 'object') return false;
+
+  // Return cached result if available
+  if ('_hasBindings' in ast) return ast._hasBindings;
+
+  let result = false;
+
+  if (ast.type === 'SBind' || ast.type === 'GroupBind') {
+    result = true;
+  } else {
+    // Recurse into known child properties
+    if (ast.pat && patternHasBindings(ast.pat)) result = true;
+    else if (ast.val && patternHasBindings(ast.val)) result = true;
+    else if (ast.items) {
+      for (const item of ast.items) {
+        if (patternHasBindings(item)) { result = true; break; }
+      }
+    }
+    if (!result && ast.alts) {
+      for (const alt of ast.alts) {
+        if (patternHasBindings(alt)) { result = true; break; }
+      }
+    }
+    if (!result && ast.groups) {
+      for (const group of ast.groups) {
+        if (patternHasBindings(group)) { result = true; break; }
+      }
+    }
+    if (!result && ast.terms) {
+      for (const term of ast.terms) {
+        if (patternHasBindings(term)) { result = true; break; }
+        if (term.key && patternHasBindings(term.key)) { result = true; break; }
+        if (term.val && patternHasBindings(term.val)) { result = true; break; }
+      }
+    }
+  }
+
+  ast._hasBindings = result;
+  return result;
+}
+
 // Public entry: evaluate a parsed ITEM AST on input, return list of solutions.
 // Each solution: {bindings: Object, sites: Map<varName, Site[]>}
 export function match(ast, input, opts = {}) {
@@ -171,15 +218,34 @@ function matchItem(item, node, path, sol, emit, ctx) {
       }
 
       case 'Look': {
-        // Zero-width assertion; bindings from successful positive lookahead persist.
-        let matchedSol = null;
-        matchItem(item.pat, node, path, cloneSolution(sol), (s2) => {
-          if (!matchedSol) matchedSol = s2;  // capture first successful match
-        }, ctx);
+        // Zero-width assertion.
+        // Positive lookahead: bindings persist; enumerate all solutions if pattern has bindings.
+        // Negative lookahead: bindings never persist.
+        const hasBindings = patternHasBindings(item.pat);
 
-        const matched = (matchedSol !== null);
-        if ((matched && !item.neg) || (!matched && item.neg)) {
-          emit(matched ? matchedSol : cloneSolution(sol));
+        if (item.neg) {
+          // Negative lookahead: succeed if pattern does NOT match, never commit bindings
+          let matched = false;
+          matchItem(item.pat, node, path, cloneSolution(sol), () => {
+            matched = true;
+          }, ctx);
+          if (!matched) {
+            emit(cloneSolution(sol));
+          }
+        } else if (hasBindings) {
+          // Positive lookahead with bindings: emit all successful solutions
+          matchItem(item.pat, node, path, cloneSolution(sol), (s2) => {
+            emit(s2);
+          }, ctx);
+        } else {
+          // Positive lookahead without bindings: stop at first match (optimization)
+          let matchedSol = null;
+          matchItem(item.pat, node, path, cloneSolution(sol), (s2) => {
+            if (!matchedSol) matchedSol = s2;
+          }, ctx);
+          if (matchedSol) {
+            emit(matchedSol);
+          }
         }
         return;
       }
@@ -599,25 +665,36 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
             next.push({sol: cloneSolution(s0), testedKeys: new Set(testedKeys)});
           }
           // If there are residuals, negative lookahead fails (don't push to next)
-        } else {
-          // General lookahead: try matching pattern
-          // Pass parent's testedKeys so .. inside lookahead knows which keys are residual
-          let matchedSol = null;
+        } else if (term.neg) {
+          // Negative lookahead: succeed if pattern does NOT match, never commit bindings
+          let matched = false;
           const lookaheadTestedKeys = new Set(testedKeys);
-          matchObjectGroup(term.pat, obj, path, cloneSolution(s0), (s2) => {
-            if (!matchedSol) matchedSol = s2;  // capture first successful match
+          matchObjectGroup(term.pat, obj, path, cloneSolution(s0), () => {
+            matched = true;
           }, ctx, lookaheadTestedKeys);
+          if (!matched) {
+            next.push({sol: cloneSolution(s0), testedKeys: new Set(testedKeys)});
+          }
+        } else {
+          // Positive lookahead: bindings escape
+          // If pattern has bindings, enumerate all solutions; otherwise stop at first (optimization)
+          const hasBindings = patternHasBindings(term.pat);
+          const lookaheadTestedKeys = new Set(testedKeys);
 
-          const matched = (matchedSol !== null);
-          if ((matched && !term.neg) || (!matched && term.neg)) {
-            // Positive lookahead: bindings escape (Prolog-style)
-            // Negative lookahead: no bindings escape
-            // In both cases, preserve tested keys from parent branch
-            // (lookahead tested keys don't affect parent)
-            next.push({
-              sol: matched ? matchedSol : cloneSolution(s0),
-              testedKeys: new Set(testedKeys)
-            });
+          if (hasBindings) {
+            // Enumerate all solutions
+            matchObjectGroup(term.pat, obj, path, cloneSolution(s0), (s2) => {
+              next.push({sol: s2, testedKeys: new Set(testedKeys)});
+            }, ctx, lookaheadTestedKeys);
+          } else {
+            // Optimization: stop at first match when no bindings
+            let matchedSol = null;
+            matchObjectGroup(term.pat, obj, path, cloneSolution(s0), (s2) => {
+              if (!matchedSol) matchedSol = s2;
+            }, ctx, lookaheadTestedKeys);
+            if (matchedSol) {
+              next.push({sol: matchedSol, testedKeys: new Set(testedKeys)});
+            }
           }
         }
       }
