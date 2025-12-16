@@ -345,6 +345,32 @@ function matchArray(items, arr, path, sol, emit, ctx) {
       return matchArrayGroupBind(it, ixItem, ixArr, sIn);
     }
 
+    // Scalar binding with Seq pattern: $x=(seq) matches iff seq matches exactly 1 element
+    // e.g., [$x=(1? 2?)] matches [1] and [2] but not [] or [1,2]
+    if (it.type === 'SBind' && it.pat.type === 'Seq') {
+      const maxK = arr.length - ixArr;
+      // Try each possible slice length, but only accept length-1 matches
+      for (let k = Math.min(maxK, 2); k >= 0; k--) {  // Only need to try 0, 1, 2
+        const testGroup = arr.slice(ixArr, ixArr + k);
+        matchArray(it.pat.items, testGroup, [...path, ixArr], sIn, (s2) => {
+          // Only accept if exactly 1 element was matched
+          if (k === 1) {
+            const s3 = cloneSolution(s2);
+            const element = testGroup[0];
+            if (bindScalar(s3.env, it.name, element)) {
+              recordScalarSite(s3, it.name, [...path, ixArr], element);
+              if (ctx.debug?.onBind) {
+                ctx.debug.onBind('scalar', it.name, element);
+              }
+              stepItems(ixItem + 1, ixArr + k, s3);
+            }
+          }
+          // k === 0 or k >= 2: seq matched but wrong length, no solution emitted
+        }, ctx);
+      }
+      return;
+    }
+
     // Quantified item (from parser: Quant node)
     if (it.type === 'Quant') {
       const min = it.min !== null ? it.min : 0;

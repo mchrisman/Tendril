@@ -400,6 +400,44 @@ test('binding - breadcrumb traversal', () => {
   assert.deepEqual(result, {x: 42});
 });
 
+test('scalar binding with seq - matches length 1 only', () => {
+  // $x=(1? 2?) matches iff the seq matches exactly 1 element
+  // The seq "1? 2?" can match: [] (0 elements), [1] (1), [2] (1), [1,2] (2)
+  // But $x only accepts length-1 matches
+
+  // Matches [1] - seq matches 1 element, bind x=1
+  let result = Tendril('[$x=(1? 2?)]').match([1]).solutions().toArray();
+  assert.equal(result.length, 1);
+  assert.equal(result[0].x, 1);
+
+  // Matches [2] - seq matches 1 element, bind x=2
+  result = Tendril('[$x=(1? 2?)]').match([2]).solutions().toArray();
+  assert.equal(result.length, 1);
+  assert.equal(result[0].x, 2);
+
+  // Does NOT match [] - seq matches 0 elements
+  result = Tendril('[$x=(1? 2?)]').match([]).solutions().toArray();
+  assert.equal(result.length, 0);
+
+  // Does NOT match [1, 2] - seq matches 2 elements
+  result = Tendril('[$x=(1? 2?)]').match([1, 2]).solutions().toArray();
+  assert.equal(result.length, 0);
+});
+
+test('group binding with seq - matches any length', () => {
+  // Contrast with @x which accepts any length
+  // @x=(1? 2?) matches [], [1], [2], [1,2]
+
+  let result = Tendril('[@x=(1? 2?)]').match([]).solutions().toArray();
+  assert.equal(result.length, 1);
+
+  result = Tendril('[@x=(1? 2?)]').match([1]).solutions().toArray();
+  assert.equal(result.length, 1);
+
+  result = Tendril('[@x=(1? 2?)]').match([1, 2]).solutions().toArray();
+  assert.equal(result.length, 1);
+});
+
 // ==================== Alternation (|) ====================
 
 test('alternation - simple', () => {
