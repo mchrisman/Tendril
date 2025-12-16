@@ -198,7 +198,8 @@ function matchItem(item, node, path, sol, emit, ctx) {
         return;
 
       case 'Re':
-        if (item.re.test(String(node))) emit(cloneSolution(sol));
+        // Regex only matches string values (per spec)
+        if (typeof node === 'string' && item.re.test(node)) emit(cloneSolution(sol));
         return;
 
       case 'Bool':

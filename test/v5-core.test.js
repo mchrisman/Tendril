@@ -110,6 +110,15 @@ test('regex literal', () => {
   assert.ok(!matches('/fo+/', 'bar'));
 });
 
+test('regex only matches strings', () => {
+  // Regex should NOT match non-string values, even if their string representation would match
+  assert.ok(!matches('/1/', 1));           // number 1 stringifies to "1", but shouldn't match
+  assert.ok(!matches('/true/', true));     // boolean true stringifies to "true"
+  assert.ok(!matches('/null/', null));     // null stringifies to "null"
+  assert.ok(!matches('/object/', {}));     // objects stringify to "[object Object]"
+  assert.ok(matches('/1/', '1'));          // string "1" should match
+});
+
 // ==================== Arrays ====================
 
 test('empty array', () => {
