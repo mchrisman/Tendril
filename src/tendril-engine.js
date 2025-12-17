@@ -6,6 +6,16 @@ import {
 } from './microparser.js';
 import {Group} from './tendril-api.js';
 
+// ------------- StopSearch sentinel for early termination -------------
+// Used by short-circuit helpers (matchExists, scanFirst, etc.) to stop
+// enumeration after the first solution is found.
+class StopSearch extends Error {
+  constructor(payload) {
+    super('StopSearch');
+    this.payload = payload;
+  }
+}
+
 // ------------- Solution structure: {env, sites} -------------
 // Solution tracks both bindings (env) and where they were bound (sites)
 // Site kinds:
@@ -146,6 +156,137 @@ export function scan(ast, input, opts = {}) {
     );
     return {bindings, sites: sol.sites};
   });
+}
+
+// ------------- Short-circuit helpers -------------
+// These use StopSearch to terminate early after finding the first solution.
+
+/**
+ * Check if pattern matches input (anchored). Returns boolean.
+ * Short-circuits on first match - does not enumerate all solutions.
+ */
+export function matchExists(ast, input, opts = {}) {
+  const maxSteps = opts.maxSteps ?? 2000000;
+  const debug = opts.debug;
+  const ctx = {steps: 0, maxSteps, debug};
+  try {
+    matchItem(ast, input, [], newSolution(), () => {
+      throw new StopSearch(true);
+    }, ctx);
+    return false;
+  } catch (e) {
+    if (e instanceof StopSearch) return true;
+    throw e;
+  }
+}
+
+/**
+ * Get first match of pattern on input (anchored). Returns raw solution or null.
+ * Short-circuits after finding first solution.
+ */
+export function matchFirst(ast, input, opts = {}) {
+  const maxSteps = opts.maxSteps ?? 2000000;
+  const debug = opts.debug;
+  const ctx = {steps: 0, maxSteps, debug};
+  try {
+    matchItem(ast, input, [], newSolution(), (sol) => {
+      throw new StopSearch(sol);
+    }, ctx);
+    return null;
+  } catch (e) {
+    if (e instanceof StopSearch) {
+      // Convert to public API format
+      const sol = e.payload;
+      const bindings = Object.fromEntries(
+        Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
+      );
+      return {bindings, sites: sol.sites};
+    }
+    throw e;
+  }
+}
+
+/**
+ * Check if pattern matches anywhere in input (scan). Returns boolean.
+ * Short-circuits on first match - does not scan entire tree.
+ */
+export function scanExists(ast, input, opts = {}) {
+  const maxSteps = opts.maxSteps ?? 2000000;
+  const debug = opts.debug;
+  const ctx = {steps: 0, maxSteps, debug};
+
+  function scanValue(value, path) {
+    guard(ctx);
+
+    // Try matching pattern at this position - throws StopSearch on success
+    matchItem(ast, value, path, newSolution(), () => {
+      throw new StopSearch(true);
+    }, ctx);
+
+    // Recursively descend into structure
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        scanValue(value[i], [...path, i]);
+      }
+    } else if (value && typeof value === 'object') {
+      for (const key of Object.keys(value)) {
+        scanValue(value[key], [...path, key]);
+      }
+    }
+  }
+
+  try {
+    scanValue(input, []);
+    return false;
+  } catch (e) {
+    if (e instanceof StopSearch) return true;
+    throw e;
+  }
+}
+
+/**
+ * Get first match of pattern anywhere in input (scan). Returns raw solution or null.
+ * Short-circuits after finding first match - does not scan entire tree.
+ */
+export function scanFirst(ast, input, opts = {}) {
+  const maxSteps = opts.maxSteps ?? 2000000;
+  const debug = opts.debug;
+  const ctx = {steps: 0, maxSteps, debug};
+
+  function scanValue(value, path) {
+    guard(ctx);
+
+    // Try matching pattern at this position - throws StopSearch on success
+    matchItem(ast, value, path, newSolution(), (sol) => {
+      throw new StopSearch(sol);
+    }, ctx);
+
+    // Recursively descend into structure
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        scanValue(value[i], [...path, i]);
+      }
+    } else if (value && typeof value === 'object') {
+      for (const key of Object.keys(value)) {
+        scanValue(value[key], [...path, key]);
+      }
+    }
+  }
+
+  try {
+    scanValue(input, []);
+    return null;
+  } catch (e) {
+    if (e instanceof StopSearch) {
+      // Convert to public API format
+      const sol = e.payload;
+      const bindings = Object.fromEntries(
+        Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
+      );
+      return {bindings, sites: sol.sites};
+    }
+    throw e;
+  }
 }
 
 // Backward compatibility: matchProgram for old tests

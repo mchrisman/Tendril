@@ -1,19 +1,19 @@
 
-# Proposal: Short-circuiting `hasMatch()` / `first()` + eager scalar binding
+# Proposal: Short-circuiting `hasMatch()` / `first()` + `once(P)` operator
 
 ## Goals
 
 1. **Make `hasMatch()` and `first()` short-circuit** without changing matching semantics (i.e., still do the necessary backtracking; stop only after a full solution is found).
 
-2. Add **eager scalar binding** syntax:
-
-* `"$x=eager(PATTERN)"` behaves like `"$x=(PATTERN)"` except it **takes at most one witness** for that binding.
-* It is a **fixed idiom with no whitespace/comments** inside the operator token: `=eager(` must be contiguous.
+2. Add **`once(P)` operator** — a general-purpose local cut that:
+   * Evaluates subpattern `P` and emits **at most one solution**
+   * **Prevents backtracking** into `P` to find alternative solutions
+   * Mirrors Prolog's `once/1` semantics exactly
 
 ## Non-goals
 
-* No global cut/atomic semantics beyond the binding site.
-* No promise of solution ordering (“first” remains “first in current engine exploration order”).
+* No global cut/atomic semantics beyond the `once` scope.
+* No promise of solution ordering ("first" remains "first in current engine exploration order").
 * No attempt to fully stream *all* solutions through the public API yet (only to short-circuit in `hasMatch()` / `first()`).
 
 ---
@@ -29,7 +29,7 @@ Today, `match()`/`scan()` in `tendril-engine.js` fully enumerate solutions into 
 
 We can stop as soon as the engine **emits the first complete solution** (i.e., when `emit(sol)` is called at the top level).
 
-## Approach (recommended): Sentinel exception for early termination
+## Approach: Sentinel exception for early termination
 
 This is the smallest change that:
 
@@ -88,7 +88,7 @@ Implement these fast paths:
 
 * `PatternImpl.match(input).hasMatch()` should call `matchExists` instead of materializing.
 * `PatternImpl.find(input).hasMatch()` should call `scanExists`.
-* `PatternImpl.first(input)` should use `scanFirst` to stop scanning early, then (optionally) create a `MatchSet` containing only the first match group.
+* `PatternImpl.first(input)` should use `scanFirst` to stop scanning early.
 
 **Minimal viable:** keep current `MatchSet` materialization for everything, but add *new* convenience methods on `PatternImpl`:
 
@@ -102,136 +102,162 @@ Then update call sites of `.hasMatch()` / `.first()` to use those. (This avoids 
 
 This exception-based stop is intentionally localized:
 
-* Later you can replace it with a `ctx.cancelled` token or “emit returns boolean” without changing semantics.
+* Later you can replace it with a `ctx.cancelled` token or "emit returns boolean" without changing semantics.
 * Planning/reordering/memoization optimizations are not blocked by this.
 
 ## Tests to add
 
-* `hasMatch()` returns true for cases where success is *not* on the first local branch (prove we didn’t “freeze at first branch point”).
+* `hasMatch()` returns true for cases where success is *not* on the first local branch (prove we didn't "freeze at first branch point").
 * `first()` returns a valid match and does not traverse the full tree (can assert by step counter: `ctx.steps` stays under a small bound for a constructed input).
 * `find().first()` stops scanning after first match (again via step counter or instrumentation).
 
 ---
 
-# Part 2: `$x=eager(pattern)` scalar binding
+# Part 2: `once(P)` operator
 
 ## Semantics
 
-`$x=eager(P)` means:
+`once(P)` mirrors Prolog's `once/1`:
 
-* Evaluate subpattern `P` at the binding site.
-* If `P` can produce multiple successful bindings for `$x`, **take only the first one** (in exploration order) and do not enumerate further alternatives *for that binding site*.
-* Unification still applies: if `$x` is already bound, this is effectively a validation (first success or fail).
+* Evaluate subpattern `P`
+* Emit **at most one solution** (the first one found)
+* **Prevent backtracking** into `P` — once we've either emitted a solution or exhausted `P`, we're done with this `once` scope
+* Each fresh entry into `once(P)` (due to backtracking past it) gets its own independent scope
 
-This is a deliberate trade: **can miss solutions** if the first witness later causes failure but a later witness would succeed.
+This is a **local cut**: it prevents backtracking *into* P, but not backtracking *past* the `once(P)` node.
 
-This is exactly the “trading completeness for speed” feature.
+**Trade-off:** This can cause matches to fail that would succeed with exhaustive search. If the first witness from `P` leads to failure downstream, but a later witness would have succeeded, `once(P)` will miss that solution. This is the explicit trade of completeness for performance.
 
-## Syntax + whitespace rule
+## Use cases
 
-There is no white space inside this operator, which is a fixed idiom. It makes the feature unmistakable (“this is an eager binding operator”) and avoids ugly ambiguity / precedence questions.
+1. **Preventing combinatorial explosion in key bindings:**
+   ```
+   { once($a):1  once($b):1  once($c):1 }
+   ```
+   Without `once`, this is O(n³) for n keys. With `once`, it's O(n).
 
-So:
+2. **Finding a representative instance:**
+   When you need *a* solution, not *all* solutions. "Give me any user who matches this criteria."
 
-* ✅ `$x=eager(P)`
-* ❌ `$x = eager (P)`
-* ❌ `$x= eager(P)`
-* ❌ `$x=eager (P)`
+3. **Eager scalar binding:**
+   ```
+   $x=(once(pattern))
+   ```
+   Binds `x` to the first match of `pattern`, doesn't enumerate alternatives.
 
-### Implementation detail: tokenize `=eager(` as a single token
+4. **Committing to first alternative:**
+   ```
+   once(A | B | C)
+   ```
+   Try alternatives in order, take the first success, don't enumerate all successful branches.
 
-This is the cleanest way to enforce the “fixed idiom” rule without needing token end-positions.
+## Syntax
 
-#### Tokenizer changes (`microparser.js`)
+`once` is a general-purpose pattern operator, not special binding syntax:
 
-In the tokenizer, before single-char operators, add:
+* `once(P)` — anywhere a pattern is expected
+* `$x=(once(P))` — eager binding (regular binding with once-wrapped pattern)
+* `{ once($k):V }` — eager key binding
+* `once(A|B)` — first successful alternative only
+
+No whitespace restrictions needed — `once(` is just a keyword followed by `(`.
+
+## Implementation
+
+### Tokenizer changes (`microparser.js`)
+
+Add `once` as a keyword. When followed by `(`, it begins a `once` expression.
+
+### Parser changes (`tendril-parser.js`)
+
+In `parseItemTerm` (and array/object contexts as needed):
 
 ```js
-if (src.slice(i, i + 7) === '=eager(') {
-  push('=eager(', '=eager(', 7);
-  continue;
-}
-```
-
-(And optionally support `=hasty(` etc later the same way, but not now.)
-
-#### Parser changes (`tendril-parser.js`)
-
-Extend scalar binding parsing in both:
-
-* `parseItemTerm` (top-level `$x`)
-* `parseAGroupBase` (array context `$x`)
-* and any other place `$` binding is parsed.
-
-Currently you do:
-
-```js
-if (p.maybe('=')) { p.eat('('); ... p.eat(')'); return SBind(name, pat); }
-```
-
-Add a second branch:
-
-```js
-if (p.peek('=eager(')) {
-  p.eat('=eager(');          // already consumed '('
-  const pat = parseItem(p);  // or parseABody(...) in array context
+if (p.peek('once') && p.peekAhead(1, '(')) {
+  p.eat('once');
+  p.eat('(');
+  const pat = parseItem(p);
   p.eat(')');
-  return SBind(name, pat, {mode: 'eager'});
+  return { type: 'Once', pat };
 }
 ```
 
-You’ll need to extend the AST node:
+### AST
 
-* `SBind(name, pat, mode='all')` (or `eager: true`)
+New node type:
+```js
+{ type: 'Once', pat: <pattern> }
+```
 
-Do the same in array-context `$x` where you currently parse `$x=(A_BODY)` into a Seq if needed.
+### Engine changes (`tendril-engine.js`)
 
-## Engine changes (`tendril-engine.js`)
-
-In the `SBind` case inside `matchItem`, wrap the inner `matchItem(item.pat, ...)` enumeration so that for eager binds you only proceed with the **first** successful inner solution:
-
-Conceptually:
+In `matchItem`:
 
 ```js
-case 'SBind': {
-  const isEager = item.mode === 'eager';
-  if (!isEager) { /* existing behavior */ }
-
-  // eager: find first inner success, then bind+emit exactly once
+case 'Once': {
   let done = false;
   matchItem(item.pat, node, path, sol, (s2) => {
     if (done) return;
     done = true;
-    const s3 = cloneSolution(s2);
-    if (bindScalar(s3.env, item.name, node)) {
-      recordScalarSite(s3, item.name, path, node);
-      emit(s3);
-    }
+    emit(s2);
   }, ctx);
-  return;
+  return;  // crucial: exit after matchItem completes, no further exploration
 }
 ```
 
-### Important: key-binding sites
+The `return` after `matchItem` is essential — it ensures we don't continue exploring alternatives in `item.pat` after the first solution (or after exhaustion).
 
-You also bind scalar variables in **object keys / breadcrumbs** (e.g. `{ planets: { $name: {...} } }` and `.foo.$x.bar` cases). Those are handled in `navigateSingleBreadcrumb` and `navigateSkipLevels` by explicitly looping keys and calling `bindScalar`.
+### Key-binding contexts
 
-If you want `eager` to apply there too (you probably do), then when the key pattern is `SBind` with `mode:'eager'`, stop after the first successful key binding in those loops.
+In object key iteration (`navigateSingleBreadcrumb`, `navigateSkipLevels`, etc.), if the key pattern is wrapped in `Once`, the iteration should respect the once semantics — but this should happen automatically if the key pattern goes through `matchItem`.
+
+If key patterns are handled specially (direct iteration without matchItem), ensure `Once` nodes are recognized and handled with the same "first solution only, no backtracking" logic.
 
 ## Tests to add
 
-* `$x=eager(_|_)` only yields one solution where `$x=(...)` yields multiple.
-* A “completeness loss” test: eager picks the first witness that later fails while a second witness would succeed; confirm eager version fails while non-eager succeeds.
-* Key-binding test: `{ $k=eager(/a|b/):1 $k:2 }` (or similar) proves eager affects which key is chosen.
+1. **Basic truncation:**
+   * `once(_|_)` yields one solution where `(_|_)` yields multiple
+   * `$x=(once(pattern))` binds once vs `$x=(pattern)` binds multiple times
+
+2. **Backtracking prevention:**
+   * Pattern where first witness fails downstream but second would succeed
+   * Confirm `once` version fails, non-once version succeeds
+   * This proves `once` actually prevents backtracking, not just truncates output
+
+3. **Key binding:**
+   * `{ once($k):1 }` on object with multiple keys matching — only one solution
+   * `{ $a:1 $b:1 }` vs `{ once($a):1 once($b):1 }` — O(n²) vs O(n) solutions
+
+4. **Fresh scope on re-entry:**
+   * Pattern like `(A | B) once(C)` where backtracking from A to B causes fresh entry into `once(C)`
+   * Confirm each entry gets independent "once" behavior
+
+5. **Composition:**
+   * `once(once(P))` — should behave same as `once(P)`
+   * `once($x=(P))` — eager binding via wrapping
 
 ---
 
-# Notes on “no whitespace” decision
+# Design rationale
 
-The no-whitespace rule is good **if** you enforce it lexically (single token `=eager(`). It gives you:
+## Why `once` instead of `eager`, `first`, `hasty`, etc.?
 
-* a crisp “this is a special operator” signal,
-* easy parsing,
-* no surprising “is eager a keyword?” questions.
+* **`once`** directly describes the backtracking behavior: "this pattern runs once per entry"
+* It's established terminology from Prolog with well-understood semantics
+* It's about control flow (preventing re-entry), not just output cardinality
 
-Downside: it’s a bit less forgiving for users. But since this is an advanced, intentionally-incomplete operator, that’s acceptable—and the lexer-enforced rule makes the sharp edge visible.
+## Why a general operator instead of binding-specific syntax?
+
+* **One concept instead of two** — no "eager binding" vs "once operator" distinction
+* **Composable** — works anywhere, not just in binding position
+* **Same implementation complexity** — wrapping emit is the same either way
+* **Cleaner** — `$x=(once(P))` is regular binding with a once-wrapped pattern
+
+## Relationship to cut
+
+`once(P)` is a scoped/local cut. It differs from Prolog's general `!` (cut):
+
+* `once(P)` only prevents backtracking *into* P
+* Prolog's `!` prevents backtracking to any choice point before it in the clause
+
+If a general cut is added later, `once` remains useful as a more surgical tool. They're complementary, not competing.

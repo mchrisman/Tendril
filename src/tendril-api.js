@@ -7,7 +7,14 @@
 //   locating/replacing, but hidden from user-visible bindings.
 
 import {parsePattern} from './tendril-parser.js';
-import {match as engineMatch, scan as engineScan} from './tendril-engine.js';
+import {
+  match as engineMatch,
+  scan as engineScan,
+  matchExists as engineMatchExists,
+  matchFirst as engineMatchFirst,
+  scanExists as engineScanExists,
+  scanFirst as engineScanFirst,
+} from './tendril-engine.js';
 import {deepEqual} from './tendril-util.js';
 
 // ------------------- Compile & cache -------------------
@@ -870,6 +877,41 @@ class PatternImpl {
       rawSolutions: all._matches[0]._rawSolutions
     }];
     return new MatchSet(input, firstGroup);
+  }
+
+  // ------------- Short-circuit methods (fast paths) -------------
+
+  /**
+   * hasMatch(data): fast boolean check for anchored match.
+   * Short-circuits on first solution — does not enumerate all matches.
+   */
+  hasMatch(input) {
+    const ast = this._getAst();
+    return engineMatchExists(ast, input, this._buildOpts());
+  }
+
+  /**
+   * hasAnyMatch(data): fast boolean check for match anywhere (scan).
+   * Short-circuits on first solution — does not scan entire tree.
+   */
+  hasAnyMatch(input) {
+    const ast = this._getAst();
+    return engineScanExists(ast, input, this._buildOpts());
+  }
+
+  /**
+   * firstMatch(data): fast first-match retrieval (scan).
+   * Short-circuits after finding first match — does not scan entire tree.
+   * Returns a MatchSet containing at most one match, or empty MatchSet if none.
+   */
+  firstMatch(input) {
+    const ast = this._getAst();
+    const rawSol = engineScanFirst(ast, input, this._buildOpts());
+    if (!rawSol) return new MatchSet(input, []);
+    // Wrap in a group
+    const zeroSites = rawSol.sites.get('0') || [];
+    const path = zeroSites.length ? zeroSites[0].path : [];
+    return new MatchSet(input, [{path, rawSolutions: [rawSol]}]);
   }
 }
 
