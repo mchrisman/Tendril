@@ -157,11 +157,11 @@ The `|` operator creates alternatives. Quantifiers bind tighter than adjacency. 
 
 ## Objects
 
-Object patterns differ fundamentally from array patterns. Rather than matching positionally, object patterns are sets of **field (K:V) predicates**, where K and V are patterns; the predicate is true if the field name (key) matches K and the value matches V.
+Object patterns differ fundamentally from array patterns. Rather than matching positionally, object patterns are sets of assertions. Each assertion tests whether certain key-value pairs exist and satisfy conditions.
 
-The expression **K?:V** describes the slice (subset of the object's fields) that match the predicate.  **No assertion** is made; the slice can be empty.
+An assertion `K:V` means: "There exists at least one key matching K with value matching V, and for every key matching K, the value must match V."
 
-The expression **K:V** describes the same slice, **and asserts** that it is nonempty.
+An assertion `K?:V` means: "For every key matching K (if any exist), the value must match V."
 
 ```javascript
 { a:b, c:d }       // matches {"a":"b", "c":"d", "e":"f"}
@@ -173,8 +173,9 @@ The expression **K:V** describes the same slice, **and asserts** that it is none
 { a:b, x?:y }      // matches {"a":"b", "c":"d", "e":"f"}
                    // x?:y is optional — satisfied trivially (no "x" key)
 
-{ a:b, x?:y }      // matches {"a":"b", "c":"d", "x":"w"}
-                   // x?:y is optional 
+{ a:b, x?:y }      // does NOT match {"a":"b", "c":"d", "x":"w"}
+                   // x?:y not satisfied ("x" exists but value != "y")
+```
 
 Commas are optional. Assertions are unordered. Multiple assertions can match the same key-value pair:
 
@@ -387,22 +388,31 @@ The `#` quantifier follows an assertion and requires a specific count range. Unl
 
 ## Lookaheads
 
-Lookaheads test conditions without consuming data or committing bindings:
+Lookaheads test conditions without consuming data:
 
 ```javascript
 (?=PATTERN)        // positive lookahead (must match)
 (?!PATTERN)        // negative lookahead (must not match)
 ```
 
+**Binding behavior:**
+- Positive lookaheads (`(?=P)`) commit bindings on success. If the pattern can match multiple ways (e.g., with wildcard keys), all binding possibilities are enumerated.
+- Negative lookaheads (`(?!P)`) never commit bindings, since the pattern must fail to match.
+
 In arrays:
 
 ```javascript
-[ (?= $x=(/[ab]/)) $x .. ]  // first element must match /[ab]/
+[ (?= $x=(/[ab]/)) $x .. ]  // first element must match /[ab]/, bind to $x
 
 [ (?! .. 3 4) .. ]           // array must not contain [3,4] subsequence
 ```
 
-In objects, lookaheads typically test for key existence or conditions.
+In objects:
+
+```javascript
+{ (?= a:$x) b:$x }           // assert a exists, bind its value, require b equals it
+{ (?! secret:_) .. }         // assert no key named 'secret' exists
+```
 
 ## Precedence
 
@@ -565,100 +575,148 @@ todo: example
 
 ## Grammar
 
-The complete Tendril grammar in informal EBNF follows. Whitespace and C-style comments (`/* */`, `//`) are allowed between tokens. Whitespace is significant only as a token delimiter in array sequences.
-
-### Literals
-
-```
-INTEGER         := decimal integer (matches Number type)
-BOOLEAN         := true | false
-QUOTED_STRING   := quoted string literal
-REGEX           := /pattern/flags (JS regex literal)
-BAREWORD        := [A-Za-z_][A-Za-z0-9_]* unless keyword
-_               := singleton wildcard (matches any single value)
-
-LITERAL := INTEGER | BOOLEAN | QUOTED_STRING | REGEX | BAREWORD
-
-IDENT := /[a-zA-Z]\w*/
 ```
 
-### Core Productions
+# --------------------------------------------------------------------
+# Lexical structure
+# --------------------------------------------------------------------
 
-```
+INTEGER       := /[0-9]+/                 # non-negative only
+BOOLEAN       := 'true' | 'false'
+NULL          := 'null'
+WILDCARD      := '_'                      # tokenized as kind 'any'
+IDENT         := /[A-Za-z_][A-Za-z0-9_]*/
+
+QUOTED_STRING := "..." | '...'            # supports \n \r \t \" \' \\ \uXXXX \u{...}
+REGEX         := /pattern/flags           # JS RegExp, validated by constructor
+
+BAREWORD      := IDENT, except '_' 'true' 'false' 'null' are special-cased
+LITERAL       := INTEGER | BOOLEAN | NULL | QUOTED_STRING | REGEX | BAREWORD
+
+# Whitespace and // line comments allowed between tokens everywhere.
+
+# --------------------------------------------------------------------
+# Core productions
+# --------------------------------------------------------------------
+
 ROOT_PATTERN := ITEM
 
-S_ITEM   := '$' IDENT
-S_GROUP  := '@' IDENT
+S_ITEM  := '$' IDENT
+S_GROUP := '@' IDENT
 
-ITEM := '(' ITEM ')'
-      | S_ITEM
-      | S_ITEM '=' '(' ITEM ')'
-      | '_'
-      | LITERAL
-      | OBJ
-      | ARR
-      | ITEM '|' ITEM
-```
+ITEM :=
+    ITEM_TERM ('|' ITEM_TERM)*
 
-### Arrays
+ITEM_TERM :=
+      '(' ITEM ')'
+    | LOOK_AHEAD
+    | S_ITEM  ( '=' '(' ITEM ')' )?            # bare $x ≡ $x=(_)
+    | S_GROUP ( '=' '(' A_GROUP ')' )?         # bare @x ≡ @x=(_*)
+    | '_'
+    | LITERAL
+    | OBJ
+    | ARR
 
-```
+LOOK_AHEAD :=
+      '(?=' A_GROUP ')'
+    | '(?!' A_GROUP ')'
+
+# --------------------------------------------------------------------
+# Arrays
+# --------------------------------------------------------------------
+
 ARR := '[' A_BODY ']'
 
-A_BODY := (A_GROUP (','? A_GROUP)*)?
+A_BODY := (A_GROUP (','? A_GROUP)*)?           # commas optional
 
-A_GROUP := '(' A_BODY ')'
-         | S_GROUP
-         | S_GROUP '=' '(' A_GROUP ')'
-         | S_ITEM
-         | S_ITEM '=' '(' A_GROUP ')'
-         | ITEM
-         | OBJ
-         | ARR
-         | A_GROUP A_QUANT
-         | A_GROUP '|' A_GROUP
-         | '(?=' A_GROUP ')'
-         | '(?!' A_GROUP ')'
+A_GROUP :=
+      '..' A_QUANT?                            # spread token in arrays
+    | A_GROUP_BASE A_QUANT?                    # quantifiers bind tight
+      ('|' (A_GROUP_BASE A_QUANT?))*           # alternation at A_GROUP level
 
-A_QUANT := '?'
-         | '+' | '+?' | '++'
-         | '*' | '*?' | '*+'
-         | '*{' INTEGER '}'
-         | '*{' INTEGER ',' INTEGER '}'
-         | '*{' INTEGER ',' '}'
-         | '*{' ',' INTEGER '}'
-```
+A_GROUP_BASE :=
+      LOOK_AHEAD
+    | '(' A_BODY ')'                           # if >1 element => Seq node
+    | S_GROUP ( '=' '(' A_BODY ')' )?          # bare @x allowed here (≡ @x=(_*))
+    | S_ITEM  ( '=' '(' A_BODY ')' )?          # bare $x allowed here (≡ $x=(_))
+    | ITEM_TERM                                 # including nested ARR/OBJ
 
-The `*{m,n}` syntax is used (rather than `{m,n}`) to mirror the `#` quantifier for objects and to suggest multiplication/repetition.
+A_QUANT :=
+      '?' | '??'
+    | '+' | '+?' | '++'
+    | '*' | '*?' | '*+'
+    | '{' INTEGER '}'                          # exact
+    | '{' INTEGER ',' INTEGER? '}'             # {m,n} or {m,}
+    | '{' ',' INTEGER '}'                      # {,n}
 
-### Objects
+# --------------------------------------------------------------------
+# Objects
+# --------------------------------------------------------------------
 
-```
-OBJ := '{' O_BODY '}'
+OBJ := '{' O_GROUP* O_REMNANT? '}'
+    # O_GROUPs parsed greedily until they stop parsing, then O_REMNANT attempted once at end
 
-O_BODY := (O_GROUP (','? O_GROUP)*)?
+# Global remainder ("unmatched entries") is a special tail clause, only once, only at end.
+# '%' is the new spelling (alias old 'remainder' if desired).
 
-O_GROUP := '(' O_BODY ')'
-         | S_GROUP
-         | S_GROUP '=' '(' O_GROUP* ')'
-         | O_TERM
+O_REMNANT :=
+      '@' IDENT '=' '(' '%' ')' O_REM_QUANT? ','?
+    | '%' O_REM_QUANT? ','?
+    | '$' ','?                                 # shortcut for '%#{0}'
+    | '(?!' '%' ')' ','?                       # closed-object assertion (equiv to '$')
+
+O_REM_QUANT :=
+      '#{' INTEGER (',' INTEGER?)? '}'         # #{m} or #{m,n} or #{m,}
+    | '#{' ',' INTEGER '}'                     # #{,n}
+    | '#' '?'                                  # shorthand for “0..∞”_tabs (same as #{0,})
+
+# --------------------------------------------------------------------
+# Object groups and terms
+# --------------------------------------------------------------------
+
+O_GROUP :=
+      O_LOOKAHEAD
+    | '(' O_GROUP* ')'                         # OGroup node
+    | '@' IDENT '=' '(' O_GROUP* ')'           # group binding in object context (no bare @x)
+    | O_TERM
+
+O_LOOKAHEAD :=
+      '(?=' O_GROUP ')'
+    | '(?!' O_GROUP ')'
+
+# Breadcrumb paths
+O_TERM :=
+      KEY BREADCRUMB* OBJ_ASSERT_OP VALUE O_KV_QUANT? O_KV_OPT?
+    | '..' BREADCRUMB* OBJ_ASSERT_OP VALUE O_KV_QUANT? O_KV_OPT?   # leading .. allowed
 
 KEY   := ITEM
 VALUE := ITEM
 
-O_TERM := KEY BREADCRUMB* (':' | '?:') VALUE O_QUANT?
-        | 'remainder' O_QUANT?
-        | '..' BREADCRUMB* (':' | '?:') VALUE O_QUANT?
-        | S_ITEM '=' '(' O_TERM ')'
+# Object assert operators:
+# ':'   = slice definition (allows bad entries unless constrained)
+# ':>'  = implication / validate-only (forces bad#{0})
+OBJ_ASSERT_OP :=
+      ':'
+    | ':>'
 
-BREADCRUMB := '.' KEY
-            | '..' KEY
-            | '[' KEY ']'
+# KV quantifier counts the slice (not the bad set). Defaults are semantic, not syntactic.
+O_KV_QUANT :=
+      '#{' INTEGER (',' INTEGER?)? '}'         # #{m} or #{m,n} or #{m,}
+    | '#{' ',' INTEGER '}'                     # #{,n}
+    | '#' '?'                                  # shorthand for “0..∞” (same as #{0,})
 
-O_QUANT := '?' | '#' '{' INTEGER (',' INTEGER?)? '}'
+# KV suffix: disables existence assertion for the slice.
+# This is NOT a general object-group quantifier; it attaches only to a KV term.
+O_KV_OPT :=
+      '?'                                      # meaning: slice defaults to #{0,} instead of #{1,}
+
+BREADCRUMB :=
+      '..' KEY                                 # skip any depth, then match KEY
+    | '..'                                     # if immediately followed by ':', ':>', or '?' then KEY := '_'
+    | '.' KEY
+    | '[' KEY ']'
+
 ```
-
-Leading `..` in `O_TERM` enables paths like `{..password:$x}` (match at any depth including zero).
 
 ## Semantics
 
@@ -686,15 +744,32 @@ Bare variables are shorthand: `$x` ≡ `$x=(_)`, `@x` ≡ `@x=(_*)`.
 
 ### Object Assertions
 
-Each `K:V` assertion means:
-1. For all key-value pairs in the object, if the key matches K, then the value must match V
-2. At least one key must match K
+Each K:V term both defines both a **slice** (the set of object fields that satisfy both k~K and v~V) and a set denoted by **`bad`** (k~K AND NOT(v~V)).
 
-Each `K?:V` assertion means:
-1. For all key-value pairs in the object, if the key matches K, then the value must match V
-2. (No existence requirement)
+In the following short forms, '>' signifies "no bad values" (i.e. k~K => v~V), and '?' signifies that the key is optional:
 
-Assertions are evaluated non-exclusively: a single key-value pair may satisfy multiple assertions.
+| Short form | Equivalent long form | meaning |
+| K:V        | K:V  #{1,} bad#{0,}  | At least one matching k,v |
+| K:>V       | K:V  #{1,} bad#{0}   | At least one matching k,v, and no bad values |
+| K:V?       | K:V  #{0,} bad#{0,}  | No assertion (use for binding) |
+| K:>V?      | K:V  #{0,} bad#{0}   | No bad values |
+
+Binding keys or values
+{ $myKey=(K):$myVal=(V) }
+
+Binding slices
+{ @slice1=(K1:V1)       } # bind one slice
+{ @slice2=(K2:V2 K3:V3) } # bind a union of slices
+{ @x=(K1:V1) @x=(K2:V2) } # asserting two slices are the same
+{ K:V @myBad=(bad) } # Bind the slice of bad entries.
+
+'%', pronounced 'remainder', defines the slice of fields that didn't fall into any of the declared slices. It may appear only once in the object pattern, only at the end. You can bind it or quantify it, nothing else.
+
+{ K1:V1 K2:V1 } # No assertion about remainder  
+{ K1:V1 K2:V1 % } # Remainder is nonempty  
+{ K1:V1 K2:V1 $ } # Remainder is empty (short for %#{0})
+{ K1:V1 K2:V1 %#{3,4} } # Remainder is of size 3-4
+{ K1:V1 K2:V1 @rSlice=(%) } # Bind it.
 
 ### Quantifiers
 
@@ -704,7 +779,7 @@ Assertions are evaluated non-exclusively: a single key-value pair may satisfy mu
 
 ### Lookaheads
 
-Lookaheads (`(?=P)`, `(?!P)`) test whether pattern P matches at the current position without consuming input or committing bindings. Negative lookaheads (`(?!P)`) assert that P does NOT match.
+Lookaheads (`(?=P)`, `(?!P)`) test whether pattern P matches at the current position without consuming input. Positive lookaheads commit bindings from successful matches and enumerate all binding possibilities. Negative lookaheads (`(?!P)`) assert that P does NOT match and never commit bindings.
 
 ## Conventions
 
