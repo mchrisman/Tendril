@@ -294,6 +294,95 @@ The correct analysis is:
 - {literal:1} → universal (all matching keys must satisfy) ✗ current implementation is wrong, but it accidentally works because for constant literals, 'all matching keys' is the same as 'any matching keys'
 - {$k:$v} → universal (each key-value pair is a solution) ✗ current implementation is wrong, but it accidentally works because bound variables are, within the context of a single solution, like constant literals.
 
+--------------------------------
+
+I'm thinking along these lines...As before, take the strategy that we are defining logic in terms of slices. This is my first stab at the grammar for a more flexible residue annotation. So I probably made some mistakes. The full grammar would be an advanced feature, and we would focus the documentation on these shortcuts. The full grammar perhaps helps us reason about this a little better, or at least express our thoughts more concisely.
+
+`K:V` is short for K:V#{1,}:%#{0,}
+
+# Matching + validation
+# '$' generally means "we're done", thus %#{0}
+`K:V$` is short for K:V#{1,}:%#{0}
+
+# Replaces K?:V, permits optional keys. 
+# It's still the case that this makes no assertion, which makes perfect sense for an optional key. For optional keys, the value we're looking for, is not an assertion; it's an extraction (binding).
+`K:V ?+`
+`K:V#{0,}:%#{0:}`  // alternate form, I think equivalent
+# Extraction + validation. So this one *does* bring an assertion
+`K:V$ ?+`
+
+# default quantifier for % is #{1,}
+{ K1:V1 K2:V2 remainder } (now deprecated) is short for { (K1:V1 K2:V2) % } 
+
+
+```
+# combines previous KEY BREADCRUMB
+KEY = ITEM ( '.' ITEM | '..' ITEM | '[' ITEM ']' )*
+
+MINMAX = INTEGER   # exact count
+       | INTEGER ','  # min
+       | ',' INTEGER  # max
+       | INTEGER,INTEGER  # min,max
+
+O_QUANT = '#{' MINMAX '}'
+O_VMATCH = VALUE O_QUANT?
+
+
+# In "K:V:%", the residue % is like (?=K:(?!V)_) and is not part of the slice
+KV_RESIDUE = ':'              '%'     O_QUANT?
+           | ':' S_GROUP '=(' '%' ')' O_QUANT?
+O_KV = KEY ':' O_VMATCH KV_RESIDUE?
+
+# O_TERM is a slice              
+O_TERM = O_KV
+      | '(' O_TERM ')'
+      | S_GROUP '=(' O_TERM ')'
+      | O_TERM '?'           # optional
+      | O_TERM '?+'          # optional possesive
+      | O_TERM O_TERM        # implicit union
+      | O_TERM '∩' O_TERM    # reserved, not supported
+      | O_TERM '⊢' O_TERM   # reserved, not supported
+
+# The group residue is the inverse of the group slice.  
+
+O_GROUP_RESIDUE =              '%'     O_QUANT?
+              | S_GROUP '=(' '%' ')' O_QUANT?
+      
+OBJ := '{' O_BODY '}'
+
+O_BODY := (O_GROUP (','? O_GROUP)*)?
+
+O_GROUP := '(' O_BODY ')' O_GROUP_RESIDUE?
+         | S_GROUP
+         | S_GROUP '=' '(' O_GROUP* ')'
+         | O_TERM
+
+-------------------
+
+
+
+I was trying to squeeze in "remainders" for slice expresssions
+
+# Remainder for the first grouping versus remainder for the whole object. 
+{ (  k:v k:v remainder) k:v remainder } 
+
+But I think it gets too confusing, and we should probably reserve that kind of remainder to apply to the whole object only. 
+
+I think the confusion I introduced was in using the same symbol for both types of residue ("bad values" vs "unmatched entries"). We need two different symbols for that, and they should both be noun-ish so that if you want, you can bind a symbol to them. 
+
+I wasn't trying to "overload" the colon, I was trying to make it an optionally ternary notation, which would perhaps have allowed us to use the same symbol for both. 
+bad values { K:V:% }  vs. unmatched entries { K:V % }
+But as I said, I now see that's a bad idea. We need separate symbols. 
+
+{ K:V bad } vs { K:V % }
+
+Things that I am leaning toward but am not committed to:
+- Using '%' for global residue
+- Using '$' as a general anchoring signifier, enabling [ x $ ] as shortcut for [ x (?!_) ],  {K:V $} as shortcut for {K:V (?!%)}
+-Holding the explicit 'bad values' notation {K:V bad} as an advanced feature; the documentation should focus on the shortcut, perhaps something like K:V! meaning K:V bad#{0}  
+
+
+```
 
 
 
