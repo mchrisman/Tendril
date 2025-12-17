@@ -59,10 +59,40 @@ The code must be compact — not by abridgment or code-golf, but by finding eleg
 
 ### How to run tests
 
-AI Assistant, please add to your immediate to-do list, documenting here how to run tests and how to add them. If this takes more than a paragraph to describe, it is a symptom of our test process being non-ergonomic, which should be fixed.
+```bash
+npm test           # Run all tests
+node test/foo.js   # Run a specific test file
+```
+
+Tests use Node's built-in test runner (`node:test`). To add a new test file, create `test/foo.test.js` and import from `node:test` and `node:assert/strict`.
 
 ## Map
 
-AI Assistant, please add to your immediate to-do list, documenting here the directory structure and highlighting important files.
+```
+src/
+  tendril-api.js      # Public API (Tendril(), match/find/solutions/etc)
+  tendril-engine.js   # Core matching engine (the heart of the system)
+  tendril-parser.js   # Pattern parser (AST construction)
+  microparser.js      # Low-level tokenizer
 
-We have a lot of .md documentation files that are obsolete, tentative, or scratchpad-type notes. Ignore all of them except README.md
+test/
+  engine.test.js           # Main engine tests
+  object-semantics-v2.test.js  # Slice-based object matching
+  residual-tracking.test.js    # Coverage-based remainder
+  optional-patterns.test.js    # K:>V? syntax
+  tokenizer.test.js            # Tokenizer edge cases
+  ...
+```
+
+We have many `.md` documentation files that may be obsolete, tentative, or scratchpad-type notes. Ignore all of them except README.md.
+
+## Recent Major Changes
+
+**Slice-based object semantics (v4 branch)**: Object matching now uses a slice-based model:
+- `K:V` = slice must exist, bad entries allowed
+- `K:>V` = slice must exist, no bad entries (implication)
+- `K:V?` = optional (no existence requirement)
+- `K:>V?` = implication only
+- `%` = remainder shortcut
+- `$` = closed object shortcut (`%#{0}`)
+- Remainder is now coverage-based (keys matching ANY K are covered, regardless of value match)

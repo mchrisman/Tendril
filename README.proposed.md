@@ -761,7 +761,6 @@ Binding slices
 { @slice1=(K1:V1)       } # bind one slice
 { @slice2=(K2:V2 K3:V3) } # bind a union of slices
 { @x=(K1:V1) @x=(K2:V2) } # asserting two slices are the same
-{ K:V @myBad=(bad) } # Bind the slice of bad entries.
 
 '%', pronounced 'remainder', defines the slice of fields that didn't fall into any of the declared slices. It may appear only once in the object pattern, only at the end. You can bind it or quantify it, nothing else.
 

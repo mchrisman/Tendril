@@ -572,8 +572,10 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
   const DEBUG = false; // Set to true for debugging
 
   // Process each OTerm sequentially, threading solutions through
-  // Each solution tracks its own tested keys for correct residual computation
-  let solutions = [{sol: cloneSolution(sol), testedKeys: new Set()}];
+  // Each solution tracks:
+  // - testedKeys: keys that were successfully matched (for backward compat)
+  // - coveredKeys: keys that match any K pattern (for remainder calculation)
+  let solutions = [{sol: cloneSolution(sol), testedKeys: new Set(), coveredKeys: new Set()}];
 
   if (DEBUG) console.log(`[matchObject] obj keys:`, Object.keys(obj), `terms:`, terms.length);
 
@@ -584,10 +586,11 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       const next = [];
 
       for (const state of solutions) {
-        const {sol: s0, testedKeys} = state;
+        const {sol: s0, testedKeys, coveredKeys = new Set()} = state;
         if (isSpread) {
           // @var=(remainder) - capture residual keys
-          const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
+          // Remainder is keys NOT covered by any key pattern K
+          const residualKeys = Object.keys(obj).filter(k => !coveredKeys.has(k));
           const residualObj = {};
           for (const k of residualKeys) {
             residualObj[k] = obj[k];
@@ -608,8 +611,8 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
             if (ctx.debug?.onBind) {
               ctx.debug.onBind('group', term.name, groupValue);
             }
-            // Preserve tested keys for this branch
-            next.push({sol: s2, testedKeys: new Set(testedKeys)});
+            // Preserve both testedKeys and coveredKeys for this branch
+            next.push({sol: s2, testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys)});
           }
         } else {
           // @var=(pattern) - recursively match pattern, collect matched keys
@@ -646,12 +649,14 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
                 if (ctx.debug?.onBind) {
                   ctx.debug.onBind('group', term.name, groupValue);
                 }
-                // Mark matched keys as tested in this branch
+                // Mark matched keys as tested and covered in this branch
                 const newTestedKeys = new Set(testedKeys);
+                const newCoveredKeys = new Set(coveredKeys);
                 for (const k of matchedKeys) {
                   newTestedKeys.add(k);
+                  newCoveredKeys.add(k);
                 }
-                next.push({sol: s3, testedKeys: newTestedKeys});
+                next.push({sol: s3, testedKeys: newTestedKeys, coveredKeys: newCoveredKeys});
               }
             },
             ctx,
@@ -668,9 +673,16 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       // Process grouped terms - just flatten them into the main sequence
       const next = [];
       for (const state of solutions) {
+        const {coveredKeys = new Set()} = state;
+        const groupMatchedKeys = new Set();
         matchObject(term.groups, null, obj, path, state.sol, (s2) => {
-          next.push({sol: s2, testedKeys: new Set(state.testedKeys)});
-        }, ctx);
+          // Update covered keys from the group
+          const newCoveredKeys = new Set(coveredKeys);
+          for (const k of groupMatchedKeys) {
+            newCoveredKeys.add(k);
+          }
+          next.push({sol: s2, testedKeys: new Set(state.testedKeys), coveredKeys: newCoveredKeys});
+        }, ctx, groupMatchedKeys);
       }
       solutions = next;
       continue;
@@ -680,16 +692,16 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     if (term.type === 'OLook') {
       const next = [];
       for (const state of solutions) {
-        const {sol: s0, testedKeys} = state;
+        const {sol: s0, testedKeys, coveredKeys = new Set()} = state;
 
         // Special case: (?!..) means "no residual keys" (closed object assertion)
         // This is an optimization of the desugaring (?!((?!OT1)(?!OT2)...(?!OTn)_=_))
         if (term.neg && term.pat.type === 'Spread') {
-          const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
+          const residualKeys = Object.keys(obj).filter(k => !coveredKeys.has(k));
           const noResiduals = residualKeys.length === 0;
           if (noResiduals) {
             // No residual keys - negative lookahead succeeds
-            next.push({sol: cloneSolution(s0), testedKeys: new Set(testedKeys)});
+            next.push({sol: cloneSolution(s0), testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys)});
           }
           // If there are residuals, negative lookahead fails (don't push to next)
         } else if (term.neg) {
@@ -700,7 +712,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
             matched = true;
           }, ctx, lookaheadTestedKeys);
           if (!matched) {
-            next.push({sol: cloneSolution(s0), testedKeys: new Set(testedKeys)});
+            next.push({sol: cloneSolution(s0), testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys)});
           }
         } else {
           // Positive lookahead: bindings escape
@@ -711,7 +723,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
           if (hasBindings) {
             // Enumerate all solutions
             matchObjectGroup(term.pat, obj, path, cloneSolution(s0), (s2) => {
-              next.push({sol: s2, testedKeys: new Set(testedKeys)});
+              next.push({sol: s2, testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys)});
             }, ctx, lookaheadTestedKeys);
           } else {
             // Optimization: stop at first match when no bindings
@@ -720,7 +732,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
               if (!matchedSol) matchedSol = s2;
             }, ctx, lookaheadTestedKeys);
             if (matchedSol) {
-              next.push({sol: matchedSol, testedKeys: new Set(testedKeys)});
+              next.push({sol: matchedSol, testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys)});
             }
           }
         }
@@ -733,72 +745,24 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       throw new Error(`Expected OTerm, GroupBind, OLook, or OGroup, got ${term.type}`);
     }
 
-    // Handle K?:V desugaring: K?:V → (K:V | (?!K:_))
-    if (term.op === '?:') {
-      const next = [];
-      for (const state of solutions) {
-        const {sol: s0, testedKeys} = state;
+    // New slice-based semantics:
+    // - K:V   = slice exists (#{1,}), bad entries allowed
+    // - K:>V  = slice exists (#{1,}), no bad entries (implication)
+    // - K:V?  = slice may be empty (#{0,}), bad entries allowed
+    // - K:>V? = slice may be empty (#{0,}), no bad entries (implication)
+    //
+    // Where:
+    // - slice = keys where k~K AND v~V
+    // - bad = keys where k~K AND NOT(v~V)
+    // - covered = all keys where k~K (for remainder calculation)
 
-        // Special handling for RootKey with ?:
-        if (term.key.type === 'RootKey') {
-          // ..key?:val always matches (breadcrumb navigation handles existence)
-          const s1 = cloneSolution(s0);
-          navigateBreadcrumbs(
-            term.breadcrumbs,
-            obj,
-            path,
-            s1,
-            (finalNode, finalPath, s2) => {
-              matchItem(term.val, finalNode, finalPath, s2, (s3) => {
-                next.push({sol: s3, testedKeys: new Set(testedKeys)});
-              }, ctx);
-            },
-            ctx
-          );
-          continue;
-        }
+    const isImplication = term.op === ':>';
+    const isOptional = term.optional === true;
 
-        const keys = objectKeysMatching(obj, term.key, s0.env);
-
-        if (keys.length > 0) {
-          // First alternative: K=V (key exists, must match value)
-          for (const k of keys) {
-            const s1 = cloneSolution(s0);
-            const newTestedKeys = new Set(testedKeys);
-            newTestedKeys.add(k);
-
-            // Bind key variables (handle direct bindings and alternations)
-            if (!bindKeyVariables(term.key, k, s1, path)) {
-              continue;
-            }
-
-            navigateBreadcrumbs(
-              term.breadcrumbs,
-              obj[k],
-              [...path, k],
-              s1,
-              (finalNode, finalPath, s2) => {
-                matchItem(term.val, finalNode, finalPath, s2, (s3) => {
-                  next.push({sol: s3, testedKeys: newTestedKeys});
-                }, ctx);
-              },
-              ctx
-            );
-          }
-        } else {
-          // Second alternative: (?!K=_) (key doesn't exist)
-          // This succeeds because no keys matched the pattern
-          next.push({sol: cloneSolution(s0), testedKeys: new Set(testedKeys)});
-        }
-      }
-      solutions = next;
-      continue;
-    }
-
-    // For each solution, process all matching keys
+    // For each solution, process the term
     let next = [];
     for (const state of solutions) {
-      const {sol: s0, testedKeys} = state;
+      const {sol: s0, testedKeys, coveredKeys = new Set()} = state;
 
       // Special handling for RootKey (leading .. in path like {..password:$x})
       if (term.key.type === 'RootKey') {
@@ -811,7 +775,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
           s1,
           (finalNode, finalPath, s2) => {
             matchItem(term.val, finalNode, finalPath, s2, (s3) => {
-              next.push({sol: s3, testedKeys: new Set(testedKeys)});
+              next.push({sol: s3, testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys)});
             }, ctx);
           },
           ctx
@@ -819,46 +783,99 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
         continue;
       }
 
-      // OPTIMIZATION: Compute keys for THIS solution's bindings
-      const keys = objectKeysMatching(obj, term.key, s0.env);
-      if (DEBUG) console.log(`[matchObject] term.key:`, term.key, `matched keys:`, keys);
+      // Find all keys matching the key pattern K
+      const matchingKeys = objectKeysMatching(obj, term.key, s0.env);
+      if (DEBUG) console.log(`[matchObject] term.key:`, term.key, `matched keys:`, matchingKeys);
 
-      // For ':' operator, require at least one key to match
-      if (term.op === ':' && keys.length === 0) {
-        continue; // Skip this solution
+      // All matching keys are "covered" for remainder purposes
+      const newCoveredKeys = new Set(coveredKeys);
+      for (const k of matchingKeys) {
+        newCoveredKeys.add(k);
       }
 
-      // Existential semantics: each matching key creates an independent solution branch
-      // (consistent with array semantics where [.. 5 ..] means "exists a 5")
-      for (const k of keys) {
-        if (DEBUG) console.log(`[matchObject] processing key '${k}', breadcrumbs:`, term.breadcrumbs?.length || 0);
+      // Partition keys into slice (v~V) and bad (NOT v~V)
+      // Must navigate breadcrumbs before testing value!
+      const sliceKeys = [];
+      const badKeys = [];
 
-        const s1 = cloneSolution(s0);
-        // Track that this key was tested in this branch
-        const newTestedKeys = new Set(testedKeys);
-        newTestedKeys.add(k);
+      for (const k of matchingKeys) {
+        // Test if value matches V (after navigating breadcrumbs)
+        let valueMatches = false;
 
-        // Bind key variables (handle direct bindings and alternations)
-        if (!bindKeyVariables(term.key, k, s1, path)) {
-          continue; // Binding failed
+        if (term.breadcrumbs && term.breadcrumbs.length > 0) {
+          // Navigate breadcrumbs first, then test value at final node
+          navigateBreadcrumbs(
+            term.breadcrumbs,
+            obj[k],
+            [...path, k],
+            cloneSolution(s0),
+            (finalNode, finalPath, s2) => {
+              matchItem(term.val, finalNode, finalPath, s2, () => {
+                valueMatches = true;
+              }, ctx);
+            },
+            ctx
+          );
+        } else {
+          // No breadcrumbs - test value directly
+          matchItem(term.val, obj[k], [...path, k], cloneSolution(s0), () => {
+            valueMatches = true;
+          }, ctx);
         }
 
-        // Navigate breadcrumbs from obj[k], then match value pattern
-        if (DEBUG) console.log(`[matchObject] obj[${k}]:`, obj[k]);
-        navigateBreadcrumbs(
-          term.breadcrumbs,
-          obj[k],
-          [...path, k],
-          s1,
-          (finalNode, finalPath, s2) => {
-            if (DEBUG) console.log(`[matchObject] reached final node:`, finalNode, `matching against:`, term.val);
-            matchItem(term.val, finalNode, finalPath, s2, (s3) => {
-              if (DEBUG) console.log(`[matchObject] value matched!`);
-              next.push({sol: s3, testedKeys: newTestedKeys});
-            }, ctx);
-          },
-          ctx
-        );
+        if (valueMatches) {
+          sliceKeys.push(k);
+        } else {
+          badKeys.push(k);
+        }
+      }
+
+      if (DEBUG) console.log(`[matchObject] slice:`, sliceKeys, `bad:`, badKeys);
+
+      // Apply constraints based on operator and optional flag
+      // 1. Existence check (unless optional)
+      if (!isOptional && sliceKeys.length === 0) {
+        if (DEBUG) console.log(`[matchObject] failed: no slice entries and not optional`);
+        continue; // Skip this solution - existence required but not satisfied
+      }
+
+      // 2. Implication check (if :>)
+      if (isImplication && badKeys.length > 0) {
+        if (DEBUG) console.log(`[matchObject] failed: bad entries exist with :> operator`);
+        continue; // Skip this solution - bad entries forbidden
+      }
+
+      // Constraints passed! Now enumerate solutions from slice
+      if (sliceKeys.length > 0) {
+        // Existential branching: each slice key creates an independent solution
+        for (const k of sliceKeys) {
+          const s1 = cloneSolution(s0);
+          const newTestedKeys = new Set(testedKeys);
+          newTestedKeys.add(k);
+
+          // Bind key variables
+          if (!bindKeyVariables(term.key, k, s1, path)) {
+            continue; // Binding failed
+          }
+
+          // Navigate breadcrumbs and match value to get bindings
+          navigateBreadcrumbs(
+            term.breadcrumbs,
+            obj[k],
+            [...path, k],
+            s1,
+            (finalNode, finalPath, s2) => {
+              matchItem(term.val, finalNode, finalPath, s2, (s3) => {
+                next.push({sol: s3, testedKeys: newTestedKeys, coveredKeys: newCoveredKeys});
+              }, ctx);
+            },
+            ctx
+          );
+        }
+      } else {
+        // No slice entries, but constraints passed (must be optional)
+        // Continue with unchanged solution but updated coverage
+        next.push({sol: cloneSolution(s0), testedKeys: new Set(testedKeys), coveredKeys: newCoveredKeys});
       }
     }
 
@@ -866,21 +883,22 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     if (!solutions.length) break;
   }
 
-  // Handle spread: bare 'remainder' or '@var=(remainder)' or '(?!remainder)'
+  // Handle spread: bare '%'/'remainder' or '@var=(%)' or '(?!%)' or '$'
+  // Remainder is based on coveredKeys (keys matching any key pattern K), not testedKeys
   if (spread && solutions.length > 0) {
     if (spread.type === 'OLook') {
-      // (?!remainder) - assert no residual keys
+      // (?!%) - assert no residual keys
       const next = [];
       for (const state of solutions) {
-        const {sol: s0, testedKeys} = state;
+        const {sol: s0, testedKeys, coveredKeys = new Set()} = state;
 
-        // Special case: (?!remainder) means "no residual keys" (closed object assertion)
+        // Special case: (?!%) means "no residual keys" (closed object assertion)
         if (spread.neg && spread.pat.type === 'Spread') {
-          const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
+          const residualKeys = Object.keys(obj).filter(k => !coveredKeys.has(k));
           const noResiduals = residualKeys.length === 0;
           if (noResiduals) {
             // No residual keys - negative lookahead succeeds
-            next.push({sol: cloneSolution(s0), testedKeys: new Set(testedKeys)});
+            next.push({sol: cloneSolution(s0), testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys)});
           }
           // If there are residuals, negative lookahead fails (don't push to next)
         } else {
@@ -890,20 +908,20 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       }
       solutions = next;
     } else if (spread.type === 'GroupBind') {
-      // @var=(remainder) or @var=(remainder?) - bind residual keys to group variable
+      // @var=(%) - bind residual keys to group variable
       const next = [];
       for (const state of solutions) {
-        const {sol: s0, testedKeys} = state;
-        const residualKeys = Object.keys(obj).filter(k => !testedKeys.has(k));
+        const {sol: s0, testedKeys, coveredKeys = new Set()} = state;
+        const residualKeys = Object.keys(obj).filter(k => !coveredKeys.has(k));
 
-        // Check quantifier constraints: bare remainder requires nonempty; remainder? allows empty and no upper bound
+        // Check quantifier constraints from the spread pattern
         let {min, max} = parseQuantRange(spread.pat?.quant);
         if (!spread.pat?.quant) {
-          // @var=(remainder) requires at least one key
+          // @var=(%) requires at least one key by default
           min = 1;
           max = Infinity;
         } else if (spread.pat.quant === '?') {
-          // @var=(remainder?) allows empty remainder and unlimited keys
+          // @var=(%?) allows empty remainder and unlimited keys
           min = 0;
           max = Infinity;
         }
@@ -931,20 +949,21 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
           if (ctx.debug?.onBind) {
             ctx.debug.onBind('group', spread.name, groupValue);
           }
-          next.push({sol: s2, testedKeys});
+          next.push({sol: s2, testedKeys, coveredKeys});
         }
       }
       solutions = next;
     } else {
-      // Bare 'remainder' - just check count per branch
-      // Default for remainder is min:1 (requires nonempty), unlike array spread which defaults to min:0
+      // Bare '%' or '$' - just check count per branch
       const next = [];
       for (const state of solutions) {
-        const {sol: s0, testedKeys} = state;
+        const {sol: s0, testedKeys, coveredKeys = new Set()} = state;
         let {min, max} = parseQuantRange(spread.quant);
-        if (!spread.quant) min = 1;  // Bare 'remainder' requires nonempty
-        const untestedCount = Object.keys(obj).filter(k => !testedKeys.has(k)).length;
-        if (untestedCount >= min && (max === null || untestedCount <= max)) {
+        // Handle $ which comes through as {min:0, max:0}
+        // Handle bare % which requires nonempty (min:1)
+        if (!spread.quant) min = 1;  // Bare '%' requires nonempty
+        const uncoveredCount = Object.keys(obj).filter(k => !coveredKeys.has(k)).length;
+        if (uncoveredCount >= min && (max === null || uncoveredCount <= max)) {
           next.push(state);
         }
       }

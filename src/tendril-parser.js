@@ -56,13 +56,14 @@ const Quant = (sub, op, min = null, max = null) => ({
 });
 
 // Object terms
-const OTerm = (key, breadcrumbs, op, val, quant) => ({
+const OTerm = (key, breadcrumbs, op, val, quant, optional = false) => ({
   type: 'OTerm',
   key,           // ITEM
   breadcrumbs,   // Breadcrumb[]
-  op,            // '=' or '?='
+  op,            // ':' or ':>' (implication)
   val,           // ITEM
-  quant          // null or {min, max}
+  quant,         // null or {min, max}
+  optional       // true if '?' suffix (K:V? or K:>V?)
 });
 
 const Spread = (quant) => ({type: 'Spread', quant});  // .. with optional #{...}
@@ -419,54 +420,123 @@ function parseObj(p) {
 }
 
 function parseORemnant(p) {
-  // O_REMNANT := S_GROUP '=' '(' 'remainder' '?'? ')'
-  //            | '(?!' 'remainder' ')'
-  //            | 'remainder' '?'?
+  // O_REMNANT := '@' IDENT '=' '(' ('%' | 'remainder') ')' O_REM_QUANT?
+  //            | ('%' | 'remainder') O_REM_QUANT?
+  //            | '$'                                      // shortcut for %#{0}
+  //            | '(?!' ('%' | 'remainder') ')'            // closed-object assertion
 
-  // Try @x=(remainder) or @x=(remainder?)
+  // Helper to check if current token is remainder marker (% or 'remainder')
+  const isRemainderMarker = () =>
+    p.peek('%') || (p.peek('id') && p.peek().v === 'remainder');
+
+  const eatRemainderMarker = () => {
+    if (p.peek('%')) return p.eat('%');
+    if (p.peek('id') && p.peek().v === 'remainder') return p.eat('id');
+    return null;
+  };
+
+  // Try $ (closed object shortcut = %#{0})
+  const closedObj = p.backtrack(() => {
+    if (!p.peek('$')) return null;
+    // Make sure this isn't a variable binding like $x
+    // Check if next token after $ is an identifier (which would make it $varname)
+    const next = p.toks[p.i + 1];
+    if (next && next.k === 'id') return null; // It's $varname, not standalone $
+    p.eat('$');
+    p.maybe(',');
+    // $ is equivalent to %#{0} (empty remainder required)
+    return Spread({min: 0, max: 0});
+  });
+  if (closedObj) return closedObj;
+
+  // Try @x=(%) or @x=(%?) or @x=(remainder) with optional quantifier
   const bindRemnant = p.backtrack(() => {
     if (!p.peek('@')) return null;
     p.eat('@');
     const name = p.eat('id').v;
     if (!p.maybe('=')) return null;
     p.eat('(');
-    if (!(p.peek('id') && p.peek().v === 'remainder')) return null;
-    p.eat('id');
-    const quant = p.maybe('?') ? '?' : null;
+    if (!isRemainderMarker()) return null;
+    eatRemainderMarker();
+    // Handle %? inside parens (shorthand for optional remainder)
+    let quant = null;
+    if (p.maybe('?')) {
+      quant = {min: 0, max: null}; // %? means 0..∞ (can be empty)
+    }
     p.eat(')');
+    // Also check for quantifier after closing paren
+    if (!quant) {
+      quant = parseRemainderQuant(p);
+    }
     p.maybe(',');
     return GroupBind(name, Spread(quant));
   });
   if (bindRemnant) return bindRemnant;
 
-  // Try bare 'remainder' or 'remainder?'
+  // Try bare '%' or 'remainder' with optional quantifier
   const bareRemnant = p.backtrack(() => {
-    if (!(p.peek('id') && p.peek().v === 'remainder')) return null;
-    p.eat('id');
-    const quant = p.maybe('?') ? '?' : null;
+    if (!isRemainderMarker()) return null;
+    eatRemainderMarker();
+    // Handle %? or remainder? shorthand for optional (can be empty)
+    let quant = null;
+    if (p.maybe('?')) {
+      quant = {min: 0, max: null}; // %? or remainder? means 0..∞
+    } else {
+      quant = parseRemainderQuant(p);
+    }
     p.maybe(',');
     return Spread(quant);
   });
   if (bareRemnant) return bareRemnant;
 
-  // Try (?!remainder)
+  // Try (?!%) or (?!remainder)
   const negRemnant = p.backtrack(() => {
     if (!p.peek('(?!')) return null;
     p.eat('(?!');
-    if (!(p.peek('id') && p.peek().v === 'remainder')) return null;
-    p.eat('id');
+    if (!isRemainderMarker()) return null;
+    eatRemainderMarker();
     p.eat(')');
     p.maybe(',');
     return {type: 'OLook', neg: true, pat: Spread(null)};
   });
   if (negRemnant) return negRemnant;
 
-  // Check for common mistake: using '..' instead of 'remainder'
+  // Check for common mistake: using '..' instead of '%' or 'remainder'
   if (p.peek('..')) {
-    p.fail('bare ".." not allowed in objects; use "remainder" or "@x=(remainder)" instead');
+    p.fail('bare ".." not allowed in objects; use "%" or "remainder" instead');
   }
 
   return null;
+}
+
+// Parse remainder quantifier: #{n}, #{n,m}, #{n,}, #?
+function parseRemainderQuant(p) {
+  if (!p.peek('#')) return null;
+  p.eat('#');
+
+  if (p.maybe('?')) {
+    // #? means 0..∞ (any count)
+    return {min: 0, max: null};
+  }
+
+  if (!p.peek('{')) p.fail('expected { or ? after # in remainder quantifier');
+  p.eat('{');
+
+  const min = p.eat('num').v;
+  let max = min;
+
+  if (p.maybe(',')) {
+    if (p.peek('num')) {
+      max = p.eat('num').v;
+    } else {
+      max = null; // unbounded
+    }
+  }
+
+  p.eat('}');
+
+  if (max !== null && max < min) p.fail('remainder quantifier upper < lower');
+  return {min, max};
 }
 
 function parseOGroup(p) {
@@ -522,8 +592,8 @@ function parseOGroup(p) {
 }
 
 function parseOTerm(p) {
-  // O_TERM := KEY BREADCRUMB* '?'? (':' | '?:') VALUE O_QUANT?
-  //         | '..' BREADCRUMB* '?'? (':' | '?:') VALUE O_QUANT?  (leading .. for zero-depth)
+  // O_TERM := KEY BREADCRUMB* (':' | ':>') VALUE O_KV_QUANT? '?'?
+  //         | '..' BREADCRUMB* (':' | ':>') VALUE O_KV_QUANT? '?'?
 
   // Check for leading .. (e.g., {..password:$x})
   let key;
@@ -546,47 +616,39 @@ function parseOTerm(p) {
     else break;
   }
 
-  // '?'? (':' | '?:') → canonicalize to '?:'
-  // Try longer patterns first: '? ?:', '? :', '?:', ':'
+  // ':' or ':>' operator
   let op = null;
-
-  // Try '? ?:' or '? :'
-  const questOp = p.backtrack(() => {
-    if (!p.maybe('?')) return null;
-    if (p.maybe('?:')) return '?:';
-    if (p.maybe(':')) return '?:'; // canonicalize '? :' to '?:'
-    return null;
-  });
-  if (questOp) {
-    op = questOp;
-  } else if (p.maybe('?:')) {
-    op = '?:';
+  if (p.maybe(':>')) {
+    op = ':>';
   } else if (p.maybe(':')) {
     op = ':';
   } else {
-    p.fail('expected : or ?: in object term');
+    p.fail('expected : or :> in object term');
   }
 
   // VALUE
   const val = parseItem(p);
 
-  // O_QUANT?
+  // O_KV_QUANT? (e.g., #{2,3})
   const quant = parseOQuant(p);
 
-  return OTerm(key, breadcrumbs, op, val, quant);
+  // '?' suffix for optional existence (K:V? or K:>V?)
+  const optional = !!p.maybe('?');
+
+  return OTerm(key, breadcrumbs, op, val, quant, optional);
 }
 
 function parseBreadcrumb(p) {
   // BREADCRUMB := '..' KEY          // skip levels
-  //             | '..' ':' or '?:'  // skip to any key (use _ as key)
+  //             | '..' ':' or ':>'  // skip to any key (use _ as key)
   //             | '.' KEY            // single level
   //             | '[' KEY ']'        // array index
 
   // Skip levels: .. KEY
   if (p.peek('..')) {
     p.eat('..');
-    // Special case: '..' immediately followed by ':' or '?' means "any key at any depth"
-    if (p.peek(':') || p.peek('?:') || p.peek('?')) {
+    // Special case: '..' immediately followed by ':' or ':>' means "any key at any depth"
+    if (p.peek(':') || p.peek(':>')) {
       return Breadcrumb('skip', Any(), null);
     }
     const key = parseItem(p);
