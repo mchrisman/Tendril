@@ -194,7 +194,7 @@ The `:>` operator adds an implication constraint: if a key matches K, its value 
                    // No existence required, but if 'a' exists, value must be 1
 ```
 
-Commas are optional. Assertions are unordered. Multiple assertions can match the same key-value pair:
+Commas are optional. Multiple assertions can match the same key-value pair. Terms are evaluated left-to-right, so bindings from earlier terms are visible to later terms.
 
 ```javascript
 { /a|b/:/x/ /b|c/:/y/ }  // matches {"b":"xy"} - "b":"xy" satisfies both assertions
@@ -807,6 +807,41 @@ Binding slices:
 ```
 
 Assertions are evaluated non-exclusively: a single key-value pair may satisfy multiple assertions.
+
+### Object Evaluation Order
+
+Object terms produce results consistent with **left-to-right evaluation**. Bindings established by earlier terms are visible to later terms. This enables patterns where one term binds a variable and a subsequent term constrains it.
+
+Each term selects a **witness** — one key-value pair where both K and V match. If multiple pairs qualify, the matcher branches, producing one solution per witness:
+
+```javascript
+{ /a.*/:$x }  matching {a1:1, a2:2}
+// Two solutions: {x:1} and {x:2} — one witness each
+```
+
+**`:>` with unbound variables:**
+
+When V contains an unbound variable like `$x`, matching V against a value *binds* `$x`. This means the value is in the slice, not the bad set. Therefore `:>` is not a "universal equality" operator — it means "no bad entries exist," where bad means "fails to match V":
+
+```javascript
+{ /a.*/:>$x }  matching {a1:1, a2:2}
+// Succeeds with two solutions: {x:1} and {x:2}
+// Each value matches $x (by binding), so no bad entries
+
+{ /a.*/:>1 }   matching {a1:1, a2:2}
+// Fails — a2:2 is a bad entry (2 doesn't match 1)
+```
+
+**Universal equality idiom:** To enforce that all matching keys have the same value, bind first, then use `:>` with the bound variable:
+
+```javascript
+{ /a.*/:$x  /a.*/:>$x }  matching {a1:1, a2:2}
+// Fails — first term binds x, second requires ALL /a.*/
+// values to match that x. With x=1, a2:2 is a bad entry.
+
+{ /a.*/:$x  /a.*/:>$x }  matching {a1:1, a2:1}
+// Succeeds with x=1 — all values match
+```
 
 ### Quantifiers
 
