@@ -1292,8 +1292,16 @@ function navigateSingleBreadcrumb(bc, restBreadcrumbs, node, path, sol, emit, ct
 }
 
 function navigateSkipLevels(keyPattern, restBreadcrumbs, node, path, sol, emit, ctx) {
-  // ..key navigation: recursively search through object tree to find matching keys at any depth
+  // ..key navigation: recursively search through tree to find matching keys at any depth
   guard(ctx);
+
+  // Handle arrays: descend into each element
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i++) {
+      navigateSkipLevels(keyPattern, restBreadcrumbs, node[i], [...path, i], sol, emit, ctx);
+    }
+    return;
+  }
 
   if (!isObject(node)) return;
 
@@ -1330,10 +1338,11 @@ function navigateSkipLevels(keyPattern, restBreadcrumbs, node, path, sol, emit, 
     }
   }
 
-  // Recurse into nested objects to find key at deeper levels
+  // Recurse into nested structures to find key at deeper levels
   for (const k of Object.keys(node)) {
     const child = node[k];
-    if (isObject(child)) {
+    // navigateSkipLevels handles both objects and arrays at its top
+    if (isObject(child) || Array.isArray(child)) {
       navigateSkipLevels(keyPattern, restBreadcrumbs, child, [...path, k], sol, emit, ctx);
     }
   }
