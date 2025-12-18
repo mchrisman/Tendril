@@ -462,29 +462,36 @@ let matcher = pattern.match(data) // match it to the entirety of your data
 let matcher = pattern.find(data)  // find the pattern within your data (maybe multiple occurrences)
 let matcher = pattern.first(data) // find the first occurrence
 
-// At this point, you will be interested in focusing on either the **occurrences** of the pattern 
-// in your data, or the **solutions**, i.e. variable bindings (Prolog style).
-let matches = matcher.matches()   // -> MatchSet (iterator of unique Match (location0)
-let solutions = matcher.solutions() // -> iterator of unique Solution
+// Short-circuit methods (stop after first solution found):
+if (pattern.hasMatch(data)) { ... }        // boolean: anchored match exists?
+if (pattern.hasAnyMatch(data)) { ... }     // boolean: match exists anywhere? (scan)
+let first = pattern.firstMatch(data)       // MatchSet with first match only (scan)
 
-type MatchSet // itself is iterable of Match
+// At this point, you will be interested in focusing on either the **occurrences** of the pattern
+// in your data, or the **solutions**, i.e. variable bindings (Prolog style).
+// NOTE: These methods enumerate ALL occurrences/solutions before returning.
+// For existence checks, prefer the short-circuit methods above.
+let occs = matcher.occurrences()  // -> MatchSet (iterator of Occurrence)
+let solutions = matcher.solutions() // -> SolutionSet (iterator of unique Solution)
+
+type MatchSet // itself is iterable of Occurrence
 
     // 'replaceAll' operates on a **copy** and replaces the **entire match**
-    matches.replaceAll(expr /* not depending on bindings*/)  // uses first solution of match
-    matches.replaceAll(bindings=>expr)                       // uses first solution of match
+    matchSet.replaceAll(expr /* not depending on bindings*/)  // uses first solution of each occurrence
+    matchSet.replaceAll(bindings=>expr)                       // uses first solution of each occurrence
 
     // 'editAll' mutates the original data and replaces **named groups**
-    matches.editAll("x", $=>($.x * 2))  // string,func: replace $x only
-    matches.editAll($=>{x:$.y, y:$.x})  // (=>plan)
-    matches.editAll({x:$=>$.y, y:$=>$.x})  // plan = obj<key,replacement>; replacement = (vars=>any) | any
+    matchSet.editAll("x", $=>($.x * 2))  // string,func: replace $x only
+    matchSet.editAll($=>{x:$.y, y:$.x})  // (=>plan)
+    matchSet.editAll({x:$=>$.y, y:$=>$.x})  // plan = obj<key,replacement>; replacement = (vars=>any) | any
 
-type Match:
-    path()          // breadcrumb locating the match point from root
+type Occurrence:
+    path()          // breadcrumb locating the occurrence from root
     value()         // $0
-    solutions()     // iterator of Solution for this match
+    solutions()     // iterator of Solution for this occurrence
 
 type Solution // itself, is an object representing bindings
-    matches()       // iterator of Match with this solution
+    occurrences()   // iterator of Occurrence with this solution
 
 
 // Example: iterate over solutions
@@ -816,6 +823,22 @@ Lookaheads (`(?=P)`, `(?!P)`) test whether pattern P matches at the current posi
 - `p1 === p2` indicates semantic or syntactic equivalence
 
 The data model is JSON-like: objects, arrays, strings, numbers, booleans, null. Regex literals use JavaScript regex syntax.
+
+---
+
+# Roadmap
+
+## Streaming/Generator-Based Matching
+
+The current short-circuit optimization (`hasMatch`, `hasAnyMatch`, `firstMatch`) uses exception-based early termination. While effective, this approach cannot resume enumeration after stopping.
+
+A future improvement would refactor the engine to use generators/iterators for solution emission, enabling:
+- **Lazy evaluation**: Solutions generated on-demand, not all at once
+- **Resumable iteration**: Stop and continue enumeration as needed
+- **Memory efficiency**: No need to materialize all solutions before filtering
+- **Cancellation tokens**: Clean cancellation without exception overhead
+
+This would make methods like `occurrences()` and `solutions()` truly streaming rather than eagerly collecting all results.
 
 ---
 

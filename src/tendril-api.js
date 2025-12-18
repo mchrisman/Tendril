@@ -313,9 +313,9 @@ function applyEdits(root, edits) {
   return result;
 }
 
-// ------------------- Core data structures: Match, Solution, MatchSet -------------------
+// ------------------- Core data structures: Occurrence, Solution, MatchSet -------------------
 
-class Match {
+class Occurrence {
   constructor(root, path, rawSolutions, matchSet) {
     this._root = root;
     this._path = path;
@@ -407,9 +407,9 @@ class Match {
 }
 
 /**
- * Solution: an object representing bindings, with a .matches() method.
+ * Solution: an object representing bindings, with a .occurrences() method.
  * - Binding names become properties on the instance (e.g. sol.x, sol.y).
- * - $0 is NOT exposed; use Match.value() for whole-match.
+ * - $0 is NOT exposed; use Occurrence.value() for whole-match.
  */
 class Solution {
   constructor(rawSolution, match, matchSet) {
@@ -434,10 +434,11 @@ class Solution {
   }
 
   /**
-   * Iterator of Match objects with these bindings.
-   * Searches across all matches in the MatchSet for equivalent bindings.
+   * Iterator of Occurrence objects with these bindings.
+   * Searches across all occurrences in the MatchSet for equivalent bindings.
+   * NOTE: Enumerates all occurrences; does not short-circuit.
    */
-  matches() {
+  occurrences() {
     const myKey = stableKey(this._bindings);
     const matchSet = this._matchSet;
 
@@ -476,7 +477,7 @@ class SolutionSet {
   }
 
   [Symbol.iterator]() {
-    const matches = this._matchSet._matches;
+    const matches = this._matchSet._occurrences;
     const seen = new Set();
     let mi = 0;
     let si = 0;
@@ -577,32 +578,34 @@ class FilteredSolutionSet {
 }
 
 /**
- * MatchSet: iterable of Match objects, with transformation APIs.
+ * MatchSet: iterable of Occurrence objects, with transformation APIs.
+ * NOTE: Eagerly enumerates all occurrences. For existence checks, use
+ * pattern.hasMatch() or pattern.hasAnyMatch() which short-circuit.
  */
 class MatchSet {
   constructor(root, matchGroups) {
     this._root = root;
     // Each group: {path, rawSolutions}
-    this._matches = matchGroups.map(
-      g => new Match(root, g.path, g.rawSolutions, this)
+    this._occurrences = matchGroups.map(
+      g => new Occurrence(root, g.path, g.rawSolutions, this)
     );
   }
 
-  // Iterable of Match
+  // Iterable of Occurrence
   [Symbol.iterator]() {
-    return this._matches[Symbol.iterator]();
+    return this._occurrences[Symbol.iterator]();
   }
 
-  matches() {
+  occurrences() {
     return this;
   }
 
   hasMatch() {
-    return this._matches.length > 0;
+    return this._occurrences.length > 0;
   }
 
   /**
-   * Returns a SolutionSet of unique Solution objects across all matches.
+   * Returns a SolutionSet of unique Solution objects across all occurrences.
    * "Uniqueness" is based on structural equality of bindings.
    */
   solutions() {
@@ -610,46 +613,46 @@ class MatchSet {
   }
 
   /**
-   * Filter matches by predicate.
-   * Returns a new MatchSet containing only matches that satisfy the predicate.
+   * Filter occurrences by predicate.
+   * Returns a new MatchSet containing only occurrences that satisfy the predicate.
    */
   filter(pred) {
-    const filtered = this._matches.filter(pred);
+    const filtered = this._occurrences.filter(pred);
     return new MatchSet(this._root,
       filtered.map(m => ({path: m._path, rawSolutions: m._rawSolutions}))
     );
   }
 
   /**
-   * Take first n matches.
-   * Returns a new MatchSet containing at most n matches.
+   * Take first n occurrences.
+   * Returns a new MatchSet containing at most n occurrences.
    */
   take(n) {
-    const limited = this._matches.slice(0, n);
+    const limited = this._occurrences.slice(0, n);
     return new MatchSet(this._root,
       limited.map(m => ({path: m._path, rawSolutions: m._rawSolutions}))
     );
   }
 
   /**
-   * Get the first match, or null if none.
+   * Get the first occurrence, or null if none.
    */
   first() {
-    return this._matches[0] || null;
+    return this._occurrences[0] || null;
   }
 
   /**
-   * Count the number of matches.
+   * Count the number of occurrences.
    */
   count() {
-    return this._matches.length;
+    return this._occurrences.length;
   }
 
   /**
-   * Convert matches to array.
+   * Convert occurrences to array.
    */
   toArray() {
-    return [...this._matches];
+    return [...this._occurrences];
   }
 
   /**
@@ -660,10 +663,10 @@ class MatchSet {
    *   replaceAll(solution => value)   // value derived from first solution of each match
    */
   replaceAll(replOrFn) {
-    if (!this._matches.length) return this._root;
+    if (!this._occurrences.length) return this._root;
 
     const edits = [];
-    for (const match of this._matches) {
+    for (const match of this._occurrences) {
       if (!match._zeroSite) continue;
       const firstSol = match._solutions[0] || null;
       const to = (typeof replOrFn === 'function')
@@ -691,7 +694,7 @@ class MatchSet {
     const {planFactory} = normalizeEditArgs(arg1, arg2);
     const edits = [];
 
-    for (const match of this._matches) {
+    for (const match of this._occurrences) {
       for (const sol of match._solutions) {
         const plan = planFactory(sol) || {};
         const sitesMap = sol._sites; // Map<varName, Site[]>
@@ -871,10 +874,10 @@ class PatternImpl {
    */
   first(input) {
     const all = this.find(input);
-    if (!all._matches.length) return new MatchSet(input, []);
+    if (!all._occurrences.length) return new MatchSet(input, []);
     const firstGroup = [{
-      path: all._matches[0]._path,
-      rawSolutions: all._matches[0]._rawSolutions
+      path: all._occurrences[0]._path,
+      rawSolutions: all._occurrences[0]._rawSolutions
     }];
     return new MatchSet(input, firstGroup);
   }
