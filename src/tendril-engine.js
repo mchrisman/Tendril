@@ -1398,14 +1398,20 @@ function bindKeyVariables(keyPat, key, sol, path) {
       return true;
 
     case 'Alt':
-      // Alternation: try each alternative, bind variables from the one that matches
+      // Alternation: try each alternative that matches AND whose bindings succeed
       for (const alt of keyPat.alts) {
-        if (keyMatches(alt, key)) {
-          // This alternative matches - bind any variables it contains
-          return bindKeyVariables(alt, key, sol, path);
+        if (!keyMatches(alt, key)) continue;
+        // Clone solution to avoid corrupting state if binding fails
+        const snapshot = cloneSolution(sol);
+        if (bindKeyVariables(alt, key, snapshot, path)) {
+          // Binding succeeded - commit snapshot back to sol
+          sol.env = snapshot.env;
+          sol.sites = snapshot.sites;
+          return true;
         }
+        // Binding failed (e.g., unification conflict) - try next alternative
       }
-      return false; // No alternative matched
+      return false; // No alternative matched with successful bindings
 
     default:
       // No variables to bind (Lit, Re, Any, etc.)
