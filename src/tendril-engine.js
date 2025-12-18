@@ -523,13 +523,8 @@ function matchArray(items, arr, path, sol, emit, ctx) {
 
     // Lookahead — zero-width assertion at current position (unanchored)
     if (it.type === 'Look') {
-      let matchedSol = null;
       const remainingGroup = arr.slice(ixArr);
-
-      // Match the lookahead pattern against remaining array (unanchored at end)
-      // For negative lookahead, clone to discard bindings
-      // For positive lookahead, don't clone so bindings escape
-      const testSol = it.neg ? cloneSolution(sIn) : sIn;
+      const hasBindings = patternHasBindings(it.pat);
 
       // Make pattern unanchored by appending '..' if not already present
       const patternItems = [it.pat];
@@ -539,16 +534,29 @@ function matchArray(items, arr, path, sol, emit, ctx) {
         patternItems.push({type: 'Spread', quant: null}); // '..' with no quant
       }
 
-      matchArray(patternItems, remainingGroup, [...path, ixArr], testSol, (s2) => {
-        if (!matchedSol) matchedSol = s2;
-      }, ctx);
-
-      const matched = (matchedSol !== null);
-      if ((matched && !it.neg) || (!matched && it.neg)) {
-        // For positive lookahead: use matchedSol (bindings escape)
-        // For negative lookahead: use sIn (bindings don't escape)
-        const continueSol = (matched && !it.neg) ? matchedSol : sIn;
-        stepItems(ixItem + 1, ixArr, continueSol);
+      if (it.neg) {
+        // Negative lookahead: succeed if pattern does NOT match, never commit bindings
+        let matched = false;
+        matchArray(patternItems, remainingGroup, [...path, ixArr], cloneSolution(sIn), () => {
+          matched = true;
+        }, ctx);
+        if (!matched) {
+          stepItems(ixItem + 1, ixArr, sIn);
+        }
+      } else if (hasBindings) {
+        // Positive lookahead with bindings: enumerate all solutions
+        matchArray(patternItems, remainingGroup, [...path, ixArr], sIn, (s2) => {
+          stepItems(ixItem + 1, ixArr, s2);
+        }, ctx);
+      } else {
+        // Positive lookahead without bindings: stop at first match (optimization)
+        let matchedSol = null;
+        matchArray(patternItems, remainingGroup, [...path, ixArr], sIn, (s2) => {
+          if (!matchedSol) matchedSol = s2;
+        }, ctx);
+        if (matchedSol) {
+          stepItems(ixItem + 1, ixArr, matchedSol);
+        }
       }
       return;
     }
@@ -633,7 +641,8 @@ function matchArray(items, arr, path, sol, emit, ctx) {
     const maxRep = Math.min(n, arr.length - ixArr);
 
     // Determine if this is possessive (commit to first match, no backtracking)
-    const isPossessive = op && (op.startsWith('*{') || op.endsWith('+'));
+    // Possessive operators: ++, *+, ?+ (NOT plain +)
+    const isPossessive = op === '++' || op === '*+' || op === '?+';
 
     const continueWith = cont
       ? (st) => cont(st)

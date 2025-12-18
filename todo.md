@@ -1,21 +1,48 @@
-# Completed Issues
 
-All issues from the review have been addressed:
+### 1) Array `+` quantifier is accidentally possessive
 
-## 1) `..{m,}` quantifier handling — FIXED
-Quantifiers on `..` (spread) are now disallowed at parse time. They were either meaningless (since `..` is `_*?`) or a performance bomb.
+In `quantOnArray()`:
 
-**Error example:** `Quantifiers on '..' are not allowed (found '..{2,}')`
+```js
+const isPossessive = op && (op.startsWith('*{') || op.endsWith('+'));
+```
 
-## 2) Possessive/lazy flags on Spread — N/A
-This issue is moot since quantifiers on `..` are now disallowed.
+Your parser uses `op` values like `'+'`, `'+?'`, `'++'`, `'*+'`, etc.
+Because `'+'` **endsWith('+')**, this makes **plain `+` behave possessively**, killing backtracking and changing semantics in a huge way.
 
-## 3) Regex `/g` and `/y` flags — FIXED
-These stateful flags are now disallowed at parse time to prevent "matched once then stopped matching" bugs.
+Fix should be something like:
 
-**Error example:** `Regex flags 'g' and 'y' are not allowed (found /foo/g)`
+* possessive if `op === '++' || op === '*+' || op === '?+'` (if you support `?+`)
+* not “endsWith('+')”
 
-## 4) `Object.is` vs `===` for numbers — FIXED
-- Changed literal comparison from `Object.is` to `===` so that `0` and `-0` are treated as equal (per JS semantics)
-- Added support for negative numbers (`-42`) and decimals (`3.14`) in patterns
-- Updated grammar: `NUMBER := /-?[0-9]+(\.[0-9]+)?/`
+This one will cause hard-to-debug “why doesn’t it match?” reports.
+
+### 2) Array lookahead doesn’t enumerate binding possibilities
+
+At the ITEM level (`case 'Look'`) you correctly use `patternHasBindings()` to decide whether to enumerate all solutions.
+
+But in `matchArray()` you have a separate lookahead handler:
+
+```js
+if (it.type === 'Look') {
+  let matchedSol = null;
+  ...
+  matchArray(patternItems, remainingGroup, ..., (s2) => {
+    if (!matchedSol) matchedSol = s2;
+  });
+  ...
+}
+```
+
+This **always takes only the first lookahead solution**, even if lookahead introduces bindings and should enumerate. That contradicts your stated rule (“positive lookahead commits bindings and enumerates all binding possibilities”).
+
+If you keep array-level lookahead special-cased, it should mirror the ITEM-level behavior:
+
+* enumerate when `patternHasBindings(it.pat)` is true
+* otherwise short-circuit to first
+
+### 3) `:>` “bad entry” detection can mis-handle env-sensitive matches
+
+In object term processing, `valueMatches` is computed via a “does there exist some match?” test using `cloneSolution(s0)` and a boolean flag. This can drift from “match under the same binding environment” in subtle ways when `V` can bind variables. Even if you later re-run `matchItem` for actual emission, the **implication rejection** (`badKeys.length > 0`) may be based on an overly-permissive or overly-restrictive existence test depending on how you want `:>` to work with bindings.
+
+This ties back to the spec ambiguity above: you should lock down semantics and make the engine enforce them.
