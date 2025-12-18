@@ -983,14 +983,33 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
 
       if (DEBUG) console.log(`[matchObject] slice:`, sliceKeys, `bad:`, badKeys);
 
-      // Apply constraints based on operator and optional flag
-      // 1. Existence check (unless optional)
-      if (!isOptional && sliceKeys.length === 0) {
-        if (DEBUG) console.log(`[matchObject] failed: no slice entries and not optional`);
-        continue; // Skip this solution - existence required but not satisfied
+      // Apply constraints based on operator, quantifier, and optional flag
+      //
+      // Semantics (from README):
+      //   K:V   => slice #{1,} bad #{0,}  (at least one matching k,v)
+      //   K:>V  => slice #{1,} bad #{0}   (at least one, no bad entries)
+      //   K:V?  => slice #{0,} bad #{0,}  (optional, no assertion)
+      //   K:>V? => slice #{0,} bad #{0}   (optional, no bad entries)
+      //
+      // Explicit quantifier like #{2,4} overrides the default slice bounds.
+
+      // 1. Slice count check
+      const sliceCount = sliceKeys.length;
+      const quant = term.quant;
+      // Default: #{1,} unless optional (#{0,})
+      const minSlice = quant ? quant.min : (isOptional ? 0 : 1);
+      const maxSlice = quant ? quant.max : null; // null means unbounded
+
+      if (sliceCount < minSlice) {
+        if (DEBUG) console.log(`[matchObject] failed: slice count ${sliceCount} < min ${minSlice}`);
+        continue;
+      }
+      if (maxSlice !== null && sliceCount > maxSlice) {
+        if (DEBUG) console.log(`[matchObject] failed: slice count ${sliceCount} > max ${maxSlice}`);
+        continue;
       }
 
-      // 2. Implication check (if :>)
+      // 2. Implication check (if :>) - bad #{0}
       if (isImplication && badKeys.length > 0) {
         if (DEBUG) console.log(`[matchObject] failed: bad entries exist with :> operator`);
         continue; // Skip this solution - bad entries forbidden

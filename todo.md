@@ -29,3 +29,13 @@ Example that was broken:
 The pattern should succeed: the second alternative `foo` matches key `"foo"`, and no binding is needed from that branch. But the old code tried `$k` first (which syntactically matches `"foo"` as a variable), failed to unify `"foo"` with the bound value `"bar"`, and gave up.
 
 Fixed by cloning the solution before each alternative's binding attempt and only committing on success.
+
+## 5) Object term quantifiers (#{m,n} on K:V) parsed but ignored — FIXED
+
+The parser correctly parsed `term.quant` via `parseOQuant()`, but the engine never applied it. Patterns like `{ /a.*/:_ #{2,4} }` behaved the same as `{ /a.*/:_ }`.
+
+The fix checks `sliceKeys.length` against the quantifier bounds:
+- If explicit quantifier like `#{2,4}`: use those bounds
+- Otherwise: default to `#{1,}` (or `#{0,}` if optional `?` suffix)
+
+The `:>` operator's `bad#{0}` constraint was already implemented correctly.
