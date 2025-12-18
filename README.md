@@ -796,7 +796,9 @@ Binding slices:
 { @x=(K1:V1) @x=(K2:V2) }   # asserting two slices are the same
 ```
 
-`%`, pronounced "remainder", defines the slice of fields that didn't fall into any of the declared slices. It may appear only once in the object pattern, only at the end. You can bind it or quantify it.
+`%`, pronounced "remainder", defines the slice of fields that didn't fall into any of the declared slices or bad sets; in other words, the **entries whose keys did not match any of the terms, regardless of whether the values matched.**  (The predominant use case is the fall-through of unrecognized fields, not the fall-through of invalid values.)
+
+It may appear only once in the object pattern, only at the end. You can bind it or quantify it.
 
 ```
 { K1:V1 K2:V2 }             # No assertion about remainder
