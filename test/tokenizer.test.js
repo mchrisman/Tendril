@@ -21,11 +21,11 @@ test('regex with / inside character class', () => {
 });
 
 test('regex with escaped /', () => {
-  const tokens = tokenize('/a\\/b/g');
+  const tokens = tokenize('/a\\/b/');
   assert.equal(tokens.length, 1);
   assert.equal(tokens[0].k, 're');
   assert.equal(tokens[0].v.source, 'a\\/b');
-  assert.equal(tokens[0].v.flags, 'g');
+  assert.equal(tokens[0].v.flags, '');
 });
 
 test('regex with / in character range', () => {
@@ -45,11 +45,25 @@ test('regex with multiple / in character class', () => {
 });
 
 test('regex with complex character class containing /', () => {
-  const tokens = tokenize('/[a-z0-9/._-]+/gi');
+  const tokens = tokenize('/[a-z0-9/._-]+/i');
   assert.equal(tokens.length, 1);
   assert.equal(tokens[0].k, 're');
   assert.equal(tokens[0].v.source, '[a-z0-9/._-]+');
-  assert.equal(tokens[0].v.flags, 'gi');
+  assert.equal(tokens[0].v.flags, 'i');
+});
+
+test('regex with g flag should throw', () => {
+  assert.throws(
+    () => tokenize('/foo/g'),
+    /flags 'g' and 'y' are not allowed/
+  );
+});
+
+test('regex with y flag should throw', () => {
+  assert.throws(
+    () => tokenize('/foo/y'),
+    /flags 'g' and 'y' are not allowed/
+  );
 });
 
 test('regex with nested groups and /', () => {

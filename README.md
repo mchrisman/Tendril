@@ -97,6 +97,8 @@ foo            // matches the exact string "foo" (bare identifier)
 /^[A-Z]{2,}$/  // regex anchors match whole string — "NASA", "OK", not "Ok!"
 
 123            // matches numeric value 123 (123 and 123.0 equivalent)
+-42            // negative numbers supported
+3.14           // decimal numbers supported
 true           // matches Boolean true only
 false          // matches Boolean false only
 null           // matches null only
@@ -606,17 +608,18 @@ todo: example
 # Lexical structure
 # --------------------------------------------------------------------
 
-INTEGER       := /[0-9]+/                 # non-negative only
+NUMBER        := /-?[0-9]+(\.[0-9]+)?/    # integers and decimals, positive or negative
+INTEGER       := /[0-9]+/                 # non-negative integer (for quantifier counts)
 BOOLEAN       := 'true' | 'false'
 NULL          := 'null'
 WILDCARD      := '_'                      # tokenized as kind 'any'
 IDENT         := /[A-Za-z_][A-Za-z0-9_]*/
 
 QUOTED_STRING := "..." | '...'            # supports \n \r \t \" \' \\ \uXXXX \u{...}
-REGEX         := /pattern/flags           # JS RegExp, validated by constructor
+REGEX         := /pattern/flags           # JS RegExp; 'g' and 'y' flags not allowed
 
 BAREWORD      := IDENT, except '_' 'true' 'false' 'null' are special-cased
-LITERAL       := INTEGER | BOOLEAN | NULL | QUOTED_STRING | REGEX | BAREWORD
+LITERAL       := NUMBER | BOOLEAN | NULL | QUOTED_STRING | REGEX | BAREWORD
 
 # Whitespace and // line comments allowed between tokens everywhere.
 
@@ -826,7 +829,36 @@ The data model is JSON-like: objects, arrays, strings, numbers, booleans, null. 
 
 ---
 
+**End of Specification**
+
+---
+
+# Discussion
+
+## Open Design Questions
+
+- **Lookahead binding rules** are ambitious and mostly consistent, but they're the #1 place users get confused. "Positive lookahead commits bindings and enumerates all binding possibilities" can create surprising multiplicative solution counts.
+
+- **Bare identifiers as strings** is convenient, but creates ambiguity with future keywords and makes error messages harder ("did you mean a string or a variable?"). Already special-cased `_ true false null remainder` etc; this tends to grow.
+
+- **`find()` + `..` redundancy**: The admonition ("don't combine") is good, but users will do it anyway. Could make it harmless by having the engine detect redundant `..` in root-object terms during scan.
+
+- **Edits with overlapping solutions**: Currently edits are grouped by path, with array splices using offset tracking. But when multiple solutions overlap the same sites, "last write wins" effects are hard to reason about. Users may want:
+  - Edit only first solution per match
+  - Edit only first match
+  - Deterministic ordering guarantees
+
+---
+
 # Roadmap
+
+## Solution Explosion Limiter
+
+Add per-match and total limits on solution count, with a clear error when exceeded.
+
+## Debug Trace
+
+Add a "debug trace" story that explains *why* a pattern failed or multiplied. (Hook infrastructure exists.)
 
 ## Streaming/Generator-Based Matching
 
@@ -839,7 +871,3 @@ A future improvement would refactor the engine to use generators/iterators for s
 - **Cancellation tokens**: Clean cancellation without exception overhead
 
 This would make methods like `occurrences()` and `solutions()` truly streaming rather than eagerly collecting all results.
-
----
-
-**End of Specification**

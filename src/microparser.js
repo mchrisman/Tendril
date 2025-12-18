@@ -17,7 +17,7 @@ export function tokenize(src) {
 
   const push = (k, v, len) => { toks.push({ k, v, pos: i }); i += len; };
   const reWS = /\s+/y;
-  const reNum = /\d+/y;
+  const reNum = /-?\d+(\.\d+)?/y;
   const reId  = /[A-Za-z_][A-Za-z0-9_]*/y;
 
   while (i < src.length) {
@@ -69,10 +69,16 @@ export function tokenize(src) {
         // Try to construct RegExp to validate this is a valid endpoint
         try {
           new RegExp(pattern, flags);
+          // Disallow 'g' and 'y' flags - they cause stateful matching bugs
+          if (flags.includes('g') || flags.includes('y')) {
+            throw syntax(`Regex flags 'g' and 'y' are not allowed (found /${pattern}/${flags})`, src, i);
+          }
           // Valid! This is the correct endpoint
           push('re', { source: pattern, flags: flags }, k - i);
           found = true;
-        } catch {
+        } catch (e) {
+          // Re-throw our custom syntax errors
+          if (e.message?.includes('not allowed')) throw e;
           // Invalid regex, try next '/'
           j++;
         }

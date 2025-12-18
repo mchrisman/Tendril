@@ -335,7 +335,8 @@ function matchItem(item, node, path, sol, emit, ctx) {
         return;
 
       case 'Lit':
-        if (Object.is(node, item.value)) emit(cloneSolution(sol));
+        // Use === for literals (treats 0 and -0 as equal, per JS semantics)
+        if (node === item.value) emit(cloneSolution(sol));
         return;
 
       case 'Re':

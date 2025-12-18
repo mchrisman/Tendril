@@ -261,9 +261,12 @@ function parseAGroup(p) {
   // Special handling for .. (spread)
   if (p.peek('..')) {
     p.eat('..');
-    // .. in array context is a Spread, optionally followed by quantifier
+    // Quantifiers on .. are disallowed - they're either meaningless or a performance bomb
     const quant = p.backtrack(() => parseAQuant(p));
-    return Spread(quant ? `${quant.op}` : null);
+    if (quant) {
+      p.fail(`Quantifiers on '..' are not allowed (found '..${quant.op}')`);
+    }
+    return Spread(null);
   }
 
   let base = parseAGroupBase(p);
