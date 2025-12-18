@@ -372,12 +372,12 @@ function parseAQuant(p) {
     if (p.maybe(',')) {
       // {,n}
       min = 0;
-      max = p.eat('num').v;
+      max = eatNonNegInt(p, 'array quantifier');
     } else {
-      min = p.eat('num').v;
+      min = eatNonNegInt(p, 'array quantifier');
       if (p.maybe(',')) {
         if (p.peek('num')) {
-          max = p.eat('num').v;
+          max = eatNonNegInt(p, 'array quantifier');
         } else {
           max = null;  // unbounded
         }
@@ -525,12 +525,12 @@ function parseRemainderQuant(p) {
   if (!p.peek('{')) p.fail('expected { or ? after # in remainder quantifier');
   p.eat('{');
 
-  const min = p.eat('num').v;
+  const min = eatNonNegInt(p, 'remainder quantifier');
   let max = min;
 
   if (p.maybe(',')) {
     if (p.peek('num')) {
-      max = p.eat('num').v;
+      max = eatNonNegInt(p, 'remainder quantifier');
     } else {
       max = null; // unbounded
     }
@@ -690,12 +690,12 @@ function parseOQuant(p) {
   if (!p.peek('{')) p.fail('expected { or ? after #');
   p.eat('{');
 
-  const min = p.eat('num').v;
+  const min = eatNonNegInt(p, 'object quantifier');
   let max = min;
 
   if (p.maybe(',')) {
     if (p.peek('num')) {
-      max = p.eat('num').v;
+      max = eatNonNegInt(p, 'object quantifier');
     } else {
       max = null;  // unbounded
     }
@@ -708,6 +708,16 @@ function parseOQuant(p) {
 }
 
 // ---------- Parser Utilities ----------
+
+// Eat a non-negative integer (for quantifier counts)
+function eatNonNegInt(p, context = 'quantifier') {
+  const tok = p.eat('num', `expected non-negative integer in ${context}`);
+  const v = tok.v;
+  if (!Number.isInteger(v) || v < 0) {
+    p.fail(`${context} requires non-negative integer, got ${v}`);
+  }
+  return v;
+}
 
 // Add peekAt helper if not in Parser class
 Parser.prototype.peekAt = function(offset, kind) {

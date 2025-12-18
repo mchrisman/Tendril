@@ -74,7 +74,7 @@ So this part is OK.
 
 The actual issue is elsewhere:
 
-### 6) Quantifier parsing uses `num` token where it should use INTEGER
+### 6) Quantifier parsing uses `num` token where it should use INTEGER [fixed]
 
 Your tokenizer produces `'num'` tokens as `Number(...)`, allowing decimals and negatives. Your quantifier parsers (`parseAQuant`, `parseOQuant`, `parseRemainderQuant`) do `p.eat('num').v` for counts. That allows `{1.5}` or `#{-2}` to parse, and then you’ll use those in loops and comparisons.
 
