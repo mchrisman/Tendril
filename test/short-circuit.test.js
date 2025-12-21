@@ -56,14 +56,14 @@ test('hasAnyMatch returns false when no match exists', () => {
 
 test('firstMatch returns MatchSet with one match', () => {
   const data = [1, 2, 3, 2, 2];
-  const mset = Tendril('2').firstMatch(data);
+  const mset = Tendril('2').first(data);
   assert.equal(mset.hasMatch(), true);
   assert.equal(mset.count(), 1);
 });
 
 test('firstMatch returns empty MatchSet when no match', () => {
   const data = [1, 3, 5];
-  const mset = Tendril('2').firstMatch(data);
+  const mset = Tendril('2').first(data);
   assert.equal(mset.hasMatch(), false);
   assert.equal(mset.count(), 0);
 });
@@ -129,7 +129,7 @@ test('firstMatch short-circuits on scan: stops after first match', (t) => {
   // Pattern matches any object with value:'target'
   // Without short-circuit, would scan all 1000
   // With short-circuit, should stop after first
-  const mset = Tendril('{ value: "target" }').withOptions({maxSteps: 200}).firstMatch(data);
+  const mset = Tendril('{ value: "target" }').withOptions({maxSteps: 200}).first(data);
   assert.equal(mset.hasMatch(), true);
   assert.equal(mset.count(), 1);
 });
@@ -184,7 +184,7 @@ test('hasMatch on empty array', () => {
 
 test('firstMatch extracts bindings correctly', () => {
   const data = [1, 2, 3];
-  const mset = Tendril('$x').firstMatch(data);
+  const mset = Tendril('$x').first(data);
   const sol = mset.solutions().first();
   // firstMatch scans, so first match is at root (the array itself)
   assert.deepEqual(sol.toObject().x, [1, 2, 3]);

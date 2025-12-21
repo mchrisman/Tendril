@@ -20,8 +20,14 @@ test('find scalar at multiple depths', () => {
   };
 
   const t = Tendril('42');
-  const matches = t.find(data).toArray();
-  assert.equal(matches.length, 3, 'Should find 3 occurrences');
+  const occSet = t.find(data);
+
+  // v2: OccurrenceSet iterates occurrences (locations)
+  // Pattern '42' matches at 3 locations
+  assert.equal(occSet.count(), 3, 'Should find 3 occurrences');
+
+  // All 3 have identical (empty) bindings, so 1 unique solution
+  assert.equal(occSet.solutions().count(), 1, 'Should have 1 unique solution');
 });
 
 test('find patterns in nested structures', () => {

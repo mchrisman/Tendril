@@ -55,10 +55,8 @@ function replaceAll(pattern, data, fn) {
 
   if (typeof fn === 'function') {
     if (isNestedMatch) {
-      // Nested match - clone and use editAll to mutate variables within structure
-      const cloned = JSON.parse(JSON.stringify(data));
-      Tendril(pattern).find(cloned).editAll(fn);
-      return cloned;
+      // Nested match - editAll is now PURE (returns copy)
+      return Tendril(pattern).find(data).editAll(fn);
     } else {
       // Root match - use replaceAll and extract value from plan
       return Tendril(pattern).find(data).replaceAll((bindings) => {
@@ -324,8 +322,14 @@ test('breadcrumb - ..:bar (any value at any depth)', () => {
     z: 'bar'              // depth 1: z
   };
   // Use find() to scan at all depths, not match() which only checks root
-  const matches = Tendril('{_:"bar"}').find(data).toArray();
-  assert.equal(matches.length, 3);
+  const occSet = Tendril('{_:"bar"}').find(data);
+
+  // v2: OccurrenceSet iterates occurrences (locations)
+  // Pattern {_:"bar"} matches at 3 locations
+  assert.equal(occSet.count(), 3, 'Should find 3 occurrences');
+
+  // All 3 have identical (empty) bindings, so 1 unique solution
+  assert.equal(occSet.solutions().count(), 1, 'Should have 1 unique solution');
 });
 
 test('breadcrumb - ..foo:bar vs .. foo:bar (spacing)', () => {
@@ -569,16 +573,16 @@ test('replace uses first solution only (longest match)', () => {
     {tag:/^else$/i children:$else remainder?}?
   ) ..]`;
 
-  const cloned = JSON.parse(JSON.stringify(input));
-  Tendril(pattern).find(cloned).editAll(v => ({
+  // editAll is now PURE (returns copy)
+  const result = Tendril(pattern).find(input).editAll(v => ({
     whenelse: [{ tag: 'when', children2: v.else, ...v.otherProps }]
   }));
 
   // Should replace the 2-element group with single merged object
-  assert.equal(cloned.length, 3); // div, merged when/else, span
-  assert.equal(cloned[1].tag, 'when');
-  assert.equal(cloned[1].children2, 'or this');
-  assert.equal(cloned[1].condition, true);
+  assert.equal(result.length, 3); // div, merged when/else, span
+  assert.equal(result[1].tag, 'when');
+  assert.equal(result[1].children2, 'or this');
+  assert.equal(result[1].condition, true);
 });
 
 // ==================== Edge Cases ====================
