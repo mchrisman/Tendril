@@ -339,9 +339,9 @@ function matchItem(item, node, path, sol, emit, ctx) {
         if (node === item.value) emit(cloneSolution(sol));
         return;
 
-      case 'Re':
-        // Regex only matches string values (per spec)
-        if (typeof node === 'string' && item.re.test(node)) emit(cloneSolution(sol));
+      case 'StringPattern':
+        // String patterns (regex or case-insensitive) use their matchFn
+        if (item.matchFn(node)) emit(cloneSolution(sol));
         return;
 
       case 'Bool':
@@ -1397,8 +1397,8 @@ function keyMatches(pat, key) {
       return true;
     case 'Lit':
       return Object.is(String(key), String(pat.value));
-    case 'Re':
-      return pat.re.test(String(key));
+    case 'StringPattern':
+      return pat.matchFn(String(key));
     case 'SBind':
       // Key pattern with binding: check inner pattern constraint
       if (pat.pat) {

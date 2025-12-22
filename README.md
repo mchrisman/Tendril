@@ -133,8 +133,11 @@ Tendril matches primitives using literal values or patterns:
 foo            // matches the exact string "foo" (bare identifier)
 "foo bar"      // quoted strings match strings containing spaces or punctuation
 
+foo/i          // case-insensitive bare identifier, matches "Foo", not "foobar"
+"f$b"/i        // case-insensitive quoted string, matches "F$B", not "f$bar"
+
 /foo/          // regex matches any substring — "seafood" matches (contains "foo")
-/foo/i         // case-insensitive — "FOOdish", "seaFOOd" both match
+/foo/i         // case-insensitive regex — "FOOdish", "seaFOOd" both match
 /^[A-Z]{2,}$/  // regex anchors match whole string — "NASA", "OK", not "Ok!"
 
 123            // matches numeric value 123 (123 and 123.0 equivalent)
@@ -147,7 +150,9 @@ null           // matches null only
 _              // wildcard matches any single value
 ```
 
-Strings can be written as barewords (alphanumeric identifiers) or quoted. Regex patterns use JavaScript regex syntax and match against string values only.
+Strings can be written as barewords (alphanumeric identifiers) or quoted. The `/i` suffix on literals matches case-insensitively but requires exact match (unlike regex which matches substrings). 
+
+Regex patterns use JavaScript regex syntax and match against string values only. Don't forget that JavaScript regexes match on substrings.
 
 ## Arrays
 
@@ -653,8 +658,8 @@ const result2 = Tendril("{ password:$p }").find(data1).editAll({p: "REDACTED"});
 const result = Tendril(`[
   ..
   (@whenelse=
-    {tag:/^when$/i children:$then}
-    {tag:/^else$/i children:$else}?
+    {tag:when/i children:$then}
+    {tag:else/i children:$else}?
   )
   ..
 ]`).find(vdom).editAll($ => ({
@@ -726,9 +731,10 @@ IDENT         := /[A-Za-z_][A-Za-z0-9_]*/
 
 QUOTED_STRING := "..." | '...'            # supports \n \r \t \" \' \\ \uXXXX \u{...}
 REGEX         := /pattern/flags           # JS RegExp; 'g' and 'y' flags not allowed
+CI_STRING     := IDENT/i | QUOTED_STRING/i  # case-insensitive literal (no space before /i)
 
 BAREWORD      := IDENT, except '_' 'true' 'false' 'null' are special-cased
-LITERAL       := NUMBER | BOOLEAN | NULL | QUOTED_STRING | REGEX | BAREWORD
+LITERAL       := NUMBER | BOOLEAN | NULL | QUOTED_STRING | REGEX | CI_STRING | BAREWORD
 
 # Whitespace and // line comments allowed between tokens everywhere.
 

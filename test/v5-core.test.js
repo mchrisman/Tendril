@@ -541,8 +541,8 @@ test('greedy quantifiers - optional object emits longest match first', () => {
 
   // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern = `[.. (@whenelse=
-    {tag:/^when$/i (@otherProps=remainder)}
-    {tag:/^else$/i children:$else remainder?}?
+    {tag:when/i (@otherProps=remainder)}
+    {tag:else/i children:$else remainder?}?
   ) ..]`;
 
   const solutions = Tendril(pattern).match(input).solutions().toArray();
@@ -569,8 +569,8 @@ test('replace uses first solution only (longest match)', () => {
 
   // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern = `[.. (@whenelse=
-    {tag:/^when$/i (@otherProps=remainder)}
-    {tag:/^else$/i children:$else remainder?}?
+    {tag:when/i (@otherProps=remainder)}
+    {tag:else/i children:$else remainder?}?
   ) ..]`;
 
   // editAll is now PURE (returns copy)

@@ -34,7 +34,7 @@ export function tokenize(src) {
       i = j; continue;
     }
 
-    // strings: "..." or '...'
+    // strings: "..." or '...' (with optional /i suffix for case-insensitive)
     if (c === '"' || c === "'") {
       const q = c;
       let j = i + 1, out = '';
@@ -43,11 +43,17 @@ export function tokenize(src) {
           const { chr, adv } = readEsc(src, j + 1);
           out += chr; j += adv + 1;
         } else {
-          out += src[j++]; 
+          out += src[j++];
         }
       }
       if (src[j] !== q) throw syntax(`unterminated string`, src, i);
-      push('str', out, (j + 1) - i);
+      const strEnd = j + 1;
+      // Check for /i suffix (case-insensitive string literal)
+      if (src.slice(strEnd, strEnd + 2) === '/i') {
+        push('ci', { lower: out.toLowerCase(), desc: src.slice(i, strEnd + 2) }, (strEnd + 2) - i);
+      } else {
+        push('str', out, strEnd - i);
+      }
       continue;
     }
 
@@ -105,7 +111,7 @@ export function tokenize(src) {
       continue;
     }
 
-    // identifier / keyword / ANY
+    // identifier / keyword / ANY (with optional /i suffix for case-insensitive)
     reId.lastIndex = i;
     if (reId.test(src)) {
       const j = reId.lastIndex;
@@ -115,6 +121,11 @@ export function tokenize(src) {
       if (w === 'true')  { push('bool', true, j - i); continue; }
       if (w === 'false') { push('bool', false, j - i); continue; }
       if (w === 'null')  { push('null', null, j - i); continue; }
+      // Check for /i suffix (case-insensitive bareword)
+      if (src.slice(j, j + 2) === '/i') {
+        push('ci', { lower: w.toLowerCase(), desc: src.slice(i, j + 2) }, (j + 2) - i);
+        continue;
+      }
       push('id', w, j - i);
       continue;
     }

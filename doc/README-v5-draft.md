@@ -166,6 +166,7 @@ In this document, `foo ~= bar` means `Tendril("foo").matches(bar)`, and `===` sh
 123                        // number literal
 true, false                // boolean literal
 "a", bareword, /regex/     // string or regex literal
+foo/i, "Foo Bar"/i         // case-insensitive string (exact match, not substring)
 _                          // wildcard (matches any single object or primitive)
 ```
 
@@ -403,17 +404,19 @@ remainder #{0}      // require no residual pairs
 * Numbers match number primitives using strict equality.
 * Booleans match boolean primitives using strict equality.
 * Strings: quoted or bare (unless keyword), match string primitives using strict equality.
-* Regex: matches strings via JS engine.
+* Case-insensitive strings (`foo/i`, `"Foo"/i`): match strings case-insensitively, requiring exact match (not substring).
+* Regex: matches strings via JS engine (substring match unless anchored).
 
 ```
 INTEGER                 :=  decimal integer (matches Number type)
 BOOLEAN                 :=  true | false
 QUOTED_STRING           :=  quoted string literal
 REGEX                   :=  /pattern/flags (JS regex literal)
+CI_STRING               :=  BAREWORD/i | QUOTED_STRING/i (no space before /i)
 BAREWORD                :=  [A-Za-z_][A-Za-z0-9_]* unless a keyword
 _                       :=  singleton wildcard (matches any single value)
 
- LITERAL := INTEGER | BOOLEAN | QUOTED_STRING | REGEX | BAREWORD 
+ LITERAL := INTEGER | BOOLEAN | QUOTED_STRING | REGEX | CI_STRING | BAREWORD 
  
 IDENT                   := /[a-zA-Z]\w*/
                          

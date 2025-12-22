@@ -31,7 +31,7 @@ export function parsePattern(src) {
 // Atoms
 const Any = () => ({type: 'Any'});
 const Lit = (v) => ({type: 'Lit', value: v});
-const Re = (r) => ({type: 'Re', re: r});
+const StringPattern = (kind, desc, matchFn) => ({type: 'StringPattern', kind, desc, matchFn});
 const Bool = (v) => ({type: 'Bool', value: v});
 const Null = () => ({type: 'Null'});
 const RootKey = () => ({type: 'RootKey'}); // Special marker for leading .. in paths
@@ -178,7 +178,12 @@ function parseItemTerm(p) {
   }
   if (p.peek('re')) {
     const {source, flags} = p.eat('re').v;
-    return Re(makeRegExp({source, flags}));
+    const re = makeRegExp({source, flags});
+    return StringPattern('regex', `/${source}/${flags}`, s => typeof s === 'string' && re.test(s));
+  }
+  if (p.peek('ci')) {
+    const {lower, desc} = p.eat('ci').v;
+    return StringPattern('ci', desc, s => typeof s === 'string' && s.toLowerCase() === lower);
   }
 
   // Object
@@ -731,7 +736,7 @@ Parser.prototype.peekAt = function(offset, kind) {
 
 export const AST = {
   // Atoms
-  Any, Lit, Re, Bool, Null, RootKey,
+  Any, Lit, StringPattern, Bool, Null, RootKey,
   // Bindings
   SBind, GroupBind,
   // Containers
