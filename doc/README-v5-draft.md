@@ -371,8 +371,8 @@ remainder #{0}      // require no residual pairs
 ## Lookahead / Assertions
 
 ```
-(?=pattern)   // positive lookahead
-(?!pattern)   // negative lookahead
+(?pattern)   // positive lookahead
+(!pattern)   // negative lookahead
 ```
 
 ---
@@ -447,8 +447,8 @@ A_GROUP                  := '(' A_BODY ')'
                           | ARR
                           | A_GROUP A_QUANT        // todo, indicate precedence
                           | A_GROUP '|' A_GROUP
-                          | '(?=' A_GROUP ')'
-                          | '(?!' A_GROUP ')'    
+                          | '(?' A_GROUP ')'
+                          | '(!' A_GROUP ')'    
                           
 ARR                      := '[' A_BODY ']'                          
 
@@ -607,15 +607,15 @@ Example:
 ## Lookahead and Negation
 
 ```
-(?=pattern) q     // positive lookahead
-(?!pattern) q     // negative lookahead
+(?pattern) q     // positive lookahead
+(!pattern) q     // negative lookahead
 ```
 
 Array-group lookaheads:
 
 ```
-[ (?= a b ) a b .. ]
-[ (?! a b ) .. ]
+[ (? a b ) a b .. ]
+[ (! a b ) .. ]
 ```
 
 ---

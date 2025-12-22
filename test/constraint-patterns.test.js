@@ -16,55 +16,55 @@ import { Tendril } from '../src/tendril-api.js';
 // ============================================================================
 
 test('simple negative assertion - key does not exist', () => {
-  const result = Tendril('{(?!c:_) a:1}').match({a: 1}).solutions().toArray();
+  const result = Tendril('{(!c:_) a:1}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
 test('simple negative assertion - key exists (should fail)', () => {
-  const result = Tendril('{(?!c:_) a:1}').match({a: 1, c: 2}).solutions().toArray();
+  const result = Tendril('{(!c:_) a:1}').match({a: 1, c: 2}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
 test('negative assertion - value does not exist', () => {
-  const result = Tendril('{(?!_:1) a:2}').match({a: 2}).solutions().toArray();
+  const result = Tendril('{(!_:1) a:2}').match({a: 2}).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
 test('negative assertion - value exists (should fail)', () => {
-  const result = Tendril('{(?!_:1) a:2}').match({a: 1}).solutions().toArray();
+  const result = Tendril('{(!_:1) a:2}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
 test('negative assertion with already-bound variable', () => {
   // $x bound to value first, then checked in negation
-  const result = Tendril('{a:$x (?!b:$x)}').match({a: 5}).solutions().toArray();
+  const result = Tendril('{a:$x (!b:$x)}').match({a: 5}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.equal(result[0].x, 5);
 });
 
 test('negative assertion with already-bound variable - fails when present', () => {
-  const result = Tendril('{a:$x (?!b:$x)}').match({a: 5, b: 5}).solutions().toArray();
+  const result = Tendril('{a:$x (!b:$x)}').match({a: 5, b: 5}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
 test('closed object assertion - no residual keys', () => {
-  const result = Tendril('{a:1 (?!remainder)}').match({a: 1}).solutions().toArray();
+  const result = Tendril('{a:1 (!remainder)}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
 test('closed object assertion - fails with extra keys', () => {
-  const result = Tendril('{a:1 (?!remainder)}').match({a: 1, b: 2}).solutions().toArray();
+  const result = Tendril('{a:1 (!remainder)}').match({a: 1, b: 2}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
 test('multiple negative assertions', () => {
-  const result = Tendril('{(?!a:_) (?!b:_) c:1}').match({c: 1}).solutions().toArray();
+  const result = Tendril('{(!a:_) (!b:_) c:1}').match({c: 1}).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
 test('negative assertion does not leak bindings', () => {
-  // Variables bound inside (?!remainder) should not escape
-  const result = Tendril('{(?!$x:1) a:2}').match({a: 2}).solutions().toArray();
+  // Variables bound inside (!remainder) should not escape
+  const result = Tendril('{(!$x:1) a:2}').match({a: 2}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.equal(result[0].x, undefined); // x should not be bound
 });
@@ -77,14 +77,14 @@ test.skip('LIMITATION: bidirectional constraint - negation before binding', () =
   // This pattern SHOULD constrain $x to not equal any existing value
   // But current implementation cannot handle this due to evaluation order
   // See doc/v5-constraints-limitations.md
-  const result = Tendril('{(?!_:$x) $x:_}').match({a: 1, b: 2}).solutions().toArray();
+  const result = Tendril('{(!_:$x) $x:_}').match({a: 1, b: 2}).solutions().toArray();
   // Would need constraint propagation to work correctly
   assert.equal(result.length, 0); // Should fail but currently succeeds
 });
 
 test('WORKAROUND: bind variable before negation', () => {
   // This works because $x is bound before the negation checks it
-  const result = Tendril('{$x:_ (?!_:$x)}').match({a: 1}).solutions().toArray();
+  const result = Tendril('{$x:_ (!_:$x)}').match({a: 1}).solutions().toArray();
   // This checks: "for all OTHER keys, value != $x"
   // But this is NOT the same as the bidirectional constraint above
   assert.equal(result.length, 1);
@@ -169,12 +169,12 @@ test('variable unification fails with conflicting values', () => {
 });
 
 test('variable unification with negation', () => {
-  const result = Tendril('{a:$x b:$x (?!c:$x)}').match({a: 5, b: 5}).solutions().toArray();
+  const result = Tendril('{a:$x b:$x (!c:$x)}').match({a: 5, b: 5}).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
 test('variable unification with negation - fails when present', () => {
-  const result = Tendril('{a:$x b:$x (?!c:$x)}').match({a: 5, b: 5, c: 5}).solutions().toArray();
+  const result = Tendril('{a:$x b:$x (!c:$x)}').match({a: 5, b: 5, c: 5}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
@@ -203,13 +203,13 @@ test('existential matching with unification', () => {
 // ============================================================================
 
 test('group binding with negation', () => {
-  const result = Tendril('{(@x=a:1) (?!b:_)}').match({a: 1, c: 2}).solutions().toArray();
+  const result = Tendril('{(@x=a:1) (!b:_)}').match({a: 1, c: 2}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {a: 1});
 });
 
 test('multiple groups and negations', () => {
-  const result = Tendril('{(@x=a:1) (@y=c:3) (?!d:_)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
+  const result = Tendril('{(@x=a:1) (@y=c:3) (!d:_)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {a: 1});
   assert.deepEqual(result[0].y, {c: 3});

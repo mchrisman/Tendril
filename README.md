@@ -1,5 +1,10 @@
 # Tendril: Pattern Matching for Tree Structures
 
+## Status
+
+**Beta** - subject to change.
+
+---
 # Core Concepts
 
 Tendril works by trying to **match** a **pattern** to some data. If the pattern matches, you can extract data from it using **variables**. (If you have ever used back-references or named groups in regexes, this will be familiar.)
@@ -200,7 +205,7 @@ Parentheses group elements for operators:
 The `|` operator creates alternatives. Quantifiers bind tighter than adjacency. Lookaheads test without consuming:
 
 ```javascript
-[(?! .. 3 4) ..]   // matches arrays NOT containing subsequence [3,4]
+[(! .. 3 4) ..]   // matches arrays NOT containing subsequence [3,4]
                    // e.g., [4, 3, 2, 1] matches, [1, 2, 3, 4] doesn't
 ```
 
@@ -291,10 +296,10 @@ Alternation applies to keys, values, or entire predicates:
 Negation uses lookahead syntax:
 
 ```
-{ (?! a:1) }           // key 'a' must not have value 1
-{ (?! a:>1?) }         // if 'a' exists, its value must not be 1.
-{ (?! a:1 b:2) }       // can't have BOTH a:1 and b:2 (one is OK)
-{ (?! a:1) (?! b:2) }  // can't have a:1 AND can't have b:2
+{ (! a:1) }           // key 'a' must not have value 1
+{ (! a:>1?) }         // if 'a' exists, its value must not be 1.
+{ (! a:1 b:2) }       // can't have BOTH a:1 and b:2 (one is OK)
+{ (! a:1) (! b:2) }  // can't have a:1 AND can't have b:2
 ```
 
 ## Binding Variables
@@ -471,7 +476,7 @@ const pattern = `{
   planets: { $name: { size: $size } }
   aka: [
     ..
-    [ (?=$name) .. $alias .. ]
+    [ (?$name) .. $alias .. ]
     ..
   ]
 }`
@@ -503,27 +508,27 @@ The `#` quantifier follows an assertion and requires a specific count range. Unl
 Lookaheads test conditions without consuming data:
 
 ```javascript
-(?=PATTERN)        // positive lookahead (must match)
-(?!PATTERN)        // negative lookahead (must not match)
+(?PATTERN)        // positive lookahead (must match)
+(!PATTERN)        // negative lookahead (must not match)
 ```
 
 **Binding behavior:**
-- Positive lookaheads (`(?=P)`) commit bindings on success. If the pattern can match multiple ways (e.g., with wildcard keys), all binding possibilities are enumerated.
-- Negative lookaheads (`(?!P)`) never commit bindings, since the pattern must fail to match.
+- Positive lookaheads (`(?P)`) commit bindings on success. If the pattern can match multiple ways (e.g., with wildcard keys), all binding possibilities are enumerated.
+- Negative lookaheads (`(!P)`) never commit bindings, since the pattern must fail to match.
 
 In arrays:
 
 ```javascript
-[ (?= ($x=/[ab]/)) $x .. ]  // first element must match /[ab]/, bind to $x
+[ (? ($x=/[ab]/)) $x .. ]  // first element must match /[ab]/, bind to $x
 
-[ (?! .. 3 4) .. ]           // array must not contain [3,4] subsequence
+[ (! .. 3 4) .. ]           // array must not contain [3,4] subsequence
 ```
 
 In objects:
 
 ```javascript
-{ (?= a:$x) b:$x }           // assert a exists, bind its value, require b equals it
-{ (?! secret:_) .. }         // assert no key named 'secret' exists
+{ (? a:$x) b:$x }           // assert a exists, bind its value, require b equals it
+{ (! secret:_) .. }         // assert no key named 'secret' exists
 ```
 
 ## Precedence
@@ -761,8 +766,8 @@ ITEM_TERM :=
     | ARR
 
 LOOK_AHEAD :=
-      '(?=' A_GROUP ')'
-    | '(?!' A_GROUP ')'
+      '(?' A_GROUP ')'
+    | '(!' A_GROUP ')'
 
 # --------------------------------------------------------------------
 # Arrays
@@ -806,7 +811,7 @@ O_REMNANT :=
       '(' S_GROUP '=' '%' O_REM_QUANT? ')' ','?
     | '%' O_REM_QUANT? ','?
     | '$' ','?                                 # shortcut for '%#{0}'
-    | '(?!' '%' ')' ','?                       # closed-object assertion (equiv to '$')
+    | '(!' '%' ')' ','?                       # closed-object assertion (equiv to '$')
 
 O_REM_QUANT :=
       '#{' INTEGER (',' INTEGER?)? '}'         # #{m} or #{m,n} or #{m,}
@@ -824,8 +829,8 @@ O_GROUP :=
     | O_TERM
 
 O_LOOKAHEAD :=
-      '(?=' O_GROUP ')'
-    | '(?!' O_GROUP ')'
+      '(?' O_GROUP ')'
+    | '(!' O_GROUP ')'
 
 # Breadcrumb paths
 O_TERM :=
@@ -968,7 +973,7 @@ When V contains an unbound variable like `$x`, matching V against a value *binds
 
 ### Lookaheads
 
-Lookaheads (`(?=P)`, `(?!P)`) test whether pattern P matches at the current position without consuming input. Positive lookaheads commit bindings from successful matches and enumerate all binding possibilities. Negative lookaheads (`(?!P)`) assert that P does NOT match and never commit bindings.
+Lookaheads (`(?P)`, `(!P)`) test whether pattern P matches at the current position without consuming input. Positive lookaheads commit bindings from successful matches and enumerate all binding possibilities. Negative lookaheads (`(!P)`) assert that P does NOT match and never commit bindings.
 
 ## Conventions
 
@@ -1164,7 +1169,7 @@ Then:
 
 ## Golden 4: Config validation with universal object semantics + closed object
 
-**Purpose:** universal `K:V`, optional `?:`, `(?!remainder)`.
+**Purpose:** universal `K:V`, optional `?:`, `(!remainder)`.
 
 **Fixture:**
 
@@ -1190,13 +1195,13 @@ const pat = `{ /^x_/: ($n=/^\d+$/) }`;  // if x_* are strings of digits
 And add a closed object case:
 
 ```js
-const closed = `{ id:_ /^x_/:/^\d+$/ (?!remainder) }`;
+const closed = `{ id:_ /^x_/:/^\d+$/ (!remainder) }`;
 ```
 
 **Expected:**
 
 * `closed` matches `{id:"abc", x_port:"8080", x_host:"123"}` only if *every* key is `id` or `x_*` and values satisfy.
-* A stray key should fail due to `(?!remainder)`.
+* A stray key should fail due to `(!remainder)`.
 
 (If you prefer to validate “numbers are numbers”, use literal numeric fixtures and match with `_` and key coverage; the point is universal + remainder.)
 

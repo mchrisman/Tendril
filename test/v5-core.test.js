@@ -8,7 +8,7 @@
  * - Breadcrumbs (path navigation)
  * - Scalar binding ($x) and unification
  * - Alternation (|)
- * - Lookaheads (?= / ?!)
+ * - Lookaheads (? / (!
  *
  * Run with: node test/v5-core.test.js
  */
@@ -189,7 +189,7 @@ test('array nested', () => {
 test('empty object', () => {
   assert.ok(matches('{}', {}));
   assert.ok(matches('{}', {a: 1})); // no assertions = all assertions satisfied
-  assert.ok(!matches('{(?!remainder)}', {a: 1})); // explicitly forbid keys with (?!remainder)
+  assert.ok(!matches('{(!remainder)}', {a: 1})); // explicitly forbid keys with (!remainder)
 });
 
 test('object single property', () => {
@@ -197,14 +197,14 @@ test('object single property', () => {
   assert.ok(!matches('{a:1}', {}));
   assert.ok(!matches('{a:1}', {a: 2}));
   assert.ok(matches('{a:1}', {a: 1, b: 2})); // extra keys allowed without remainder
-  assert.ok(!matches('{a:1 (?!remainder)}', {a: 1, b: 2})); // (?!remainder) forbids extra keys
+  assert.ok(!matches('{a:1 (!remainder)}', {a: 1, b: 2})); // (!remainder) forbids extra keys
 });
 
 test('object multiple properties', () => {
   assert.ok(matches('{a:1 b:2}', {a: 1, b: 2}));
   assert.ok(!matches('{a:1 b:2}', {a: 1}));
   assert.ok(matches('{a:1 b:2}', {a: 1, b: 2, c: 3})); // extra keys allowed
-  assert.ok(!matches('{a:1 b:2 (?!remainder)}', {a: 1, b: 2, c: 3})); // (?!remainder) forbids extras
+  assert.ok(!matches('{a:1 b:2 (!remainder)}', {a: 1, b: 2, c: 3})); // (!remainder) forbids extras
 });
 
 test('object with remainder binding', () => {
@@ -466,29 +466,29 @@ test('alternation - with binding', () => {
 
 test('positive lookahead - success', () => {
   // Lookaheads at root level must be wrapped in array context
-  assert.ok(matches('[(?=1)_]', [1]));
-  assert.ok(!matches('[(?=1)_]', [2]));
+  assert.ok(matches('[(?1)_]', [1]));
+  assert.ok(!matches('[(?1)_]', [2]));
 });
 
 test('positive lookahead - in array', () => {
-  assert.ok(matches('[(?=1)_ 2]', [1, 2]));
-  assert.ok(!matches('[(?=2)_ 2]', [1, 2]));
+  assert.ok(matches('[(?1)_ 2]', [1, 2]));
+  assert.ok(!matches('[(?2)_ 2]', [1, 2]));
 });
 
 test('negative lookahead - success', () => {
   // Lookaheads at root level must be wrapped in array context
-  assert.ok(matches('[(?!1)_]', [2]));
-  assert.ok(!matches('[(?!1)_]', [1]));
+  assert.ok(matches('[(!1)_]', [2]));
+  assert.ok(!matches('[(!1)_]', [1]));
 });
 
 test('negative lookahead - in array', () => {
-  assert.ok(matches('[(?!1)_ 2]', [3, 2]));
-  assert.ok(!matches('[(?!1)_ 2]', [1, 2]));
+  assert.ok(matches('[(!1)_ 2]', [3, 2]));
+  assert.ok(!matches('[(!1)_ 2]', [1, 2]));
 });
 
 test('lookahead with binding - no variable leak', () => {
   // Lookaheads should not leak bindings outside their scope
-  const result = extract('[(?=$x)_ $y]', [1, 2]);
+  const result = extract('[(?$x)_ $y]', [1, 2]);
   assert.ok(result.x === undefined || result.x === 1); // x should not leak
   assert.equal(result.y, 2);
 });

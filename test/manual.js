@@ -23,8 +23,8 @@ For all k, if k=~K then v=~V
  
 [
   (
-    (?![/ab/ _]       | (?=[_ /3/]))
-    (?![$k(/[cd]/) _] | (?=[_ /4/]))
+    (![/ab/ _]       | (?[_ /3/]))
+    (![$k(/[cd]/) _] | (?[_ /4/]))
     [_ _]
   )*
 }  
@@ -39,7 +39,7 @@ The lenient operator
 translates to
 
 [(
-   (?! [$x:(a)) _] | (?=[_ 3])
+   (! [$x:(a)) _] | (?[_ 3])
 )*]
 
 But
@@ -49,7 +49,7 @@ But
 translates to
 
 [(
-   [$x:(a) 3] | (?![$x:(a) _])
+   [$x:(a) 3] | (![$x:(a) _])
 )*]
 
 Which, if negative lookaheads don't bind, actually gives us what we want. 
@@ -63,7 +63,7 @@ Which, if negative lookaheads don't bind, actually gives us what we want.
 Hm, maybe. thinking.
 
 What if {K=V K2=V2} behaves semantically like 
-   [ (?=..[K V]) (?=..[K2 V2]) ]
+   [ (?..[K V]) (?..[K2 V2]) ]
 Then either (A) this solves the problem (but is weaker than our original assertion, or (B) it doesn't solve the problem, which means that our implementation of bindings inside lookaheads must also be suspect.   
 
 
@@ -81,7 +81,7 @@ Or,
 translates to
 
 [(
-   (?! [$x:(_) _] | (?=[_ 3])
+   (! [$x:(_) _] | (?[_ 3])
 )]
 
 

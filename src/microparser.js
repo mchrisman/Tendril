@@ -131,8 +131,8 @@ export function tokenize(src) {
     }
 
     // multi-character punctuation/operators (order matters - check longer tokens first!)
-    if (c3 === '(?=') { push('(?=', '(?=', 3); continue; }   // positive lookahead
-    if (c3 === '(?!') { push('(?!', '(?!', 3); continue; }   // negative lookahead
+    if (c2 === '(?') { push('(?', '(?', 2); continue; }   // positive lookahead
+    if (c2 === '(!') { push('(!', '(!', 2); continue; }   // negative lookahead
     if (c2 === '..')  { push('..', '..', 2); continue; }
     if (c2 === ':>')  { push(':>', ':>', 2); continue; }   // implication operator (K implies V)
     if (c2 === '??')  { push('??', '??', 2); continue; }   // lazy optional

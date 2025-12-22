@@ -109,8 +109,8 @@ function parseItemTerm(p) {
   //       | ARR
 
   // Parenthesized item
-  if (p.peek('(?=') || p.peek('(?!')) {
-    // Lookahead: (?= or (?!
+  if (p.peek('(?') || p.peek('(!')) {
+    // Lookahead: (? or (!
     return parseLookahead(p);
   }
 
@@ -200,15 +200,15 @@ function parseItemTerm(p) {
 }
 
 function parseLookahead(p) {
-  // (?= A_GROUP) or (?! A_GROUP)
+  // (? A_GROUP) or (! A_GROUP)
   let neg = false;
-  if (p.peek('(?=')) {
-    p.eat('(?=');
-  } else if (p.peek('(?!')) {
-    p.eat('(?!');
+  if (p.peek('(?')) {
+    p.eat('(?');
+  } else if (p.peek('(!')) {
+    p.eat('(!');
     neg = true;
   } else {
-    p.fail('expected (?= or (?! for lookahead');
+    p.fail('expected (? or (! for lookahead');
   }
   const pat = parseAGroup(p);
   p.eat(')');
@@ -216,15 +216,15 @@ function parseLookahead(p) {
 }
 
 function parseObjectLookahead(p) {
-  // (?= O_GROUP) or (?! O_GROUP)
+  // (? O_GROUP) or (! O_GROUP)
   let neg = false;
-  if (p.peek('(?=')) {
-    p.eat('(?=');
-  } else if (p.peek('(?!')) {
-    p.eat('(?!');
+  if (p.peek('(?')) {
+    p.eat('(?');
+  } else if (p.peek('(!')) {
+    p.eat('(!');
     neg = true;
   } else {
-    p.fail('expected (?= or (?! for object lookahead');
+    p.fail('expected (? or (! for object lookahead');
   }
   const pat = parseOGroup(p);
   p.eat(')');
@@ -262,8 +262,8 @@ function parseAGroup(p) {
   //          | ARR
   //          | A_GROUP A_QUANT
   //          | A_GROUP '|' A_GROUP
-  //          | '(?=' A_GROUP ')'
-  //          | '(?!' A_GROUP ')'
+  //          | '(?' A_GROUP ')'
+  //          | '(!' A_GROUP ')'
 
   // Special handling for .. (spread)
   if (p.peek('..')) {
@@ -305,7 +305,7 @@ function parseAGroupBase(p) {
   // Base A_GROUP without quantifiers or alternation
 
   // Lookahead
-  if (p.peek('(?=') || p.peek('(?!')) {
+  if (p.peek('(?') || p.peek('(!')) {
     return parseLookahead(p);
   }
 
@@ -408,7 +408,7 @@ function parseAQuant(p) {
 function parseObj(p) {
   // OBJ := '{' O_BODY O_REMNANT? '}'
   // O_REMNANT := S_GROUP ':' '(' 'remainder' ')'
-  //            | '(?!' 'remainder' ')'
+  //            | '(!' 'remainder' ')'
   //            | 'remainder'
   p.eat('{');
   const terms = [];
@@ -436,7 +436,7 @@ function parseORemnant(p) {
   // O_REMNANT := '@' IDENT '=' '(' ('%' | 'remainder') ')' O_REM_QUANT?
   //            | ('%' | 'remainder') O_REM_QUANT?
   //            | '$'                                      // shortcut for %#{0}
-  //            | '(?!' ('%' | 'remainder') ')'            // closed-object assertion
+  //            | '(!' ('%' | 'remainder') ')'            // closed-object assertion
 
   // Helper to check if current token is remainder marker (% or 'remainder')
   const isRemainderMarker = () =>
@@ -504,10 +504,10 @@ function parseORemnant(p) {
   });
   if (bareRemnant) return bareRemnant;
 
-  // Try (?!%) or (?!remainder)
+  // Try (!%) or (!remainder)
   const negRemnant = p.backtrack(() => {
-    if (!p.peek('(?!')) return null;
-    p.eat('(?!');
+    if (!p.peek('(!')) return null;
+    p.eat('(!');
     if (!isRemainderMarker()) return null;
     eatRemainderMarker();
     p.eat(')');
@@ -558,11 +558,11 @@ function parseOGroup(p) {
   // O_GROUP := '(' O_BODY ')'
   //          | '(' S_GROUP '=' O_GROUP* ')'
   //          | O_TERM
-  //          | '(?=' O_GROUP ')'
-  //          | '(?!' O_GROUP ')'
+  //          | '(?' O_GROUP ')'
+  //          | '(!' O_GROUP ')'
 
   // Try lookahead first
-  if (p.peek('(?=') || p.peek('(?!')) {
+  if (p.peek('(?') || p.peek('(!')) {
     return parseObjectLookahead(p);
   }
 
