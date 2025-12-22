@@ -1,5 +1,6 @@
 Todo:
 
+
 This is the design document for the next version of Tendril. It's not well integrated because it is essentially the old design document with change notes scattered into it.
 
 As for the code, this is a complete rewrite. However, due to ambiguities in the design document (which have hopefully now been resolved) there are major differences between the code and the design outlined here.
@@ -13,44 +14,143 @@ Remove redundancies. Be elegant and concise. Write in complete sentences, avoidi
 Before we begin, any questions?
 
 ------------------------------------------------------------------------
-
+Give me your first impression of this.
+------------------------------------------------------------------------
 
 # Tendril
 
-<div style="padding:3em; margin:3em; background-color:pink">Status: alpha</div>
+Express joins and transformations over nested data without flattening it.
 
-Tendril = structural pattern matching **+** relational logic, in a small, generator-inspired language for **match** and **replace** across JSON-like graphs.
+Tendril combines structural patterns (like regex), path navigation (like jq or JSONPath), and relational joins (like SQL) into a single model—so you can relate values across a nested structure without writing traversal code or flattening data first.
+
+## Status
+
+**Beta.** Tendril’s core engine and semantics are stable. API and tooling are still evolving.
+
+Performance: The engine uses symbol unification to prune branches early, avoiding unnecessary traversals. Performance is reasonable for development and testing, untried at large scale.
 
 ---
 
-## Hello, world
+## Example: Data extraction and joins (Kubernetes)
+
+This example joins container *specs* with container *runtime status* by container name $c.
 
 ```js
-const data = {
-  planets: {Jupiter: {size: "big"}, Earth: {size: "small"}, Ceres: {size: "tiny"}},
-  aka: [["Jupiter", "Jove", "Zeus"], ["Earth", "Terra"], ["Ceres", "Demeter"]]
+const pod = {
+  metadata: { name: "api-7d9c9b8c6f-abcde", namespace: "prod" },
+  spec: {
+    containers: [
+      { name: "api",  image: "ghcr.io/acme/api:1.42.0" },
+      { name: "side", image: "ghcr.io/acme/sidecar:3.1.0" }
+    ]
+  },
+  status: {
+    containerStatuses: [
+      { name: "api",  ready: true,  restartCount: 0 },
+      { name: "side", ready: false, restartCount: 7 }
+    ]
+  }
 };
 
-const pattern = `{
-  planets:$name.size:$size
-  aka:[.. [$name .. $alias .. | $alias=($name) ..] .. ] // $name itself as a possible alias
-}`;
+Tendril(`{
+  metadata:{ name:$pod namespace:$ns }
+  spec.containers[_]: { name:$c image:$img } 
+  status.containerStatuses[_]: { name:$c ready:$ready restartCount:$restarts }
+}`)
+.match(pod)
+.solutions()  // e.g. 
+.toArray().map(({pod, ns, c, img, ready, restarts}) =>
+  `${ns}/${pod}  ${c}  ${img}  ready=${ready}  restarts=${restarts}`
+);
+```
 
-Tendril(pattern)
-  .solutions(data)
-  .project($ => `Hello, ${$.size} world ${$.alias}`);
-
-=>
+```txt
+// Raw solution objects look like this:
+//    {
+//      pod: "api-7d9c9b8c6f-abcde",
+//      ns: "prod", 
+//      c: "api",
+//      img: "ghcr.io/acme/api:1.42.0",
+//      ready: true,
+//      restarts: 0
+//    }
+// Final output:
 [
-  "Hello, big world Jupiter",
-  "Hello, big world Jove",
-  "Hello, big world Zeus",
-  "Hello, small world Earth",
-  "Hello, small world Terra",
-  "Hello, tiny world Ceres",
-  "Hello, tiny world Demeter",
+  "prod/api-7d9c9b8c6f-abcde  api   ghcr.io/acme/api:1.42.0      ready=true  restarts=0",
+  "prod/api-7d9c9b8c6f-abcde  side  ghcr.io/acme/sidecar:3.1.0  ready=false restarts=7"
 ]
 ```
+
+---
+
+## Example: Transformation (VDOM manipulation)
+
+Replace a `<label>` tag with a `placeholder` on the associated `<input>` tag,
+regardless of how distant the two nodes are in the tree.
+
+```js
+Tendril(`{
+  .. $L=( { tag:'label', props:{for:$id}, children:[$text]   } )
+  ..      { tag:'input', props:{id:$id @p=(placeholder:_?) } }
+}`)
+.find(vdom)
+.editAll({
+  L: undefined,                    // delete the <label>
+  p: $ => ({placeholder: $.text}) // move its text into the <input>
+});
+```
+
+---
+
+## Example: joins across separate datasets.
+
+Nothing could be easier (as long as they're both in-memory).
+
+```javascript
+const users = [{id: 1, name: "Alice"}, {id: 2, name: "Bob"}];
+const orders = [
+  {user_id: 1, item: "laptop"},
+  {user_id: 2, items: ["mouse", "mousepad"]}
+];
+
+Tendril(`{
+  users[$i].id: $userId
+  users[$i].name: $name
+  orders[$j].user_id: $userId
+  orders[$j].item: $item?
+  orders[$j].items[_]: $item?
+}`).match({users, orders})
+  .solutions(["name", "item"])
+// → [{name: "Alice", item: "laptop"},
+//    {name: "Bob", item: "mouse"},
+//    {name: "Bob", item: "mousepad"}]
+```
+
+---
+
+## Getting Started
+
+Pick one of these gentle introductions, whichever will be more immediately useful to you, and then move on to the advanced guide.
+
+**Gentle Intro: Regex for structures** — Basic search and replace
+
+**Gentle Intro: Data extraction** — Binding variables in search patterns
+
+**Gentle Intro: Joins in JSON** — SQL-like joins within or between datasets.
+
+**[Advanced Guide](docs/advanced.md)** — Complete reference: object semantics, precedence, performance notes, and API details.
+
+**[Cheat Sheet]**
+
+**[Cookbook]**
+
+---
+
+BEGIN ADVANCED GUIDE
+
+---
+
+
 
 ---
 

@@ -1,12 +1,8 @@
 # Tendril: Pattern Matching for Tree Structures
 
-**Tendril** is a declarative language for matching, transforming, and querying JSON-like tree data. It combines the familiar syntax of regex with Prolog-style unification, offering a sweet spot between simple path queries (JSONPath, jq) and full logic programming.
+# Core Concepts
 
-Patterns resemble the data they match. Arrays use regex-like operators. Objects use declarative assertions. Variables capture and unify across the pattern.
-
-## Quick Start
-
-Tendril patterns look like the data they match:
+Tendril works by trying to **match** a **pattern** to some data. If the pattern matches, you can extract data from it using **variables**. (If you have ever used back-references or named groups in regexes, this will be familiar.)
 
 ```javascript
 // Extract a value
@@ -30,59 +26,104 @@ Tendril("[1 .. 5]")
 // → true
 ```
 
-Variables starting with `$` capture single values. The pattern must match for the query to succeed. If the same variable appears twice, unification ensures both occurrences match the same value (using structural equality).
+You will not fully understand these examples until you read further, but they will give you a sense of the overall shape of the language and illustrate some of its capabilities.
 
-## Example: Relational Joins
+## Example: Data extraction and joins (Kubernetes)
 
-Tendril excels at joining data across different paths in a structure, much like SQL joins but for nested JSON:
+This example joins container *specs* with container *runtime status* by container name $c.
 
-```javascript
-// "Hello, worlds"
-const data = {
-  planets: {
-    Jupiter: {size: "big"},
-    Earth: {size: "small"},
-    Ceres: {size: "tiny"}
+```js
+const pod = {
+  metadata: { name: "api-7d9c9b8c6f-abcde", namespace: "prod" },
+  spec: {
+    containers: [
+      { name: "api",  image: "ghcr.io/acme/api:1.42.0" },
+      { name: "side", image: "ghcr.io/acme/sidecar:3.1.0" }
+    ]
   },
-  aka: [
-    ["Jupiter", "Jove", "Zeus"],
-    ["Earth", "Terra"],
-    ["Ceres", "Demeter"]
-  ]
-}
+  status: {
+    containerStatuses: [
+      { name: "api",  ready: true,  restartCount: 0 },
+      { name: "side", ready: false, restartCount: 7 }
+    ]
+  }
+};
 
-const pattern = `{
-  planets: { $name: { size: $size } }
-  aka: [
-    ..
-    [ (?=$name) .. $alias .. ]
-    ..
-  ]
-}`
+Tendril(`{
+  metadata:{ name:$pod namespace:$ns }
+  spec.containers[_]: { name:$c image:$img } 
+  status.containerStatuses[_]: { name:$c ready:$ready restartCount:$restarts }
+}`)
+.match(pod)
+.solutions()  // e.g. 
+.toArray().map(({pod, ns, c, img, ready, restarts}) =>
+  `${ns}/${pod}  ${c}  ${img}  ready=${ready}  restarts=${restarts}`
+);
+```
 
-Tendril(pattern)
-  .match(data)
-  .solutions()
-  .toArray()
-  .map(solution => `Hello, ${solution.size} world ${solution.alias}`)
-
-// output
+```txt
+// Raw solution objects look like this:
+//    {
+//      pod: "api-7d9c9b8c6f-abcde",
+//      ns: "prod", 
+//      c: "api",
+//      img: "ghcr.io/acme/api:1.42.0",
+//      ready: true,
+//      restarts: 0
+//    }
+// Final output:
 [
-  "Hello, big world Jupiter",
-  "Hello, big world Jove",
-  "Hello, big world Zeus",
-  "Hello, small world Earth",
-  "Hello, small world Terra",
-  "Hello, tiny world Ceres",
-  "Hello, tiny world Demeter"
+  "prod/api-7d9c9b8c6f-abcde  api   ghcr.io/acme/api:1.42.0      ready=true  restarts=0",
+  "prod/api-7d9c9b8c6f-abcde  side  ghcr.io/acme/sidecar:3.1.0  ready=false restarts=7"
 ]
 ```
 
-This pattern extracts planet names from keys in the `planets` object, finds their sizes, then searches through the nested `aka` arrays to find all aliases for each planet. The `(?=$name)` lookahead asserts that the first element of each alias array must equal the already-bound planet name. The `..` wildcards match any subsequence, making the pattern resilient to array structure.
+---
+
+## Example: Transformation (VDOM manipulation)
+
+Replace a `<label>` tag with a `placeholder` on the associated `<input>` tag,
+regardless of how distant the two nodes are in the tree.
+
+```js
+Tendril(`{
+  .. $L=( { tag:'label', props:{for:$id}, children:[$text]   } )
+  ..      { tag:'input', props:{id:$id @p=(placeholder:_?) } }
+}`)
+.find(vdom)
+.editAll({
+  L: undefined,                    // delete the <label>  p: $ => ({placeholder: $.text})  // move its text into the <input>
+});
+```
 
 ---
 
-# Core Concepts
+## Example: joins across separate datasets.
+
+Bringing datasets together is trivial.
+
+```javascript
+const users = [{id: 1, name: "Alice"}, {id: 2, name: "Bob"}];
+const orders = [
+  {user_id: 1, item: "laptop"},
+  {user_id: 2, items: ["mouse", "mousepad"]}
+];
+
+Tendril(`{
+  users[$i].id: $userId
+  users[$i].name: $name
+  orders[$j].user_id: $userId
+  orders[$j].item: $item?
+  orders[$j].items[_]: $item?
+}`)
+.match({users, orders})
+.solutions(["name", "item"])
+// → [{name: "Alice", item: "laptop"},
+//    {name: "Bob", item: "mouse"},
+//    {name: "Bob", item: "mousepad"}]
+```
+
+# Reference
 
 ## Primitives
 
@@ -102,6 +143,7 @@ foo            // matches the exact string "foo" (bare identifier)
 true           // matches Boolean true only
 false          // matches Boolean false only
 null           // matches null only
+
 _              // wildcard matches any single value
 ```
 
@@ -109,7 +151,7 @@ Strings can be written as barewords (alphanumeric identifiers) or quoted. Regex 
 
 ## Arrays
 
-Arrays are matched positionally, similar to regex. Patterns specify exact sequences unless wildcards are used:
+Square brackets indicate arrays. Items in arrays match in sequence left to right (just as characters in regexes do).
 
 ```javascript
 [1 2 3]        // matches [1,2,3] exactly
@@ -319,19 +361,19 @@ Tendril("[ @x .. ]")
   .solutions()
   .toArray()
 // → [
-//   {x: Group()},
-//   {x: Group("a")},
-//   {x: Group("a", "b")}
+//   {x: []},
+//   {x: ["a"]},
+//   {x: ["a", "b"]}
 // ]
 
 Tendril("[ $x @y ]")
   .match([[1,2], [3,4]])
   .solutions()
   .first()
-// → {x: [1,2], y: Group([3,4])}
+// → {x: [1,2], y: [[3,4]]}
 ```
 
-Groups are represented as `Group` objects to distinguish them from array references. Groups are like slices: neither a single object, nor the entire array.
+Groups are exposed as plain arrays (for array slices) or plain objects (for object subsets). The **pattern** determines whether a binding is scalar (`$x`) or group (`@x`), which affects replacement semantics.
 
 ### Unification
 
@@ -366,9 +408,9 @@ Scalar variables are constrained to match only single items, not groups. This ef
                    // @x can bind to zero, one, or two elements
 ```
 
-## Paths
+## Paths (breadcrumb notation)
 
-Object assertions can navigate through nested structures using path notation:
+Object assertions can navigate through nested structures using breadcrumb notation:
 
 ```javascript
 { a.b.c:d }        // equivalent to { a:{ b:{ c:d } } }
@@ -394,12 +436,57 @@ The `..` operator skips arbitrary levels of nesting:
 
 Leading `..` means "start from root, navigate to any depth." Paths can combine dots, brackets, and skip operators freely.
 
+### Propositional idiom
+
+In addition to offering a concise notation, breadcrumbs enable a completely different idiom. Instead of creating a pattern that is structured like the data it is supposed to represent, you can create a pattern that looks like a sequence of propositions.
+
+Both forms may be considered good idiomatic Tendril. But beware of mixing them, which may be confusing.)
+
+To demonstrate with our "Hello worlds" example:
+
+```
+const data = {
+  planets: {
+    Jupiter: {size: "big"},
+    Earth: {size: "small"},
+    Ceres: {size: "tiny"}
+  },
+  aka: [
+    ["Jupiter", "Jove", "Zeus"],
+    ["Earth", "Terra"],
+    ["Ceres", "Demeter"]
+  ]
+}
+
+// Both of the following do the same job; both rely on 
+// unification of symbols to perform relational joins. 
+
+// Structural imitation idiom (regex-like)
+const pattern = `{
+  planets: { $name: { size: $size } }
+  aka: [
+    ..
+    [ (?=$name) .. $alias .. ]
+    ..
+  ]
+}`
+
+// Propositional idiom (like a list of propositions).
+{
+    planets.$name.size: $size
+    aka[$i][0]: $name
+    aka[$i][_]: $alias
+}
+```
+
+The propositional idiom feels like a completely different language, but if you look carefully, you can see that it's just an object pattern `{ K1:V1 K2:V2 ... }` with some breadcrumbs thrown in.
+
 ## Quantifiers on Objects
 
 Object quantifiers count matching key-value pairs after all matches are found (no backtracking):
 
 ```javascript
-{ /a.*/:_ #{2,4} }     // object has 2-4 keys matching /a.*/
+{ /a.*/:_#{2, 4} }     // object has 2-4 keys matching /a.*/
 { /a.*/:_ #{0} }       // object has no keys matching /a.*/
 { a:b remainder #{0} } // require no residual pairs (closed object)
 ```
@@ -453,62 +540,84 @@ Parentheses override precedence. Lookaheads always require parentheses.
 
 ## Query API
 
-The v5 API uses a fluent, chainable interface:
+The API uses a fluent, chainable interface:
 
 ```javascript
-// Start by compiling your pattern. 
-const tendril = Tendril(pattern);
+// Start by compiling your pattern.
+const pattern = Tendril(patternString);
 
-// match pattern to data
-let matcher = pattern.match(data) // match it to the entirety of your data
-let matcher = pattern.find(data)  // find the pattern within your data (maybe multiple occurrences)
-let matcher = pattern.first(data) // find the first occurrence
+// Match pattern to data - returns an OccurrenceSet
+let occSet = pattern.match(data)  // anchored match at root
+let occSet = pattern.find(data)   // find at any depth (recursive scan)
+let occSet = pattern.first(data)  // first occurrence only (short-circuits)
 
 // Short-circuit methods (stop after first solution found):
 if (pattern.hasMatch(data)) { ... }        // boolean: anchored match exists?
 if (pattern.hasAnyMatch(data)) { ... }     // boolean: match exists anywhere? (scan)
-let first = pattern.firstMatch(data)       // MatchSet with first match only (scan)
+```
 
-// At this point, you will be interested in focusing on either the **occurrences** of the pattern
-// in your data, or the **solutions**, i.e. variable bindings (Prolog style).
-// NOTE: These methods enumerate ALL occurrences/solutions before returning.
-// For existence checks, prefer the short-circuit methods above.
-let occs = matcher.occurrences()  // -> MatchSet (iterator of Occurrence)
-let solutions = matcher.solutions() // -> SolutionSet (iterator of unique Solution)
+## Occurrences and Solutions
 
-type MatchSet // itself is iterable of Occurrence
+An **Occurrence** is a location (path) where the pattern matched.
+A **Solution** is a set of variable bindings at that location.
 
-    // 'replaceAll' operates on a **copy** and replaces the **entire match**
-    matchSet.replaceAll(expr /* not depending on bindings*/)  // uses first solution of each occurrence
-    matchSet.replaceAll(bindings=>expr)                       // uses first solution of each occurrence
+One occurrence can have multiple solutions (different ways to bind variables at that location).
 
-    // 'editAll' mutates the original data and replaces **named groups**
-    matchSet.editAll("x", $=>($.x * 2))  // string,func: replace $x only
-    matchSet.editAll($=>{x:$.y, y:$.x})  // (=>plan)
-    matchSet.editAll({x:$=>$.y, y:$=>$.x})  // plan = obj<key,replacement>; replacement = (vars=>any) | any
+```javascript
+// OccurrenceSet: iterate over occurrences (locations)
+for (const occ of pattern.find(data)) {
+  console.log(occ.path(), occ.value());
 
-type Occurrence:
-    path()          // breadcrumb locating the occurrence from root
-    value()         // $0
-    solutions()     // iterator of Solution for this occurrence
-
-type Solution // itself, is an object representing bindings
-    occurrences()   // iterator of Occurrence with this solution
-
-
-// Example: iterate over solutions
-for (const $ of Tendril("{ users.$id.name:$name }").match(data).solutions()) {
-  console.log($.id, $.name);
+  // Each occurrence has one or more solutions
+  for (const sol of occ.solutions()) {
+    console.log(sol.x, sol.y);  // bindings are properties
+  }
 }
 
-// Find occurrences at any depth (recursive scan)
-const matches = tendril.find(data);          // Returns MatchSet with all deep matches
+// Get unique solutions across all occurrences
+for (const sol of pattern.find(data).solutions()) {
+  console.log(sol.toObject());  // {x: ..., y: ...}
+}
 
-// Replace using first match - returns new structure
-const result = tendril.find(data).replaceAll($ => newValue);
+// Convenience methods
+occSet.first()              // first Occurrence or null
+occSet.count()              // number of occurrences
+occSet.solutions().first()  // first unique Solution or null
+occSet.solutions().count()  // number of unique solutions
+```
 
-// Edit in place - modifies data
-tendril.find(data).editAll($ => ({varName: newValue}));
+## Replacement and Editing
+
+All edit/replace operations are **pure by default** — they return a new copy of the data.
+
+```javascript
+// replaceAll: replace $0 (entire match) at each occurrence
+const result = pattern.find(data).replaceAll(99);
+const result = pattern.find(data).replaceAll($ => $.x * 2);
+
+// editAll: replace named variables at each occurrence
+const result = pattern.find(data).editAll({x: 99});
+const result = pattern.find(data).editAll($ => ({x: $.y, y: $.x}));
+const result = pattern.find(data).editAll({x: $ => $.x * 2});
+
+// Per-occurrence or per-solution editing
+const result = occSet.first().edit({x: 99});
+const result = occSet.solutions().first().edit({x: 99});
+
+// Opt into mutation (rare)
+pattern.find(data).editAll({x: 99}, {mutate: true});
+```
+
+**Scalar vs Group replacement:** The pattern determines semantics, not the value type.
+
+```javascript
+// Pattern with $x (scalar): array is a single value
+Tendril("[$x ..]").find([[1,2], 3]).editAll({x: [9,9]})
+// → [[9,9], 3]  (replaced [1,2] with [9,9] as one element)
+
+// Pattern with @x (group): array elements are spliced
+Tendril("[@x ..]").find([1, 2, 3]).editAll({x: [9,9]})
+// → [9, 9, 3]  (spliced two elements where @x was)
 ```
 
 **Replacement examples:**
@@ -516,16 +625,16 @@ tendril.find(data).editAll($ => ({varName: newValue}));
 ```javascript
 // Swap array elements
 Tendril("[$x $y]").find([3, 4]).replaceAll($ => [$.y, $.x])
-// Result: [4, 3]
+// → [4, 3]
 
 // Redact passwords at any depth - two equivalent approaches:
 const data1 = {user: {password: "secret", name: "Alice"}};
 
 // Approach 1: Use .. with match() to search at any depth
-Tendril("{ ..password:$p }").match(data1).editAll($ => ({p: "REDACTED"}));
+const result1 = Tendril("{ ..password:$p }").match(data1).editAll({p: "REDACTED"});
 
 // Approach 2: Use find() without .. to search at any depth
-Tendril("{ password:$p }").find(data1).editAll($ => ({p: "REDACTED"}));
+const result2 = Tendril("{ password:$p }").find(data1).editAll({p: "REDACTED"});
 
 // ⚠️ Anti-pattern: Don't combine .. with find() - it's redundant!
 // Tendril("{ ..password:$p }").find(data) // DON'T DO THIS
@@ -541,7 +650,7 @@ Tendril("{ password:$p }").find(data1).editAll($ => ({p: "REDACTED"}));
 
 ```javascript
 // Macro expansion: <When>/<Else> → If node
-Tendril(`[
+const result = Tendril(`[
   ..
   @whenelse=(
     {tag:/^when$/i children:$then}
@@ -573,9 +682,9 @@ Tendril(`{
 
 ```javascript
 // Redact sensitive fields at any nesting level
-Tendril("{ password:$value }")
+const redacted = Tendril("{ password:$value }")
   .find(data)
-  .editAll($ => ({value: "REDACTED"}))
+  .editAll({value: "REDACTED"})
 ```
 
 **4. Data extraction from semi-structured formats**
@@ -857,7 +966,7 @@ Lookaheads (`(?=P)`, `(?!P)`) test whether pattern P matches at the current posi
 
 ## Conventions
 
-`~=` and `===` appear in examples as shorthand for illustration only. They are not part of Tendril syntax.
+`~=` and `===` and `≡` appear in examples as shorthand for illustration only. They are not part of Tendril syntax.
 
 - `foo ~= bar` means `Tendril("foo").matches(bar) === true`
 - `p1 === p2` indicates semantic or syntactic equivalence
@@ -874,16 +983,11 @@ The data model is JSON-like: objects, arrays, strings, numbers, booleans, null. 
 
 ## Open Design Questions
 
-- **Lookahead binding rules** are ambitious and mostly consistent, but they're the #1 place users get confused. "Positive lookahead commits bindings and enumerates all binding possibilities" can create surprising multiplicative solution counts.
-
-- **Bare identifiers as strings** is convenient, but creates ambiguity with future keywords and makes error messages harder ("did you mean a string or a variable?"). Already special-cased `_ true false null remainder` etc; this tends to grow.
+- **Bare identifiers as strings** is convenient, but creates ambiguity with future keywords and makes error messages harder ("did you mean a string or a variable?"). Already special-cased `_ true false null bad` etc; this tends to grow.
 
 - **`find()` + `..` redundancy**: The admonition ("don't combine") is good, but users will do it anyway. Could make it harmless by having the engine detect redundant `..` in root-object terms during scan.
 
-- **Edits with overlapping solutions**: Currently edits are grouped by path, with array splices using offset tracking. But when multiple solutions overlap the same sites, "last write wins" effects are hard to reason about. Users may want:
-  - Edit only first solution per match
-  - Edit only first match
-  - Deterministic ordering guarantees
+- **Edits with overlapping solutions**: The v2 API uses deterministic "first solution per occurrence" semantics. `editAll` iterates over occurrences (locations) and applies edits from the first solution at each location. This avoids cross-solution conflicts while still editing all locations. For fine-grained control, use `occurrence.edit()` or `solution.edit()`.
 
 ---
 
@@ -891,7 +995,7 @@ The data model is JSON-like: objects, arrays, strings, numbers, booleans, null. 
 
 ## Solution Explosion Limiter
 
-Add per-match and total limits on solution count, with a clear error when exceeded.
+Add per-match and total limits on solution count, with a clear error when exceeded. We can implement this by allowing multiple hooks to be installed at once and letting this be a default hook.
 
 ## Debug Trace
 
@@ -907,4 +1011,408 @@ A future improvement would refactor the engine to use generators/iterators for s
 - **Memory efficiency**: No need to materialize all solutions before filtering
 - **Cancellation tokens**: Clean cancellation without exception overhead
 
-This would make methods like `occurrences()` and `solutions()` truly streaming rather than eagerly collecting all results.
+This would make iteration over occurrences and solutions truly streaming rather than eagerly collecting all results.
+
+
+---
+
+# Testing todos
+
+
+Todo: highlight the following set of 'golden tests', set them up as smoke tests.
+
+N.B. These tests are good in concept but have not been proofread yet for correctness.
+
+Awesome — golden tests are the best ROI because they exercise “the whole stack” (parser → engine → API → edit/replace/site tracking) in a way that unit tests often don’t.
+
+Below is a **small-but-potent golden suite** (8 tests) that together hits most of Tendril’s surface area. Each test has:
+
+* a realistic data fixture
+* one or more patterns
+* an expected output (bindings / transformed structure)
+
+You can drop these into `test/golden/*.test.js` (or split by topic). I’ll write them as “specs” you can translate into your harness.
+
+---
+
+## Golden 1: OpenAI Chat Completions response → stitch all text
+
+**Purpose:** deep paths + array scanning + binding enumeration + solution aggregation + stable ordering sanity.
+
+**Fixture (representative):**
+
+```js
+const resp = {
+  id: "chatcmpl_x",
+  object: "chat.completion",
+  choices: [
+    { index: 0, message: { role: "assistant", content: [
+      { type: "output_text", text: "Hello" },
+      { type: "output_text", text: ", world" },
+      { type: "refusal", text: "nope" }
+    ]}},
+    { index: 1, message: { role: "assistant", content: [
+      { type: "output_text", text: "!" }
+    ]}}
+  ]
+};
+```
+
+**Pattern:**
+
+* Find all text fragments of type `output_text` anywhere:
+
+```js
+const pat = `{ ..type:output_text ..text:$t }`;
+```
+
+**Expected:**
+
+* `solutions().toArray().map($.t).join("") === "Hello, world!"`
+* Also assert count is 3, and no “refusal” text appears.
+
+---
+
+## Golden 2: OpenAI streaming-ish “delta” chunks → only final assembled text
+
+**Purpose:** alternation + optional keys + find() vs match() + object assertions.
+
+**Fixture:**
+
+```js
+const chunks = [
+  { choices: [{ delta: { content: "Hel" } }] },
+  { choices: [{ delta: { content: "lo" } }] },
+  { choices: [{ delta: { refusal: "no" } }] },
+  { choices: [{ delta: { content: "!" }, finish_reason: "stop" }] }
+];
+```
+
+**Pattern:**
+
+```js
+const pat = `{ ..content:$t }`;
+```
+
+**Expected:**
+
+* Extract `["Hel","lo","!"]` and join to `"Hello!"`
+* Ensure refusal is ignored.
+
+(You can also add a second pattern verifying the finish reason exists somewhere, e.g. `{ ..finish_reason:stop }` hasMatch.)
+
+---
+
+## Golden 3: HTML/VDOM macro expansion: `<FormattedAddress .../>` → `<div>...</div>`
+
+**Purpose:** array group binding + object matching + editAll group replacement + path correctness.
+
+**Fixture (simple VDOM):**
+
+```js
+const vdom = [
+  { tag: "p", children: ["Ship to:"] },
+  { tag: "FormattedAddress", props: { type: "oneLine", model: "uAddress" }, children: [] },
+  { tag: "p", children: ["Thanks!"] }
+];
+```
+
+**Pattern (match the node):**
+
+```js
+const pat = `[
+  ..
+  $node=({ tag:FormattedAddress props:{ type:oneLine model:$m } })
+  ..
+]`;
+```
+
+**Edit:**
+
+* Replace the matched node (`$node`) with a div template. Since `$node` is scalar, easiest is replace whole match `$0` only if you match the node itself; but in this pattern you’re matching an *array*, so prefer **group-edit**:
+
+Better pattern for in-place replacement:
+
+```js
+const pat2 = `[
+  ..
+  @x=({ tag:FormattedAddress props:{ type:oneLine model:$m } })
+  ..
+]`;
+```
+
+Then:
+
+```js
+.editAll($ => ({
+  x: [{ tag: "div", children: [`{${$.m}.name}, {${$.m}.street}`] }]
+}))
+```
+
+**Expected:**
+
+* vdom now contains `{tag:"div", ...}` where `FormattedAddress` was.
+* Surrounding nodes unchanged.
+
+---
+
+## Golden 4: Config validation with universal object semantics + closed object
+
+**Purpose:** universal `K:V`, optional `?:`, `(?!remainder)`.
+
+**Fixture:**
+
+```js
+const cfgOK = { x_port: 8080, x_host: "localhost", id: "abc" };
+const cfgBad = { x_port: "8080", x_host: "localhost", id: "abc" };
+```
+
+**Pattern:**
+
+```js
+// all x_* must be number OR string? pick one and test.
+// Here: x_* must be number
+const pat = `{ /^(x_)/: $v=(123|0|1|2|3|4|5|6|7|8|9|/^\d+$/) }`;
+```
+
+That’s messy if you don’t have “number predicate”. Better golden test using existing primitives:
+
+```js
+const pat = `{ /^x_/: $n=(/^\d+$/) }`;  // if x_* are strings of digits
+```
+
+And add a closed object case:
+
+```js
+const closed = `{ id:_ /^x_/:/^\d+$/ (?!remainder) }`;
+```
+
+**Expected:**
+
+* `closed` matches `{id:"abc", x_port:"8080", x_host:"123"}` only if *every* key is `id` or `x_*` and values satisfy.
+* A stray key should fail due to `(?!remainder)`.
+
+(If you prefer to validate “numbers are numbers”, use literal numeric fixtures and match with `_` and key coverage; the point is universal + remainder.)
+
+---
+
+## Golden 5: JSON “join” across paths (your planets/aka example)
+
+**Purpose:** root match + key binding + lookahead + array `..` + producing many solutions.
+
+Use your README example almost verbatim (it’s excellent).
+
+**Expected:**
+
+* exactly the 7 “Hello, …” strings
+* and verify it still works if you reorder `aka` rows or add unrelated keys (resilience)
+
+---
+
+## Golden 6: Redaction at any depth, two equivalent styles
+
+**Purpose:** find() recursion vs `..` path recursion, and editAll correctness.
+
+**Fixture:**
+
+```js
+const data = {
+  user: { password: "secret", profile: { password: "also" } },
+  password: "top"
+};
+```
+
+**Patterns:**
+
+1. `Tendril("{ password:$p }").find(data).editAll({p:"REDACTED"})`
+2. `Tendril("{ ..password:$p }").match(data).editAll({p:"REDACTED"})`
+
+**Expected:**
+
+* both yield the same transformed structure
+* all password fields redacted
+* other fields unchanged
+
+---
+
+## Golden 7: Non-trivial array slicing + splice offset correctness
+
+**Purpose:** group splices on same array; ensures your `offset` logic in `applyEdits` is correct.
+
+**Fixture:**
+
+```js
+const arr = [1, 2, 3, 4, 5, 6];
+```
+
+**Pattern:**
+
+```js
+const pat = `[ .. @mid=(3 4) .. ]`;
+```
+
+**Edit:**
+Replace `@mid` with 3 elements:
+
+```js
+.editAll({ mid: [30, 40, 50] })
+```
+
+**Expected:**
+`[1,2,30,40,50,5,6]`
+
+Then a second edit in same run that splices earlier and later groups (two group sites) is even better:
+
+```js
+const pat2 = `[ @a=(1 2) .. @b=(5 6) ]`;
+editAll({ a:[10], b:[60,70,80] })
+```
+
+Expected:
+`[10,3,4,60,70,80]`
+
+---
+
+## Golden 8: Object group capture + replace with new props
+
+**Purpose:** object `@x=(...)` capture, replacement semantics (delete captured keys then insert).
+
+**Fixture:**
+
+```js
+const obj = { Big:1, Cute:2, Alice:3, c:99 };
+```
+
+**Pattern:**
+
+```js
+const pat = `{ @x=(/a/:_, /b/:_) /c/:_ }`;
+```
+
+**Edit:**
+
+```js
+.editAll({ x: { foo: "bar" } })
+```
+
+**Expected:**
+
+* keys matched by `/a/` or `/b/` removed (`Big`, `Alice`)
+* replaced with `{foo:"bar"}`
+* keys `Cute` and `c` remain
+  Result:
+
+```js
+{ foo:"bar", Cute:2, c:99 }
+```
+
+---
+
+# Minimal MVP golden suite layout
+
+If you want a small file count:
+
+* `test/golden/openai-text-assembly.test.js` (Golden 1 + 2)
+* `test/golden/vdom-macro-expansion.test.js` (Golden 3)
+* `test/golden/joins-and-lookahead.test.js` (Golden 5)
+* `test/golden/redaction.test.js` (Golden 6)
+* `test/golden/remainder-and-universal.test.js` (Golden 4 + 8)
+* `test/golden/splice-offsets.test.js` (Golden 7)
+
+# END "Golden Tests"
+
+
+# Real-world examples 
+
+This is more sophisticated than the If/Else example, but it's genuinely useful and demonstrates real power. A few syntax corrections:
+
+```javascript
+Tendril(`{
+  ..:@label=({
+    tag: label, 
+    props: {for: $id}, 
+    children: [$labelText=(/.*/)]
+  })
+  ..:{
+    tag: input, 
+    props: {id: $id, type: text},
+    @placeholder=(placeholder:_?)
+  }
+}`).match(data).editAll({
+  label: undefined,  // delete it
+  placeholder: $ => ({placeholder: $.labelText})
+})
+```
+
+This showcases:
+
+- **Breadcrumbs** (`..:{...}`) finding elements at any depth
+- **Backreference** (`$id`) joining label to input
+- **Group variables** enabling surgical edits (delete label, update placeholder)
+- **Optional patterns** (`placeholder:_?`) handling cases where placeholder exists or not
+- **Practical transformation** that's immediately useful
+
+The complexity tradeoff: it shows more features but requires more explanation. For the README's second example slot, this might be too much. It would work better in one of the specialized guides (like the "Regex for Structures" guide showing find-and-replace).
+
+For the README, I'd still lean toward the If/Else merge—simpler pattern, clearer "before/after" mental model, shows the core ideas without requiring breadcrumb or group-variable knowledge.
+
+Save the label/input example for a "Real-World Examples" section or one of the specialized guides?
+
+
+= Current work
+
+I am thinking of making some significant changes to the syntax to address some unpleasantness before publishing a beta. 
+
+1. The syntax for binding variable with its mandatory parentheses is not intuitive: `$var=(...)` - Especially in the context of surrounding syntax. 
+
+Replace `$var=(PATTERN)` with `<$var=PATTERN>`
+Replace `@var=(PATTERN)` with `<@var=PATTERN>`
+Keep shortcuts `$x` === `<$x=_>`, `@x` === `<@x=_*?>`
+
+Alternative:  <$var PATTERN>
+Pro, visually distinctive.
+Con, tag-like
+
+2. I find that when using regexes, there's a lot of ^..$ noise all over, because anchored regexes are more useful, especially since our idiom for case insensitivity is /token/i.
+
+Always interpret regexes as anchored. 
+
+Cons: May surprise JavaScript developers.
+
+3. The lookahead syntax `(?=PATTERN)` is ugly and is a carryover from regex, but is not really suitable for this language. 
+
+Replace with the construct `A & B`. 
+
+In array contexts, both A and B are expected to match and to consume the same subsequence.    
+
+'&' has precedence just higher than '|'.
+
+Not available in object contexts, where it would be semantically confusing, And also redundant because `@x=(slice1) @x=(slice2)` would serve the same purpose.
+
+4. We want to write unanchored array patterns all the time, and `[.. seq ..]` is noisy.
+
+Let `< seq >` be shorthand for `[.. seq ..]`.
+
+Obviously, this conflicts with suggestion (1).
+
+Alternately, let `@[ seq ]` be shorthand for `[.. seq ..]`. 
+
+Pros: In addition to being less verbose, it would let you specify slices as top-level search roots. This would simplify some of our important canonical examples.
+
+5. Introduce 'A || B' as non-backtracking alternation. (like a 'local cut': if A matches, you can't try B.  But you can backtrack within A, or within B, Or you can backtrack past the entire expression, in which case it resets. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
