@@ -97,16 +97,16 @@ test('replace scalar at root', () => {
 
 test('replace scalar in object', () => {
   const t = Tendril('{b:$x}');
-  const cloned = {a: 1, b: 2};
-  t.find(cloned).editAll(() => ({x: 99}));
-  assert.deepEqual(cloned, {a: 1, b: 99});
+  // editAll is now PURE (returns copy)
+  const result = t.find({a: 1, b: 2}).editAll(() => ({x: 99}));
+  assert.deepEqual(result, {a: 1, b: 99});
 });
 
 test('swap values using function', () => {
   const t = Tendril('{x:$a y:$b}');
-  const cloned = {x: 3, y: 4};
-  t.find(cloned).editAll((v) => ({a: v.b, b: v.a}));
-  assert.deepEqual(cloned, {x: 4, y: 3});
+  // editAll is now PURE (returns copy)
+  const result = t.find({x: 3, y: 4}).editAll((v) => ({a: v.b, b: v.a}));
+  assert.deepEqual(result, {x: 4, y: 3});
 });
 
 // ==================== extractAll() - multiple solutions ====================
@@ -185,8 +185,8 @@ test('replace group binding', () => {
     ..
   ]`);
 
-  const cloned = JSON.parse(JSON.stringify(test4));
-  pattern4.find(cloned).editAll(($) => {
+  // editAll is now PURE (returns copy)
+  const result = pattern4.find(test4).editAll(($) => {
     return {
       whenelse: [{
         tag: 'If',
@@ -203,7 +203,7 @@ test('replace group binding', () => {
     {tag: 'div', children: ['after']}
   ];
 
-  assert.deepEqual(cloned, expected);
+  assert.deepEqual(result, expected);
 });
 
 console.log('\n✓ All unified walk tests defined\n');

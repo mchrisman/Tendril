@@ -152,19 +152,18 @@ test('collapse adjacent equal arrays - simple case', () => {
     });
   }
 
-  // Now try the edit
-  const cloned = JSON.parse(JSON.stringify(data));
+  // Now try the edit - editAll is now PURE (returns copy)
   try {
     // Try the plan object form
-    Tendril(pattern).find(cloned).editAll($ => ({x: [$.y]}));
+    const result = Tendril(pattern).find(data).editAll($ => ({x: [$.y]}));
 
-    console.log('After collapse:', JSON.stringify(cloned));
-    console.log(`  Original length: ${data.length}, After: ${cloned.length}`);
+    console.log('After collapse:', JSON.stringify(result));
+    console.log(`  Original length: ${data.length}, After: ${result.length}`);
 
     // Should have collapsed [1,2], [1,2] -> [1,2] (saves 1)
     // and ['a','b'], ['a','b'], ['a','b'] -> ['a','b'] (saves 2)
     // Original 7 - 3 = 4 elements
-    assert.equal(cloned.length, 4, 'Should collapse to 4 elements total');
+    assert.equal(result.length, 4, 'Should collapse to 4 elements total');
   } catch (e) {
     console.log('Edit failed:', e.message);
     throw e;

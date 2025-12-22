@@ -88,25 +88,18 @@ translates to
 
 
 Let's try a simpler two:'
+// editAll is now PURE (returns copy)
 // expected: {a:[99,100,101]}
-const data1 = {a: [1, 2, 3]};
-Tendril('{a[$x=(_)]:$y}').find(data1).editAll((v) => ({y: v.x + 99}));
-console.log(data1);
+console.log(Tendril('{a[$x=(_)]:$y}').find({a: [1, 2, 3]}).editAll((v) => ({y: v.x + 99})));
 
 //expected: {a:[undefined,undefined,2]}, or else error if replacing keys is not supported yet
-const data2 = {a: [1, 2, 3]};
-Tendril('{a[$x=(_)]:$y}').find(data2).editAll((v) => ({x: 2}));
-console.log(data2);
+console.log(Tendril('{a[$x=(_)]:$y}').find({a: [1, 2, 3]}).editAll((v) => ({x: 2})));
 
- // expected: { a: [ 1, 2, 3 ] } // 'out' binding does not exist, so is ignored'
-const data3 = {a: [1, 2, 3]};
-Tendril('{a[$x=(0)]:_}').find(data3).editAll(bindings => ({out: 99}));
-console.log(data3);
+// expected: { a: [ 1, 2, 3 ] } // 'out' binding does not exist, so is ignored'
+console.log(Tendril('{a[$x=(0)]:_}').find({a: [1, 2, 3]}).editAll(bindings => ({out: 99})));
 
 // expected, { a: [ 1, 2, 3 ] } // no replacements specified
-const data4 = {a: [1, 2, 3]};
-Tendril('{a[$x=(0)]:_}').find(data4).editAll(bindings => ({}));
-console.log(data4);
+console.log(Tendril('{a[$x=(0)]:_}').find({a: [1, 2, 3]}).editAll(bindings => ({})));
 
 // expected: 99
 console.log(Tendril('{a[$x=(_)]:$y}').find({a: [1, 2, 3]}).replaceAll(() => 99));

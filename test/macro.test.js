@@ -98,8 +98,8 @@ test('replaceAll transforms When+Else to If node', () => {
     ..
   ]`);
 
-  const cloned = JSON.parse(JSON.stringify(data));
-  pattern.find(cloned).editAll($ => {
+  // editAll is now PURE (returns copy)
+  const result = pattern.find(data).editAll($ => {
     return {
       whenelse: [{
         tag: 'If',
@@ -118,7 +118,7 @@ test('replaceAll transforms When+Else to If node', () => {
     {tag: 'div', children: ['after']}
   ];
 
-  assert.deepEqual(cloned, expected);
+  assert.deepEqual(result, expected);
 });
 
 console.log('\n✓ All macro transformation tests defined\n');

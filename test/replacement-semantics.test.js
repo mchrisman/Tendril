@@ -12,9 +12,8 @@ import { Tendril, replaceAll } from '../src/tendril-api.js';
 
 // Helper for variable replacement with pure semantics
 function replaceVars(pattern, data, planFn) {
-  const cloned = JSON.parse(JSON.stringify(data));
-  Tendril(pattern).find(cloned).editAll(planFn);
-  return cloned;
+  // editAll is now PURE - returns a copy, doesn't mutate
+  return Tendril(pattern).find(data).editAll(planFn);
 }
 
 test('replace value binding - all array elements', () => {
