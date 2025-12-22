@@ -53,38 +53,47 @@ export function tokenize(src) {
 
     // regex literal: /.../flags  (no division in this DSL; treat leading / as regex)
     if (c === '/' && src[i + 1] !== '/') {
-      // Parse regex by trying each '/' as potential terminator, validating with RegExp constructor
-      let found = false;
-      for (let j = i + 1; j < src.length && !found; ) {
-        j = src.indexOf('/', j);
-        if (j < 0) break; // no more '/' found
-
-        // Capture flags after this potential terminator
-        let k = j + 1;
-        while (k < src.length && /[a-z]/i.test(src[k])) k++;
-
-        const pattern = src.slice(i + 1, j);
-        const flags = src.slice(j + 1, k);
-
-        // Try to construct RegExp to validate this is a valid endpoint
-        try {
-          new RegExp(pattern, flags);
-          // Disallow 'g' and 'y' flags - they cause stateful matching bugs
-          if (flags.includes('g') || flags.includes('y')) {
-            throw syntax(`Regex flags 'g' and 'y' are not allowed (found /${pattern}/${flags})`, src, i);
-          }
-          // Valid! This is the correct endpoint
-          push('re', { source: pattern, flags: flags }, k - i);
-          found = true;
-        } catch (e) {
-          // Re-throw our custom syntax errors
-          if (e.message?.includes('not allowed')) throw e;
-          // Invalid regex, try next '/'
+      // Single-pass scan: handle escapes and character classes
+      let j = i + 1, inClass = false;
+      while (j < src.length) {
+        const ch = src[j];
+        if (ch === '\\') {
+          j += 2; // skip escaped char
+        } else if (ch === '[') {
+          inClass = true;
+          j++;
+        } else if (ch === ']' && inClass) {
+          inClass = false;
+          j++;
+        } else if (ch === '/' && !inClass) {
+          break; // found terminator
+        } else {
           j++;
         }
       }
+      if (j >= src.length) throw syntax(`unterminated regex literal`, src, i);
 
-      if (!found) throw syntax(`unterminated or invalid regex`, src, i);
+      const pattern = src.slice(i + 1, j);
+      j++; // skip closing /
+
+      // Consume flags
+      const flagStart = j;
+      while (j < src.length && /[a-z]/i.test(src[j])) j++;
+      const flags = src.slice(flagStart, j);
+
+      // Validate the regex
+      try {
+        new RegExp(pattern, flags);
+      } catch (e) {
+        throw syntax(`invalid regex: /${pattern}/${flags}`, src, i);
+      }
+
+      // Disallow 'g' and 'y' flags - they cause stateful matching bugs
+      if (flags.includes('g') || flags.includes('y')) {
+        throw syntax(`Regex flags 'g' and 'y' are not allowed (found /${pattern}/${flags})`, src, i);
+      }
+
+      push('re', { source: pattern, flags: flags }, j - i);
       continue;
     }
 

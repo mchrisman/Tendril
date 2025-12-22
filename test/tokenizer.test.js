@@ -77,14 +77,14 @@ test('regex with nested groups and /', () => {
 test('regex - unterminated should throw', () => {
   assert.throws(
     () => tokenize('/abc'),
-    /unterminated or invalid regex/
+    /unterminated regex literal/
   );
 });
 
 test('regex - invalid pattern should throw', () => {
   assert.throws(
     () => tokenize('/[/'),
-    /unterminated or invalid regex/
+    /unterminated regex literal/
   );
 });
 
