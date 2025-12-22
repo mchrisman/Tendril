@@ -37,8 +37,8 @@ const Null = () => ({type: 'Null'});
 const RootKey = () => ({type: 'RootKey'}); // Special marker for leading .. in paths
 
 // Bindings
-const SBind = (name, pat) => ({type: 'SBind', name, pat});  // $x=(pat)
-const GroupBind = (name, pat) => ({type: 'GroupBind', name, pat});  // @x=(pat)
+const SBind = (name, pat) => ({type: 'SBind', name, pat});  // ($x=pat)
+const GroupBind = (name, pat) => ({type: 'GroupBind', name, pat});  // (@x=pat)
 
 // Containers
 const Arr = (items) => ({type: 'Arr', items});
@@ -115,39 +115,41 @@ function parseItemTerm(p) {
   }
 
   if (p.peek('(')) {
-    // Could be grouping or binding with parens
-    // Just grouping
     p.eat('(');
+    // Check for binding syntax: ($x=...) or (@x=...)
+    if (p.peek('$')) {
+      p.eat('$');
+      const name = p.eat('id').v;
+      p.eat('=');
+      const pat = parseItem(p);
+      p.eat(')');
+      return SBind(name, pat);
+    }
+    if (p.peek('@')) {
+      p.eat('@');
+      const name = p.eat('id').v;
+      p.eat('=');
+      const pat = parseAGroup(p);
+      p.eat(')');
+      return GroupBind(name, pat);
+    }
+    // Just grouping
     const inner = parseItem(p);
     p.eat(')');
     return inner;
   }
 
-  // Scalar binding: $x or $x=(...)
+  // Bare scalar variable: $x (short for ($x=_))
   if (p.peek('$')) {
     p.eat('$');
     const name = p.eat('id').v;
-    if (p.maybe('=')) {
-      p.eat('(');
-      const pat = parseItem(p);
-      p.eat(')');
-      return SBind(name, pat);
-    }
-    // Bare $x means $x=(_)
     return SBind(name, Any());
   }
 
-  // Group binding: @x or @x=(...)
+  // Bare group variable: @x (short for (@x=_*))
   if (p.peek('@')) {
     p.eat('@');
     const name = p.eat('id').v;
-    if (p.maybe('=')) {
-      p.eat('(');
-      const pat = parseAGroup(p);
-      p.eat(')');
-      return GroupBind(name, pat);
-    }
-    // Bare @x means @x=(_*)
     return GroupBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
@@ -302,43 +304,46 @@ function parseAGroupBase(p) {
     return parseLookahead(p);
   }
 
-  // Parenthesized A_BODY
+  // Parenthesized A_BODY or binding
   if (p.peek('(')) {
     p.eat('(');
+    // Check for binding syntax: ($x=...) or (@x=...)
+    if (p.peek('$')) {
+      p.eat('$');
+      const name = p.eat('id').v;
+      p.eat('=');
+      const items = parseABody(p, ')');
+      p.eat(')');
+      const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
+      return SBind(name, pat);
+    }
+    if (p.peek('@')) {
+      p.eat('@');
+      const name = p.eat('id').v;
+      p.eat('=');
+      const items = parseABody(p, ')');
+      p.eat(')');
+      const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
+      return GroupBind(name, pat);
+    }
+    // Just grouping
     const items = parseABody(p, ')');
     p.eat(')');
-    // If single item, return it; otherwise wrap in Seq node
     if (items.length === 1) return items[0];
     return {type: 'Seq', items};
   }
 
-  // Group binding: @x or @x=(...)
+  // Bare group variable: @x (short for (@x=_*))
   if (p.peek('@')) {
     p.eat('@');
     const name = p.eat('id').v;
-    if (p.maybe('=')) {
-      p.eat('(');
-      const items = parseABody(p, ')');
-      p.eat(')');
-      // If single item, use directly; otherwise create Seq
-      const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
-      return GroupBind(name, pat);
-    }
     return GroupBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
-  // Scalar binding: $x or $x=(...)
+  // Bare scalar variable: $x (short for ($x=_))
   if (p.peek('$')) {
     p.eat('$');
     const name = p.eat('id').v;
-    if (p.maybe('=')) {
-      p.eat('(');
-      const items = parseABody(p, ')');
-      p.eat(')');
-      // If single item, use directly; otherwise create Seq
-      const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
-      return SBind(name, pat);
-    }
     return SBind(name, Any());
   }
 
@@ -452,13 +457,15 @@ function parseORemnant(p) {
   });
   if (closedObj) return closedObj;
 
-  // Try @x=(%) or @x=(%?) or @x=(remainder) with optional quantifier
+  // Try (@x=%) or (@x=%?) or (@x=remainder) with optional quantifier
+  // New syntax: (@x=%) instead of @x=(%)
   const bindRemnant = p.backtrack(() => {
+    if (!p.peek('(')) return null;
+    p.eat('(');
     if (!p.peek('@')) return null;
     p.eat('@');
     const name = p.eat('id').v;
     if (!p.maybe('=')) return null;
-    p.eat('(');
     if (!isRemainderMarker()) return null;
     eatRemainderMarker();
     // Handle %? inside parens (shorthand for optional remainder)
@@ -466,11 +473,11 @@ function parseORemnant(p) {
     if (p.maybe('?')) {
       quant = {min: 0, max: null}; // %? means 0..∞ (can be empty)
     }
-    p.eat(')');
-    // Also check for quantifier after closing paren
+    // Also check for quantifier before closing paren
     if (!quant) {
       quant = parseRemainderQuant(p);
     }
+    p.eat(')');
     p.maybe(',');
     return GroupBind(name, Spread(quant));
   });
@@ -544,8 +551,7 @@ function parseRemainderQuant(p) {
 
 function parseOGroup(p) {
   // O_GROUP := '(' O_BODY ')'
-  //          | S_GROUP
-  //          | S_GROUP '=' '(' O_GROUP* ')'
+  //          | '(' S_GROUP '=' O_GROUP* ')'
   //          | O_TERM
   //          | '(?=' O_GROUP ')'
   //          | '(?!' O_GROUP ')'
@@ -555,10 +561,24 @@ function parseOGroup(p) {
     return parseObjectLookahead(p);
   }
 
-  // Try parenthesized O_BODY: '(' O_BODY ')'
+  // Try parenthesized O_BODY or group binding: '(' O_BODY ')' or '(@x=...)'
   // Use backtracking because '(' could also be part of O_TERM's key pattern
   const groupResult = p.backtrack(() => {
     p.eat('(');
+    // Check for group binding: (@x=...)
+    if (p.peek('@')) {
+      p.eat('@');
+      const name = p.eat('id').v;
+      p.eat('=');
+      const groups = [];
+      while (!p.peek(')')) {
+        groups.push(parseOGroup(p));
+        p.maybe(',');
+      }
+      p.eat(')');
+      return GroupBind(name, {type: 'OGroup', groups});
+    }
+    // Just grouping
     const groups = [];
     while (!p.peek(')')) {
       groups.push(parseOGroup(p));
@@ -569,27 +589,8 @@ function parseOGroup(p) {
   });
   if (groupResult) return groupResult;
 
-  // S_GROUP: Group binding @x=(O_BODY)
-  if (p.peek('@')) {
-    p.eat('@');
-    const name = p.eat('id').v;
-    if (p.maybe('=')) {
-      p.eat('(');
-      // Parse O_BODY: @x=(pattern)
-      const groups = [];
-      while (!p.peek(')')) {
-        groups.push(parseOGroup(p));
-        p.maybe(',');
-      }
-      p.eat(')');
-      return GroupBind(name, {type: 'OGroup', groups});
-    }
-    // Bare @x in object context is not allowed
-    p.fail('bare @x not allowed in objects; use @x=(remainder) to bind residual keys');
-  }
-
   // Otherwise parse O_TERM
-  // O_TERM will parse KEY (including $x=(ITEM) patterns) normally via parseItem
+  // O_TERM will parse KEY (including ($x=ITEM) patterns) normally via parseItem
   // Leading .. is now allowed in OTerm for paths like {..password:$x}
   return parseOTerm(p);
 }

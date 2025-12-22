@@ -13,8 +13,8 @@ console.log("Original data:");
 console.log(JSON.stringify(data, null, 2));
 console.log();
 
-console.log("What does {foo:$y @r=(remainder)} match?");
-const matches = Tendril("{foo:$y @r=(remainder)}").occurrences(data).toArray();
+console.log("What does {foo:$y (@r=remainder)} match?");
+const matches = Tendril("{foo:$y (@r=remainder)}").occurrences(data).toArray();
 console.log("Number of matches:", matches.length);
 matches.forEach((m, i) => {
   console.log(`\nMatch ${i}:`);
@@ -26,7 +26,7 @@ matches.forEach((m, i) => {
 console.log();
 
 console.log("Now test replacement:");
-const result = Tendril("{foo:$y @r=(remainder)}").replaceAll(data, _ => {
+const result = Tendril("{foo:$y (@r=remainder)}").replaceAll(data, _ => {
   console.log("  Replacement function called with:", _);
   console.log("  _.r is:", _.r);
   console.log("  Spreading _.r:", {..._.r});

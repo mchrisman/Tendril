@@ -140,7 +140,7 @@ test('match When/Else control flow pattern', () => {
   // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern3 = Tendril(`[
     ..
-    @whenelse=(
+    (@whenelse=
       {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, remainder?}
       {tag: /^[Ee]lse$/, children: $else, remainder?}?
     )
@@ -160,8 +160,8 @@ test('match When/Else control flow pattern', () => {
 test('scalar binding with sequence should not match', () => {
   const data = [1, 2, 3];
 
-  // $x is scalar, so $x=(1 2) is invalid - should not match
-  const pattern = Tendril('[$x=(1 2)]');
+  // $x is scalar, so ($x=1 2) is invalid - should not match
+  const pattern = Tendril('[($x=1 2)]');
   const sol = pattern.match(data).solutions().first();
 
   assert.equal(sol, null, 'Scalar binding with sequence should not match');
@@ -178,7 +178,7 @@ test('replace group binding', () => {
   // Use remainder? to allow empty residual (bare remainder requires nonempty)
   const pattern4 = Tendril(`[
     ..
-    @whenelse=(
+    (@whenelse=
       {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, remainder?}
       {tag: /^[Ee]lse$/, children: $else, remainder?}?
     )

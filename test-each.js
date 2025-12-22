@@ -25,7 +25,7 @@ const data = [
 try {
 
   const eachElsePattern = Tendril(`[..
-        {tag: /^each$/i, children: $body, @other=(remainder?)}
+        {tag: /^each$/i, children: $body, (@other=remainder?)}
   ..]`);
   
   console.log("Pattern:", eachElsePattern);

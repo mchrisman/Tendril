@@ -13,8 +13,8 @@ console.log("Original data:");
 console.log(JSON.stringify(data, null, 2));
 console.log();
 
-console.log("Test: Use {..foo:$y @r=(remainder)}");
-const result = Tendril("{..foo:$y @r=(remainder)}").replaceAll(data, _ => ({
+console.log("Test: Use {..foo:$y (@r=remainder)}");
+const result = Tendril("{..foo:$y (@r=remainder)}").replaceAll(data, _ => ({
   '0': {bar: _.y, ..._.r}
 }));
 console.log("Result:");

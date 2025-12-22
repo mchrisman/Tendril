@@ -14,7 +14,7 @@ console.log(JSON.stringify(data, null, 2));
 console.log();
 
 console.log("Test: Return replacement for $0");
-const result = Tendril("{foo:$y @r=(remainder)}").replaceAll(data, _ => ({
+const result = Tendril("{foo:$y (@r=remainder)}").replaceAll(data, _ => ({
   '0': {bar: _.y, ..._.r}
 }));
 console.log("Result:");

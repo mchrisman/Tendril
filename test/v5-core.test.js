@@ -209,9 +209,9 @@ test('object multiple properties', () => {
 
 test('object with remainder binding', () => {
   // Use remainder? to allow empty residual (bare remainder requires nonempty)
-  assert.ok(matches('{a:1 @x=(remainder?)}', {a: 1}));
-  assert.ok(matches('{a:1 @x=(remainder)}', {a: 1, b: 2, c: 3}));
-  assert.ok(!matches('{a:1 @x=(remainder)}', {b: 2}));
+  assert.ok(matches('{a:1 (@x=remainder?)}', {a: 1}));
+  assert.ok(matches('{a:1 (@x=remainder)}', {a: 1, b: 2, c: 3}));
+  assert.ok(!matches('{a:1 (@x=remainder)}', {b: 2}));
 });
 
 test('object wildcard key', () => {
@@ -373,7 +373,7 @@ test('binding - unification failure', () => {
 });
 
 test('binding - with pattern constraint', () => {
-  const result = extractAll('[$x=(1) $y]', [1, 2]);
+  const result = extractAll('[($x=1) $y]', [1, 2]);
   assert.equal(result.length, 1);
   assert.equal(result[0].x, 1);
   assert.equal(result[0].y, 2);
@@ -405,40 +405,40 @@ test('binding - breadcrumb traversal', () => {
 });
 
 test('scalar binding with seq - matches length 1 only', () => {
-  // $x=(1? 2?) matches iff the seq matches exactly 1 element
+  // ($x=1? 2?) matches iff the seq matches exactly 1 element
   // The seq "1? 2?" can match: [] (0 elements), [1] (1), [2] (1), [1,2] (2)
   // But $x only accepts length-1 matches
 
   // Matches [1] - seq matches 1 element, bind x=1
-  let result = Tendril('[$x=(1? 2?)]').match([1]).solutions().toArray();
+  let result = Tendril('[($x=1? 2?)]').match([1]).solutions().toArray();
   assert.equal(result.length, 1);
   assert.equal(result[0].x, 1);
 
   // Matches [2] - seq matches 1 element, bind x=2
-  result = Tendril('[$x=(1? 2?)]').match([2]).solutions().toArray();
+  result = Tendril('[($x=1? 2?)]').match([2]).solutions().toArray();
   assert.equal(result.length, 1);
   assert.equal(result[0].x, 2);
 
   // Does NOT match [] - seq matches 0 elements
-  result = Tendril('[$x=(1? 2?)]').match([]).solutions().toArray();
+  result = Tendril('[($x=1? 2?)]').match([]).solutions().toArray();
   assert.equal(result.length, 0);
 
   // Does NOT match [1, 2] - seq matches 2 elements
-  result = Tendril('[$x=(1? 2?)]').match([1, 2]).solutions().toArray();
+  result = Tendril('[($x=1? 2?)]').match([1, 2]).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
 test('group binding with seq - matches any length', () => {
   // Contrast with @x which accepts any length
-  // @x=(1? 2?) matches [], [1], [2], [1,2]
+  // (@x=1? 2?) matches [], [1], [2], [1,2]
 
-  let result = Tendril('[@x=(1? 2?)]').match([]).solutions().toArray();
+  let result = Tendril('[(@x=1? 2?)]').match([]).solutions().toArray();
   assert.equal(result.length, 1);
 
-  result = Tendril('[@x=(1? 2?)]').match([1]).solutions().toArray();
+  result = Tendril('[(@x=1? 2?)]').match([1]).solutions().toArray();
   assert.equal(result.length, 1);
 
-  result = Tendril('[@x=(1? 2?)]').match([1, 2]).solutions().toArray();
+  result = Tendril('[(@x=1? 2?)]').match([1, 2]).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
@@ -457,7 +457,7 @@ test('alternation - in array', () => {
 });
 
 test('alternation - with binding', () => {
-  const results = extractAll('$x=(1|2)', 1);
+  const results = extractAll('($x=1|2)', 1);
   assert.equal(results.length, 1);
   assert.equal(results[0].x, 1);
 });
@@ -540,8 +540,8 @@ test('greedy quantifiers - optional object emits longest match first', () => {
   ];
 
   // Use remainder? to allow empty residual (bare remainder requires nonempty)
-  const pattern = `[.. @whenelse=(
-    {tag:/^when$/i @otherProps=(remainder)}
+  const pattern = `[.. (@whenelse=
+    {tag:/^when$/i (@otherProps=remainder)}
     {tag:/^else$/i children:$else remainder?}?
   ) ..]`;
 
@@ -568,8 +568,8 @@ test('replace uses first solution only (longest match)', () => {
   ];
 
   // Use remainder? to allow empty residual (bare remainder requires nonempty)
-  const pattern = `[.. @whenelse=(
-    {tag:/^when$/i @otherProps=(remainder)}
+  const pattern = `[.. (@whenelse=
+    {tag:/^when$/i (@otherProps=remainder)}
     {tag:/^else$/i children:$else remainder?}?
   ) ..]`;
 

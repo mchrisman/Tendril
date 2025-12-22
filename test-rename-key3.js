@@ -13,9 +13,9 @@ console.log("Original data:");
 console.log(JSON.stringify(data, null, 2));
 console.log();
 
-console.log("Test 1: {foo:$y @r=(remainder)}");
+console.log("Test 1: {foo:$y (@r=remainder)}");
 try {
-  const pattern = "{foo:$y @r=(remainder)}";
+  const pattern = "{foo:$y (@r=remainder)}";
   console.log("Pattern:", pattern);
   const result = Tendril(pattern).replaceAll(data, _ => ({bar: _.y, ..._.r}));
   console.log("Result:");

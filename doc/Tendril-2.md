@@ -26,7 +26,7 @@ The goal is to greenhouse-grow this into an evolved, production-ready system tha
   planets: {
       $name: {size:$size}
   }
-  aka:[.. [$name .. $alias .. | $alias=($name) ..] .. ] 
+  aka:[.. [$name .. $alias .. | ($alias=$name) ..] .. ] 
 }
 
 // Pattern, proposition style

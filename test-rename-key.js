@@ -16,7 +16,7 @@ console.log();
 // Try the user's pattern (with syntax fixes)
 console.log("Test 1: Fix missing close paren");
 try {
-  const pattern = "{$x=(foo) $x:$y @r=(remainder?)}";
+  const pattern = "{($x=foo) $x:$y (@r=remainder?)}";
   console.log("Pattern:", pattern);
   const result = Tendril(pattern).replaceAll(data, _ => ({bar: _.y, ..._.r}));
   console.log("Result:");
@@ -26,9 +26,9 @@ try {
 }
 console.log();
 
-console.log("Test 2: Simpler - just {foo:$y @r=(remainder?)}");
+console.log("Test 2: Simpler - just {foo:$y (@r=remainder?)}");
 try {
-  const pattern = "{foo:$y @r=(remainder?)}";
+  const pattern = "{foo:$y (@r=remainder?)}";
   console.log("Pattern:", pattern);
   const result = Tendril(pattern).replaceAll(data, _ => ({bar: _.y, ..._.r}));
   console.log("Result:");

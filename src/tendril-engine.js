@@ -487,8 +487,8 @@ function matchArray(items, arr, path, sol, emit, ctx) {
       return matchArrayGroupBind(it, ixItem, ixArr, sIn);
     }
 
-    // Scalar binding with Seq pattern: $x=(seq) matches iff seq matches exactly 1 element
-    // e.g., [$x=(1? 2?)] matches [1] and [2] but not [] or [1,2]
+    // Scalar binding with Seq pattern: ($x=seq) matches iff seq matches exactly 1 element
+    // e.g., [($x=1? 2?)] matches [1] and [2] but not [] or [1,2]
     if (it.type === 'SBind' && it.pat.type === 'Seq') {
       const maxK = arr.length - ixArr;
       // Try each possible slice length, but only accept length-1 matches
@@ -731,7 +731,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
   if (DEBUG) console.log(`[matchObject] obj keys:`, Object.keys(obj), `terms:`, terms.length);
 
   for (const term of terms) {
-    // Handle group bindings: @var=(pattern) or @var=(remainder)
+    // Handle group bindings: (@var=pattern) or (@var=remainder)
     if (term.type === 'GroupBind') {
       const isSpread = term.pat.type === 'Spread';
       const next = [];
@@ -739,7 +739,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       for (const state of solutions) {
         const {sol: s0, testedKeys, coveredKeys = new Set()} = state;
         if (isSpread) {
-          // @var=(remainder) - capture residual keys
+          // (@var=remainder) - capture residual keys
           // Remainder is keys NOT covered by any key pattern K
           const residualKeys = Object.keys(obj).filter(k => !coveredKeys.has(k));
           const residualObj = {};
@@ -766,7 +766,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
             next.push({sol: s2, testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys)});
           }
         } else {
-          // @var=(pattern) - recursively match pattern, collect matched keys
+          // (@var=pattern) - recursively match pattern, collect matched keys
           if (term.pat.type !== 'OGroup') {
             throw new Error(`GroupBind in object context expects OGroup or Spread pattern, got ${term.pat.type}`);
           }
@@ -1053,7 +1053,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     if (!solutions.length) break;
   }
 
-  // Handle spread: bare '%'/'remainder' or '@var=(%)' or '(?!%)' or '$'
+  // Handle spread: bare '%'/'remainder' or '(@var=%)' or '(?!%)' or '$'
   // Remainder is based on coveredKeys (keys matching any key pattern K), not testedKeys
   if (spread && solutions.length > 0) {
     if (spread.type === 'OLook') {
@@ -1078,7 +1078,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       }
       solutions = next;
     } else if (spread.type === 'GroupBind') {
-      // @var=(%) - bind residual keys to group variable
+      // (@var=%) - bind residual keys to group variable
       const next = [];
       for (const state of solutions) {
         const {sol: s0, testedKeys, coveredKeys = new Set()} = state;
@@ -1087,11 +1087,11 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
         // Check quantifier constraints from the spread pattern
         let {min, max} = parseQuantRange(spread.pat?.quant);
         if (!spread.pat?.quant) {
-          // @var=(%) requires at least one key by default
+          // (@var=%) requires at least one key by default
           min = 1;
           max = Infinity;
         } else if (spread.pat.quant === '?') {
-          // @var=(%?) allows empty remainder and unlimited keys
+          // (@var=%?) allows empty remainder and unlimited keys
           min = 0;
           max = Infinity;
         }
@@ -1168,7 +1168,7 @@ function matchObjectGroup(group, obj, path, sol, emit, ctx, testedKeys = new Set
     // Group of groups (K1:V1 K2:V2 ...)
     matchObject(group.groups, null, obj, path, sol, emit, ctx, testedKeys);
   } else if (group.type === 'GroupBind') {
-    // @var=(pattern)
+    // (@var=pattern)
     matchObject([group], null, obj, path, sol, emit, ctx, testedKeys);
   } else if (group.type === 'OLook') {
     // Nested lookahead
