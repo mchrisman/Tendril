@@ -626,11 +626,11 @@ Array-group lookaheads:
 
 ```js
 Tendril(`{
-  users:$userId.contact:[$userName _ _ $userPhone]
-  users:$userId.managerId:$managerId
-  users:$managerId.phone:$managerPhone
-  projects:$projectId.assigneeId:$userId
-  projects:$projectId.name:$projectName
+  users.$userId.contact:[$userName _ _ $userPhone]
+  users.$userId.managerId:$managerId
+  users.$managerId.phone:$managerPhone
+  projects.$projectId.assigneeId:$userId
+  projects.$projectId.name:$projectName
 }`)
 .solutions(input)
 .forEach($ => console.log($.projectName, $.userName, $.userPhone, $.managerPhone));
@@ -655,3 +655,48 @@ Tendril("{ ..password:$value }")
 ------------------
 
 ```
+
+Suggested Structure
+Quick Start (5 minutes to first success)
+javascript// Extract a field
+{name: $n}
+
+// Match array element  
+[1, 2, $x]
+
+// Find at any depth
+Tendril("{password: $p}").find(data)
+Core Patterns (80% of use cases)
+
+Primitives and wildcards
+Array matching with ..
+Object field extraction
+Variables and unification
+find() vs match()
+
+Transformations (editAll, replaceAll)
+
+Basic examples
+Scalar vs group replacement semantics
+Common patterns (redaction, restructuring)
+
+Advanced Matching
+
+Quantifiers
+Lookaheads
+Universal object constraints (:>)
+Remainder and closed objects
+
+Reference
+
+Complete grammar
+Operator precedence
+Detailed semantics (slice/bad model lives here)
+API reference
+
+Real-World Cookbook
+
+OpenAPI munging
+Kubernetes queries
+VDOM transformations
+Config validation

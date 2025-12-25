@@ -1,3 +1,8 @@
+Now I'll give you more context. Does the "object semantics cleanup proposal" at the end of this spec clarify everything? Is it a good design, in the context of this DSL?
+
+
+---
+
 # Tendril: Pattern Matching for Tree Structures
 
 ## Status
@@ -97,7 +102,8 @@ Tendril(`{
 }`)
 .find(vdom)
 .editAll({
-  L: undefined,                    // delete the <label>  p: $ => ({placeholder: $.text})  // move its text into the <input>
+  L: undefined,                    // delete the <label>  
+  p: $ => ({placeholder: $.text})  // move its text into the <input>
 });
 ```
 
@@ -1074,7 +1080,7 @@ const resp = {
 * Find all text fragments of type `output_text` anywhere:
 
 ```js
-const pat = `{ ..type:output_text ..text:$t }`;
+const pat = `{ ..:{type:output_text text:$t} }`;
 ```
 
 **Expected:**
@@ -1195,7 +1201,7 @@ const pat = `{ /^x_/: ($n=/^\d+$/) }`;  // if x_* are strings of digits
 And add a closed object case:
 
 ```js
-const closed = `{ id:_ /^x_/:/^\d+$/ (!remainder) }`;
+const closed = `{ id:_ /^x_/:/^\d+$/ (!%) }`;
 ```
 
 **Expected:**
@@ -1372,58 +1378,171 @@ Save the label/input example for a "Real-World Examples" section or one of the s
 
 = Current work
 
-I am thinking of making some significant changes to the syntax to address some unpleasantness before publishing a beta. 
-
-1. The syntax for binding variable with its mandatory parentheses is not intuitive: `($var=...)` - Especially in the context of surrounding syntax. 
-
-Replace `($var=PATTERN)` with `<$var=PATTERN>`
-Replace `(@var=PATTERN)` with `<@var=PATTERN>`
-Keep shortcuts `$x` === `<$x=_>`, `@x` === `<@x=_*?>`
-
-Alternative:  <$var PATTERN>
-Pro, visually distinctive.
-Con, tag-like
-
-2. I find that when using regexes, there's a lot of ^..$ noise all over, because anchored regexes are more useful, especially since our idiom for case insensitivity is /token/i.
-
-Always interpret regexes as anchored. 
-
-Cons: May surprise JavaScript developers.
-
-3. The lookahead syntax `(?=PATTERN)` is ugly and is a carryover from regex, but is not really suitable for this language. 
-
-Replace with the construct `A & B`. 
-
-In array contexts, both A and B are expected to match and to consume the same subsequence.    
-
-'&' has precedence just higher than '|'.
-
-Not available in object contexts, where it would be semantically confusing, And also redundant because `(@x=slice1) (@x=slice2)` would serve the same purpose.
-
-4. We want to write unanchored array patterns all the time, and `[.. seq ..]` is noisy.
-
-Let `< seq >` be shorthand for `[.. seq ..]`.
-
-Obviously, this conflicts with suggestion (1).
-
-Alternately, let `@[ seq ]` be shorthand for `[.. seq ..]`. 
-
-Pros: In addition to being less verbose, it would let you specify slices as top-level search roots. This would simplify some of our important canonical examples.
-
-5. Introduce 'A || B' as non-backtracking alternation. (like a 'local cut': if A matches, you can't try B.  But you can backtrack within A, or within B, Or you can backtrack past the entire expression, in which case it resets. 
+I am thinking of making some changes to the syntax to address some unpleasantness before publishing a beta. 
 
 
+1. We want to write unanchored array patterns all the time, and `[.. seq ..]` is noisy.
 
+Current thinking, leave it alone, but allow slice expressions for searches.
 
+2. Introduce 'A else B' as committing alternation. Make sure the semantics are consistent with the use case: "I want to parse scheme A, but if scheme A is not found, I want to fall back to parsing scheme B (legacy); But never treat it as B if it could be A. "
 
+3. '..' is nonintuitive.
 
+Suggestion: change to '...'. Ellipsis is extremely clear, and it's worth the cost of the extra character.  Support unicode ellipsis.
 
+arrays: [... foo ...] or [… foo …]
 
+Paths: use ** instead:  { foo.**.bar }
 
+4. Add a very minimal EL to support
+    - is a number
+    - is a string
+    - coerce to numbr/string/boolean
+    - Future direction:
+        - Numerical comparison, support e.g. ` [ $x where ($x<3) ] `
+        - simple invertible arithmetic, support e.g. `{ foo[1+$x]:bar }`
 
+== Objects semantics cleanup proposal
 
+**This proposal would replace the existing spec about how object matching works, Which was confusing and somewhat incoherent. .** 
 
+Does this definition make sense and clarify everything?
 
+Object patterns are conjunctions of K:V assertions, where K and V are patterns. For example:
 
+    `{ status:good userId:$id } // match all good users, enumerating userIds`
 
+Syntax:
 
+    `K:V` matches all k,v in the object such that (k~K and v~V), and asserts there is at least one such.
+
+    `K::V` matches all k,v in the object such that (k~K), and asserts that there is at least one such, and that k~K implies v~V.
+
+    `K:V ?` or `K::V ?` is the same, without the 'at least one such' assertion
+
+More formally
+
+    Objects are matched by predicates over key/value pairs. Let O be an object. A predicate has a key pattern K and value pattern V.
+    
+    **Domain.** Dom(O,K,E) = { (k,v) ∈ entries(O) | k matches K is satisfiable in environment E }. Computation of the domain involves testing each k individually, discarding any bindings created (bindings do not persist/unify between keys).
+
+    **Else.**  `A else B` matches an item X in environment E if (x~A is satisfiable in some extension of E (such extensions are then enumerated)) OR (x~A is not satisfiable in any extension of E AND x~B is satisfiable in some extension of E (such extensions are then enumerated))
+
+    **Plain predicate `K::V`** matches O in environment E iff Dom(O,K,E) is nonempty and for every (k,v) in Dom(O,K,E), the match (k~K ∧ v~V) is satisfiable in some extension of E.
+    Solutions are enumerated by enumerating each witness (k,v) ∈ Dom(O,K,E) and returning the bindings produced by matching (k~K ∧ v~V) on that witness, then continuing left-to-right with unification against E.
+    
+    **Plain lenient predicate `K:V`** matches O in environment E iff Dom(O,K,E) is nonempty and there exists (k,v) in Dom(O,K,E) such that (k~K ∧ v~V) is satisfiable in some extension of E.
+    Solutions are enumerated by enumerating each (k,v) ∈ Dom(O,K,E) and returning the bindings produced by matching (k~K ∧ v~V) on that witness, then continuing left-to-right with unification against E.
+
+    **predicates `K::V?' and 'K:V?'** are similar except that they do not assert that at least one such key exists; the slice they define may be empty.
+
+Example:
+
+```
+    "{ /a/:1 }" ~= {ab:1, ac:1} // => true
+    "{ /a/:1 }" ~= {ab:1, ac:1, ad:0} // => true
+    "{ /a/:1 }" ~= {ab:1, ac:1, d:0} // => true
+    "{ /a/::1 }" ~= {ab:1, ac:1} // => true
+    "{ /a/::1 }" ~= {ab:1, ac:1, ad:0} // => false
+    "{ /a/::1 }" ~= {ab:1, ac:1, d:0} // => true
+```
+
+Unbound variables in K:V create branches, as usual. Slice variables in objects denote sets of K:V pairs, as before.
+
+```
+    "{ @X=(/a/:_ /b/:_) ($y=/c/):_ } ~= {a1:1,a2:2,b:3,c1:4,c2:5,d:6} 
+     // ==> True, solutions:
+     // {X:{a1:1,a2:2,b:3},y:'c1'}, {X:{a1:1,a2:2,b:3},y:'c2'}, 
+```     
+
+Unification happens normally:
+
+```
+  "{ _: [$x $x]}" ~= {a: [3,3], b:[3,3] }   // ==> true, 
+       // one solution {x:3} deduped from multiple locations 
+  "{ a: [$x $x]}" ~= {a: [3,4]}   // ==> false
+  "{ $x: [$x $x]}" ~= {a: ['a','a']}   // ==> true, one solution {x:'a'}
+```
+
+Variables unify across terms:
+
+```
+    { name:$name creditCard:{name:$name} } 
+    // => Matches if the person's name is equal to the name on their credit card. 
+```
+
+Variables unify between K and V:
+
+```
+    // Reminder: bare $id is shorthand for ($id=_)
+    { $id:{id:$id} }  // The items are correctly indexed by ID
+    
+    matches { "3", {name='Mark', id:3},
+              "4", {name='Sue', id:4}}
+    doesn't match  { "3", {name='Mark', id:3},
+                     "4", {name='Sue', id:3}}      
+```
+
+Variables do not unify across keys (we always iterate over properties):
+
+```
+    { ($k=/color/):$c }  // Does not demand that all the IDs are the same.
+    // => matches {backgroundColor:"green", color:"white"}
+    // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}] 
+```
+
+More examples:
+
+```
+    `{ _:$x }`  // Todo: lint this as a probable bug
+                // With $x unbound: cannot fail 
+                // and will cause every value to become a solution.
+                // With $x previously bound: all props have the same value
+    `{ $x:$x }` // All keys must have values equal to the keys
+```
+
+And the idiom for categorization/fallback is
+
+    `K:A else B` - rules of precedence make this `K:(A else B)`
+
+And while the idiom for binding a slice generally and logically encompasses *sets of k,v pairs*,
+
+    `{ (@s= K1:V1 K2:V2) }`, if it matches, defines the slice of all properties k,v matching (k~K1 AND v~V1 OR k~K2 AND v~V2)
+
+This idiosyncratic idiom is for binding slices defined by the 'else' branches:
+
+    `{ K: @S1=V1 else @S2=V2 }`
+
+for example,
+
+```
+    { _: @goodStatus=OK|perfect @others=_ }
+    // matches { proc1:"OK", proc2:"perfect", proc3:"bad"}
+    // with solution = 
+    // {
+    //    goodStatus: { proc1:"OK", proc2:"perfect"}
+    //    others:     { proc3:"bad"}
+    // }
+
+```
+
+**Remainder**
+
+The "remainder", symbolized '%', is the slice containing all *keys* that don't fall into any of the "domains". The *values* are immaterial. Example:
+
+```
+   "{ /a/:1 /b/:1 % }" ~= { a1:1 a2:2 b:3 c:4 } => true; remainder is {c:4}
+```
+
+Syntax:
+
+```
+   "{ KV_TERMS % }" - Asserts the remainder is not empty.  
+   "{ KV_TERMS (!%) }" - Asserts the remainder is empty, i.e. "anchored" pattern.  
+   "{ KV_TERMS (@S=%) }" - Binds the remainder to @S and asserts not empty
+   "{ KV_TERMS (@S=%?) }" - Binds the remainder to @S, may be empty
+   
+```
+
+END object semantics cleanup proposal
