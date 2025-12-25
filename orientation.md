@@ -13,7 +13,7 @@ It is *not*
 - A backlog or to-do list (we don't have one yet)
 - A historical document (describe the *current* project only; delete obsolete info)
 
-Update this file after every change.
+Update this file after every change, to reflect the *current* project (as noted, this is not a historical document).
 
 ## Start here
 
@@ -74,7 +74,8 @@ src/
   tendril-engine.js   # Core matching engine (the heart of the system)
   tendril-parser.js   # Pattern parser (AST construction)
   microparser.js      # Low-level tokenizer
-
+  ...                 # other impl files
+  
 test/
   engine.test.js           # Main engine tests
   object-semantics-v2.test.js  # Slice-based object matching
@@ -85,14 +86,3 @@ test/
 ```
 
 We have many `.md` documentation files that may be obsolete, tentative, or scratchpad-type notes. Ignore all of them except README.md.
-
-## Recent Major Changes
-
-**Slice-based object semantics (v4 branch)**: Object matching now uses a slice-based model:
-- `K:V` = slice must exist, bad entries allowed
-- `K:>V` = slice must exist, no bad entries (implication)
-- `K:V?` = optional (no existence requirement)
-- `K:>V?` = implication only
-- `%` = remainder shortcut
-- `$` = closed object shortcut (`%#{0}`)
-- Remainder is now coverage-based (keys matching ANY K are covered, regardless of value match)

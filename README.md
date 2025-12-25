@@ -1,7 +1,3 @@
-Now I'll give you more context. Does the "object semantics cleanup proposal" at the end of this spec clarify everything? Is it a good design, in the context of this DSL?
-
-
----
 
 # Tendril: Pattern Matching for Tree Structures
 
