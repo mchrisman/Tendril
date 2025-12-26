@@ -46,6 +46,7 @@ const Obj = (terms, spread = null) => ({type: 'Obj', terms, spread});
 
 // Operators
 const Alt = (alts) => ({type: 'Alt', alts});
+const Else = (left, right) => ({type: 'Else', left, right});
 const Look = (neg, pat) => ({type: 'Look', neg, pat});
 const Quant = (sub, op, min = null, max = null) => ({
   type: 'Quant',
@@ -85,15 +86,22 @@ function parseRootPattern(p) {
 
 function parseItem(p) {
   // Handle alternation at this level (lowest precedence)
-  // ITEM := Term ('|' Term)*
+  // ITEM := Term (('|' | 'else') Term)*
   let left = parseItemTerm(p);
 
-  if (p.peek('|')) {
-    const alts = [left];
-    while (p.maybe('|')) {
-      alts.push(parseItemTerm(p));
+  const op = peekAltOp(p);
+  if (op) {
+    const parts = [left];
+    while (peekAltOp(p)) {
+      const nextOp = peekAltOp(p);
+      if (nextOp !== op) {
+        p.fail('cannot mix "|" and "else" without parentheses');
+      }
+      eatAltOp(p, op);
+      parts.push(parseItemTerm(p));
     }
-    return Alt(alts);
+    if (op === '|') return Alt(parts);
+    return chainElse(parts);
   }
 
   return left;
@@ -117,7 +125,7 @@ function parseItemTerm(p) {
   if (p.peek('(')) {
     p.eat('(');
     // Check for binding syntax: ($x=...) or (@x=...)
-    if (p.peek('$')) {
+    if (isBindingStart(p, '$')) {
       p.eat('$');
       const name = p.eat('id').v;
       p.eat('=');
@@ -125,7 +133,7 @@ function parseItemTerm(p) {
       p.eat(')');
       return SBind(name, pat);
     }
-    if (p.peek('@')) {
+    if (isBindingStart(p, '@')) {
       p.eat('@');
       const name = p.eat('id').v;
       p.eat('=');
@@ -285,17 +293,24 @@ function parseAGroup(p) {
   }
 
   // Handle alternation
-  if (p.peek('|')) {
-    const alts = [base];
-    while (p.maybe('|')) {
+  const op = peekAltOp(p);
+  if (op) {
+    const parts = [base];
+    while (peekAltOp(p)) {
+      const nextOp = peekAltOp(p);
+      if (nextOp !== op) {
+        p.fail('cannot mix "|" and "else" without parentheses');
+      }
+      eatAltOp(p, op);
       let alt = parseAGroupBase(p);
       const q = p.backtrack(() => parseAQuant(p));
       if (q) {
         alt = Quant(alt, q.op, q.min, q.max);
       }
-      alts.push(alt);
+      parts.push(alt);
     }
-    return Alt(alts);
+    if (op === '|') return Alt(parts);
+    return chainElse(parts);
   }
 
   return base;
@@ -313,7 +328,7 @@ function parseAGroupBase(p) {
   if (p.peek('(')) {
     p.eat('(');
     // Check for binding syntax: ($x=...) or (@x=...)
-    if (p.peek('$')) {
+    if (isBindingStart(p, '$')) {
       p.eat('$');
       const name = p.eat('id').v;
       p.eat('=');
@@ -322,7 +337,7 @@ function parseAGroupBase(p) {
       const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
       return SBind(name, pat);
     }
-    if (p.peek('@')) {
+    if (isBindingStart(p, '@')) {
       p.eat('@');
       const name = p.eat('id').v;
       p.eat('=');
@@ -571,7 +586,7 @@ function parseOGroup(p) {
   const groupResult = p.backtrack(() => {
     p.eat('(');
     // Check for group binding: (@x=...)
-    if (p.peek('@')) {
+    if (isBindingStart(p, '@')) {
       p.eat('@');
       const name = p.eat('id').v;
       p.eat('=');
@@ -715,6 +730,12 @@ function parseOQuant(p) {
 
 // ---------- Parser Utilities ----------
 
+function isBindingStart(p, sigil) {
+  if (!p.peek(sigil)) return false;
+  if (!p.peekAt(1, 'id')) return false;
+  return p.peekAt(2, '=');
+}
+
 // Eat a non-negative integer (for quantifier counts)
 function eatNonNegInt(p, context = 'quantifier') {
   const tok = p.eat('num', `expected non-negative integer in ${context}`);
@@ -732,6 +753,30 @@ Parser.prototype.peekAt = function(offset, kind) {
   return this.toks[idx].k === kind;
 };
 
+// Alternation helpers
+function peekAltOp(p) {
+  if (p.peek('|')) return '|';
+  if (p.peek('id') && p.peek().v === 'else') return 'else';
+  return null;
+}
+
+function eatAltOp(p, op) {
+  if (op === '|') {
+    p.eat('|');
+  } else {
+    const tok = p.eat('id');
+    if (tok.v !== 'else') p.fail('expected else');
+  }
+}
+
+function chainElse(parts) {
+  let node = parts[0];
+  for (let i = 1; i < parts.length; i++) {
+    node = Else(node, parts[i]);
+  }
+  return node;
+}
+
 // ---------- Exports ----------
 
 export const AST = {
@@ -742,7 +787,7 @@ export const AST = {
   // Containers
   Arr, Obj,
   // Operators
-  Alt, Look, Quant,
+  Alt, Else, Look, Quant,
   // Object
   OTerm, Spread, Breadcrumb,
 };

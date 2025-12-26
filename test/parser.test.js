@@ -68,4 +68,9 @@ test('remainder quantifier - negative should throw', () => {
   assert.throws(() => parsePattern('{ a:b %#{-2} }'));
 });
 
+test('cannot mix | and else without parentheses', () => {
+  assert.throws(() => parsePattern('a|b else c'));
+  assert.throws(() => parsePattern('a else b|c'));
+});
+
 console.log('\n✓ All parser tests defined\n');

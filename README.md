@@ -533,6 +533,37 @@ In objects:
 { (! secret:_) .. }         // assert no key named 'secret' exists
 ```
 
+## Committing alternation (`else`)
+
+`A else B` is a **discriminator over solutions**. It keeps all solutions from `A`, plus only those solutions from `B` whose **interface projection** does not appear in `A`.
+
+Formally:
+
+```
+Sol(A else B) =
+  Sol(A)
+  ∪ { s ∈ Sol(B) | ¬∃ s' ∈ Sol(A) such that π_I(s) = π_I(s') }
+```
+
+Where `I` is the **interface variables** of the construct: variables that are visible outside of `(A else B)` (i.e. variables that also appear elsewhere in the pattern).
+
+This makes `else` commutative with surrounding predicates while still being non-commutative itself: `(A else B) ≠ (B else A)`.
+
+```javascript
+// Safe schema fallback (order-independent)
+{ p:$x  q:($x else 2) }  // matches {p:1,q:2} with x=1
+{ q:($x else 2)  p:$x }  // same result
+```
+
+**Syntax rule:** `else` has the same precedence as `|`, and you cannot mix them without parentheses:
+
+```
+A | B else C     // error
+A else B | C     // error
+A | (B else C)   // ok
+(A | B) else C   // ok
+```
+
 ## Precedence
 
 **High to low:**
@@ -541,7 +572,7 @@ In objects:
 2. Optional `?`, quantifiers `+`, `*`, etc.
 3. Breadcrumb operators `.`, `..`, `[]`
 4. Adjacency/commas (in arrays and objects)
-5. Alternation `|`
+5. Alternation `|` and `else` (same precedence; do not mix without parentheses)
 6. Key-value separator `:`, `:>`
 
 Parentheses override precedence. Lookaheads always require parentheses.

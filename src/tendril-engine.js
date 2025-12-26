@@ -5,6 +5,7 @@ import {
   bindScalar, bindGroup, cloneEnv, isBound,
 } from './microparser.js';
 import {Group} from './tendril-api.js';
+import {deepEqual} from './tendril-util.js';
 
 // ------------- StopSearch sentinel for early termination -------------
 // Used by short-circuit helpers (matchExists, scanFirst, etc.) to stop
@@ -74,6 +75,8 @@ function patternHasBindings(ast) {
     // Recurse into known child properties
     if (ast.pat && patternHasBindings(ast.pat)) result = true;
     else if (ast.val && patternHasBindings(ast.val)) result = true;
+    else if (ast.left && patternHasBindings(ast.left)) result = true;
+    else if (ast.right && patternHasBindings(ast.right)) result = true;
     else if (ast.items) {
       for (const item of ast.items) {
         if (patternHasBindings(item)) { result = true; break; }
@@ -107,7 +110,8 @@ function patternHasBindings(ast) {
 export function match(ast, input, opts = {}) {
   const maxSteps = opts.maxSteps ?? 2000000;
   const debug = opts.debug;
-  const ctx = {steps: 0, maxSteps, debug};
+  const varCounts = countVars(ast);
+  const ctx = {steps: 0, maxSteps, debug, varCounts};
   const solutions = [];
 
   matchItem(ast, input, [], newSolution(), (sol) => solutions.push(sol), ctx);
@@ -125,7 +129,8 @@ export function match(ast, input, opts = {}) {
 export function scan(ast, input, opts = {}) {
   const maxSteps = opts.maxSteps ?? 2000000;
   const debug = opts.debug;
-  const ctx = {steps: 0, maxSteps, debug};
+  const varCounts = countVars(ast);
+  const ctx = {steps: 0, maxSteps, debug, varCounts};
   const solutions = [];
 
   // Helper: recursively scan value at path
@@ -168,7 +173,8 @@ export function scan(ast, input, opts = {}) {
 export function matchExists(ast, input, opts = {}) {
   const maxSteps = opts.maxSteps ?? 2000000;
   const debug = opts.debug;
-  const ctx = {steps: 0, maxSteps, debug};
+  const varCounts = countVars(ast);
+  const ctx = {steps: 0, maxSteps, debug, varCounts};
   try {
     matchItem(ast, input, [], newSolution(), () => {
       throw new StopSearch(true);
@@ -187,7 +193,8 @@ export function matchExists(ast, input, opts = {}) {
 export function matchFirst(ast, input, opts = {}) {
   const maxSteps = opts.maxSteps ?? 2000000;
   const debug = opts.debug;
-  const ctx = {steps: 0, maxSteps, debug};
+  const varCounts = countVars(ast);
+  const ctx = {steps: 0, maxSteps, debug, varCounts};
   try {
     matchItem(ast, input, [], newSolution(), (sol) => {
       throw new StopSearch(sol);
@@ -213,7 +220,8 @@ export function matchFirst(ast, input, opts = {}) {
 export function scanExists(ast, input, opts = {}) {
   const maxSteps = opts.maxSteps ?? 2000000;
   const debug = opts.debug;
-  const ctx = {steps: 0, maxSteps, debug};
+  const varCounts = countVars(ast);
+  const ctx = {steps: 0, maxSteps, debug, varCounts};
 
   function scanValue(value, path) {
     guard(ctx);
@@ -251,7 +259,8 @@ export function scanExists(ast, input, opts = {}) {
 export function scanFirst(ast, input, opts = {}) {
   const maxSteps = opts.maxSteps ?? 2000000;
   const debug = opts.debug;
-  const ctx = {steps: 0, maxSteps, debug};
+  const varCounts = countVars(ast);
+  const ctx = {steps: 0, maxSteps, debug, varCounts};
 
   function scanValue(value, path) {
     guard(ctx);
@@ -356,6 +365,25 @@ function matchItem(item, node, path, sol, emit, ctx) {
         for (const sub of item.alts) {
           matchItem(sub, node, path, sol, emit, ctx);
           guard(ctx);
+        }
+        return;
+      }
+
+      case 'Else': {
+        const interfaceVars = getInterfaceVars(item, ctx.varCounts);
+        const aSolutions = [];
+        const bSolutions = [];
+
+        matchItem(item.left, node, path, sol, (s2) => aSolutions.push(s2), ctx);
+        matchItem(item.right, node, path, sol, (s2) => bSolutions.push(s2), ctx);
+
+        const aProjections = aSolutions.map((s2) => projectSolution(s2, interfaceVars));
+        for (const s2 of aSolutions) emit(s2);
+
+        for (const s2 of bSolutions) {
+          const bProj = projectSolution(s2, interfaceVars);
+          const shadowed = aProjections.some((aProj) => projectionEqual(aProj, bProj));
+          if (!shadowed) emit(s2);
         }
         return;
       }
@@ -1485,4 +1513,93 @@ function parseQuantRange(quant) {
 function guard(ctx) {
   ctx.steps++;
   if (ctx.steps > ctx.maxSteps) throw new Error('pattern too ambiguous (step budget exceeded)');
+}
+
+function countVars(ast) {
+  if (!ast || typeof ast !== 'object') return new Map();
+  if (ast._varCounts) return ast._varCounts;
+
+  const counts = new Map();
+  const add = (name, n = 1) => {
+    counts.set(name, (counts.get(name) || 0) + n);
+  };
+  const merge = (other) => {
+    for (const [k, v] of other) add(k, v);
+  };
+
+  switch (ast.type) {
+    case 'SBind':
+      add(ast.name);
+      if (ast.pat) merge(countVars(ast.pat));
+      break;
+    case 'GroupBind':
+      add(ast.name);
+      if (ast.pat) merge(countVars(ast.pat));
+      break;
+    case 'Alt':
+      for (const alt of ast.alts) merge(countVars(alt));
+      break;
+    case 'Else':
+      merge(countVars(ast.left));
+      merge(countVars(ast.right));
+      break;
+    case 'Quant':
+      merge(countVars(ast.sub));
+      break;
+    case 'Look':
+      if (!ast.neg) merge(countVars(ast.pat));
+      break;
+    case 'OLook':
+      if (!ast.neg) merge(countVars(ast.pat));
+      break;
+    case 'Arr':
+      for (const item of ast.items) merge(countVars(item));
+      break;
+    case 'Obj':
+      for (const term of ast.terms) merge(countVars(term));
+      if (ast.spread) merge(countVars(ast.spread));
+      break;
+    case 'OTerm':
+      merge(countVars(ast.key));
+      merge(countVars(ast.val));
+      if (ast.breadcrumbs) {
+        for (const bc of ast.breadcrumbs) merge(countVars(bc));
+      }
+      break;
+    case 'OGroup':
+      for (const group of ast.groups) merge(countVars(group));
+      break;
+    case 'Breadcrumb':
+      merge(countVars(ast.key));
+      break;
+    case 'Seq':
+      for (const item of ast.items) merge(countVars(item));
+      break;
+    default:
+      break;
+  }
+
+  ast._varCounts = counts;
+  return counts;
+}
+
+function getInterfaceVars(node, totalCounts) {
+  const local = countVars(node);
+  const out = [];
+  for (const [name, count] of local) {
+    if ((totalCounts.get(name) || 0) > count) out.push(name);
+  }
+  return out;
+}
+
+function projectSolution(sol, vars) {
+  return vars.map((name) => sol.env.get(name)?.value);
+}
+
+function projectionEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (!deepEqual(a[i], b[i])) return false;
+  }
+  return true;
 }
