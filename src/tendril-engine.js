@@ -356,23 +356,12 @@ function matchItem(item, node, path, sol, emit, ctx) {
         if (item.prioritized) {
           // Prioritized alternation (else semantics): try each alternative in order,
           // use only the first one that produces any solutions.
-          // Uses short-circuit existence probe on cloned solution for safety.
+          // Single-pass: track if any solutions emitted, stop on first producing alt.
           for (const sub of item.alts) {
-            let exists = false;
-            try {
-              matchItem(sub, node, path, cloneSolution(sol), () => {
-                throw new StopSearch(true);
-              }, ctx);
-            } catch (e) {
-              if (e instanceof StopSearch) exists = true;
-              else throw e;
-            }
-
-            if (exists) {
-              // This alternative has solutions - stream all of them
-              matchItem(sub, node, path, sol, emit, ctx);
-              return;
-            }
+            let any = false;
+            matchItem(sub, node, path, sol, (s) => { any = true; emit(s); }, ctx);
+            if (any) return;
+            guard(ctx);
           }
           // No alternatives matched
         } else {
