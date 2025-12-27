@@ -1419,37 +1419,64 @@ Object patterns are conjunctions of K:V assertions, where K and V are patterns. 
     `{ status:good userId:$id } 
      // match all good users, enumerating userIds`
 
-Syntax: `K:V`
+### `K:V` - existential match
 
-Meaning: 
-1. The term represents the **slice** (subset of object properties k:v) for which k~K, and
-2. Asserts that the slice is nonempty.
-3. Asserts that there is at least one k:v for which k~K AND v~V.
+Meaning:  It asserts that there is at least one k:v in the object such that (k~K AND v~V).
 
-The form `K:V?` removes the second constraint.
-The form `K:V!` Strengthens the third constraint: for all k:v, k~K implies v~V.
-The combination `K:V?!" does both.
+Bound to an object slice, as in `(@foo= K:V)`, the slice comprises all k:v where k~K (including pairs where v does not match V). For example, (@s=/a/:1) matching {a1:1, a2:2} binds s to {a1:1, a2:2}.
 
-| Short form | Meaning                                       |
-|------------|-----------------------------------------------|
-| `K:V`      | At least one matching k,v                     |
-| `K:V!`     | At least one matching k, and for all k~K, v~V |
-| `K:V?`     | Zero or more matching k, and at least one v~V |
-| `K:V!?`    | Zero or more matching k, and for all k~K, v~V |
+It is a domain-wide generator: it iterates all properties k:v, attempting to match (k~K AND v~V), ignoring failures, and may bind fresh variables per property. Variables unbound at entry may be bound independently for each k:v. Variables already bound before the term are effectively constants, and must unify across all keys.
 
+### `K:V !!` - no counterexamples
+
+Meaning:
+
+1. It asserts that there is at least one k:v in the object such that (k~K AND v~V).
+2. It asserts that for all k:v in the object, (k~K implies v~V).
+
+Each value is matched independently against V. This does not require that all values are identical, only that each individually satisfies V.
+
+Bound to an object slice, as in `(@foo= K:V)`, the slice comprises all k:v in the object such that k~K (which then implies v~V)
+
+It is a domain-wide generator: it iterates all properties k:v, attempting to match (k~K AND v~V), and may bind fresh variables per property. Variables unbound at entry may be bound independently for each k:v. Variables already bound before the term are effectively constants, and must unify across all keys.
+
+### `K:V?` - optional
+
+This form makes no assertions. It binds like `K:V`. If no (k,v) satisfy the match, the term produces exactly one solution with no new bindings.
+
+### `K:V!!?` - optional, no counterexample
+
+The optional form of `K:V!!`. It asserts that for all k:v in the object, (k~K implies v~V), but does not assert the existence of such k:v. It binds like `K:V!!`. If any k:v fails the assertion, the term fails.
+
+The combination `!!?` is canonical but `?!!` is equivalent.
+
+
+
+| Short form | Meaning                                                               |
+|------------|-----------------------------------------------------------------------|
+| `K:V`      | At least one matching k, and of those, at least one matching v        |
+| `K:V!!`    | At least one matching k, and for all k~K, v~V (fresh bindings per key) |
+| `K:V?`     | Zero or more matching k (no assertion, used only for binding)         |
+| `K:V!!?`   | Zero or more matching k, and for all k~K, v~V (fresh bindings per key) |
 
 Example:
-
 ```
     "{ /a/:1 }" ~= {ab:1, ac:1} // => true
     "{ /a/:1 }" ~= {ab:1, ac:1, ad:0} // => true
     "{ /a/:1 }" ~= {ab:1, ac:1, d:0} // => true
-    "{ /a/:1 ! }" ~= {ab:1, ac:1} // => true
-    "{ /a/:1 ! }" ~= {ab:1, ac:1, ad:0} // => false
-    "{ /a/:1 ! }" ~= {ab:1, ac:1, d:0} // => true
+    "{ /a/:1 !! }" ~= {ab:1, ac:1} // => true
+    "{ /a/:1 !! }" ~= {ab:1, ac:1, ad:0} // => false
+    "{ /a/:1 !! }" ~= {ab:1, ac:1, d:0} // => true
+```
+Or as another illustration of the above definition,
+```
+    K:V   ≡ K:V#{1,}
+    K:V?  ≡ K:V#{0,}
+    K:V!!  ≡ (! (K:(!V)) ) K:V#{1,} 
+    K:V!!? ≡ (! (K:(!V)) ) K:V#{0,} 
 ```
 
-Unbound variables in K:V create branches, as usual. Slice variables in objects denote sets of K:V pairs, as before.
+Unbound variables in K:V create separate solutions per key, as before. Slice variables in objects denote sets of K:V pairs, as before.
 
 ```
     "{ (@X=/a/:_ /b/:_) ($y=/c/):_ } ~= {a1:1,a2:2,b:3,c1:4,c2:5,d:6} 
@@ -1485,15 +1512,23 @@ Variables unify between K and V:
                      "4", {name='Sue', id:3}}      
 ```
 
-Variables do not unify across keys (we always iterate over properties):
+### "Same-values" idiom
 
+❌ "K:V!!" does not mean all values are the same; it merely means all values (individually) match V.
 ```
-    { ($k=/color/):$c }  // Does not demand that all the IDs are the same.
-    // => matches {backgroundColor:"green", color:"white"}
+    // Does not demand that all the colors are the same.
+    "{ ($k=/color/):$c !! }" matches {backgroundColor:"green", color:"white"}
     // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}] 
 ```
 
-More examples:
+✅ Use this idiom to enforce universal equality over values:
+```
+    "{ ($k=/color/):$c  ($k=/color/):$c!! }"
+```
+It works because variables unify across terms.
+
+
+### More examples:
 
 ```
     `{ _:$x }`  // Todo: lint this as a probable bug
@@ -1503,11 +1538,35 @@ More examples:
     `{ $x:$x }` // All keys must have values equal to the keys
 ```
 
-And the idiom for categorization/fallback is
 
-    `K:A else B` - rules of precedence make this `K:(A else B)`
+**Remainder**
 
-Note that 'else' carries its usual meaning, the result being a natural partitioning of the properties into two buckets.
+The "remainder", symbolized '%', is the slice containing all *keys* that don't fall into any of the "domains". The *values* are immaterial. Example:
+
+```
+   "{ /a/:1 /b/:1 % }" ~= { a1:1 a2:2 b:3 c:4 } => true; remainder is {c:4}
+```
+
+Syntax:
+
+```
+   "{ KV_TERMS % }" - Asserts the remainder is not empty.  
+   "{ KV_TERMS (!%) }" - Asserts the remainder is empty, i.e. "anchored" pattern.  
+   "{ KV_TERMS (@S=%) }" - Binds the remainder to @S and asserts not empty
+   "{ KV_TERMS (@S=%?) }" - Binds the remainder to @S, may be empty
+   
+```
+
+END object semantics cleanup proposal
+
+5.5. Categorization in object syntax.
+
+The pattern `K:(V1 else V2 else V3)` is just a special case of `K:V` where `V` is an else-chain. Therefore, the else chain is applied independently to each value, routing that property to the first Vi that matches its value, forming a partition of the domain (no overlap).
+
+So the idiom for categorization into buckets, including a fallback bucket is
+
+    `K:A else B` // rules of precedence make this `K:(A else B)`
+    `K:A else _` // fallback bucket
 
 This idiosyncratic syntax is for capturing these buckets as object slices is:
 
@@ -1529,25 +1588,7 @@ for example,
     // }
 ```
 
-**Remainder**
-
-The "remainder", symbolized '%', is the slice containing all *keys* that don't fall into any of the "domains". The *values* are immaterial. Example:
-
-```
-   "{ /a/:1 /b/:1 % }" ~= { a1:1 a2:2 b:3 c:4 } => true; remainder is {c:4}
-```
-
-Syntax:
-
-```
-   "{ KV_TERMS % }" - Asserts the remainder is not empty.  
-   "{ KV_TERMS (!%) }" - Asserts the remainder is empty, i.e. "anchored" pattern.  
-   "{ KV_TERMS (@S=%) }" - Binds the remainder to @S and asserts not empty
-   "{ KV_TERMS (@S=%?) }" - Binds the remainder to @S, may be empty
-   
-```
-
-END object semantics cleanup proposal
+\[Note: This right arrow syntax is idiosyncratic and a bit inconsistent with the rest of the document. It is meant to emphasize that the k:v slices (not V slices) are being collected across multiple keys rather than simply enclosing part of the V pattern with parentheses. ]
 
 6. Defaults for nomatching bindings?
 
