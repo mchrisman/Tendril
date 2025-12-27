@@ -353,9 +353,34 @@ function matchItem(item, node, path, sol, emit, ctx) {
         return;
 
       case 'Alt': {
-        for (const sub of item.alts) {
-          matchItem(sub, node, path, sol, emit, ctx);
-          guard(ctx);
+        if (item.prioritized) {
+          // Prioritized alternation (else semantics): try each alternative in order,
+          // use only the first one that produces any solutions.
+          // Uses short-circuit existence probe on cloned solution for safety.
+          for (const sub of item.alts) {
+            let exists = false;
+            try {
+              matchItem(sub, node, path, cloneSolution(sol), () => {
+                throw new StopSearch(true);
+              }, ctx);
+            } catch (e) {
+              if (e instanceof StopSearch) exists = true;
+              else throw e;
+            }
+
+            if (exists) {
+              // This alternative has solutions - stream all of them
+              matchItem(sub, node, path, sol, emit, ctx);
+              return;
+            }
+          }
+          // No alternatives matched
+        } else {
+          // Regular alternation: enumerate all alternatives
+          for (const sub of item.alts) {
+            matchItem(sub, node, path, sol, emit, ctx);
+            guard(ctx);
+          }
         }
         return;
       }

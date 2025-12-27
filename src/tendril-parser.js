@@ -45,7 +45,8 @@ const Arr = (items) => ({type: 'Arr', items});
 const Obj = (terms, spread = null) => ({type: 'Obj', terms, spread});
 
 // Operators
-const Alt = (alts) => ({type: 'Alt', alts});
+// Alt: alternation. prioritized=false means enumerate all (|), prioritized=true means first-match-wins (else)
+const Alt = (alts, prioritized = false) => ({type: 'Alt', alts, prioritized});
 const Look = (neg, pat) => ({type: 'Look', neg, pat});
 const Quant = (sub, op, min = null, max = null) => ({
   type: 'Quant',
@@ -75,6 +76,17 @@ const Breadcrumb = (kind, key, quant) => ({
   quant   // null or {op: '?'|'+'|'*', min, max}
 });
 
+// Helper: eat a variable name (identifier or keyword like 'else')
+// This allows $else, @else etc. as valid variable names
+function eatVarName(p) {
+  const t = p.peek();
+  if (t && (t.k === 'id' || t.k === 'else')) {
+    p.eat(t.k);
+    return t.v;
+  }
+  p.fail('expected variable name');
+}
+
 // ---------- ROOT_PATTERN ----------
 
 function parseRootPattern(p) {
@@ -84,16 +96,33 @@ function parseRootPattern(p) {
 // ---------- ITEM ----------
 
 function parseItem(p) {
-  // Handle alternation at this level (lowest precedence)
-  // ITEM := Term ('|' Term)*
+  // Handle alternation and else at this level (same precedence, but cannot mix)
+  // ITEM := Term ('|' Term)* | Term ('else' Term)*
+  // Both produce Alt nodes; else sets prioritized=true
   let left = parseItemTerm(p);
 
   if (p.peek('|')) {
+    // Parse alternation chain: A | B | C → Alt([A,B,C], false)
     const alts = [left];
     while (p.maybe('|')) {
       alts.push(parseItemTerm(p));
     }
-    return Alt(alts);
+    if (p.peek('else')) {
+      p.fail("cannot mix '|' and 'else' without parentheses");
+    }
+    return Alt(alts, false);
+  }
+
+  if (p.peek('else')) {
+    // Parse else chain: A else B else C → Alt([A,B,C], true)
+    const alts = [left];
+    while (p.maybe('else')) {
+      alts.push(parseItemTerm(p));
+      if (p.peek('|')) {
+        p.fail("cannot mix '|' and 'else' without parentheses");
+      }
+    }
+    return Alt(alts, true);
   }
 
   return left;
@@ -115,25 +144,32 @@ function parseItemTerm(p) {
   }
 
   if (p.peek('(')) {
-    p.eat('(');
     // Check for binding syntax: ($x=...) or (@x=...)
-    if (p.peek('$')) {
-      p.eat('$');
-      const name = p.eat('id').v;
-      p.eat('=');
-      const pat = parseItem(p);
-      p.eat(')');
-      return SBind(name, pat);
-    }
-    if (p.peek('@')) {
-      p.eat('@');
-      const name = p.eat('id').v;
-      p.eat('=');
-      const pat = parseAGroup(p);
-      p.eat(')');
-      return GroupBind(name, pat);
-    }
+    // backtrack() restores position when the callback throws
+    const bindingResult = p.backtrack(() => {
+      p.eat('(');
+      if (p.peek('$')) {
+        p.eat('$');
+        const name = eatVarName(p);
+        p.eat('=');  // throws if not '=', triggering backtrack
+        const pat = parseItem(p);
+        p.eat(')');
+        return SBind(name, pat);
+      }
+      if (p.peek('@')) {
+        p.eat('@');
+        const name = eatVarName(p);
+        p.eat('=');  // throws if not '=', triggering backtrack
+        const pat = parseAGroup(p);
+        p.eat(')');
+        return GroupBind(name, pat);
+      }
+      p.fail('expected binding');  // not $ or @, trigger backtrack
+    });
+    if (bindingResult) return bindingResult;
+
     // Just grouping
+    p.eat('(');
     const inner = parseItem(p);
     p.eat(')');
     return inner;
@@ -142,14 +178,14 @@ function parseItemTerm(p) {
   // Bare scalar variable: $x (short for ($x=_))
   if (p.peek('$')) {
     p.eat('$');
-    const name = p.eat('id').v;
+    const name = eatVarName(p);
     return SBind(name, Any());
   }
 
   // Bare group variable: @x (short for (@x=_*))
   if (p.peek('@')) {
     p.eat('@');
-    const name = p.eat('id').v;
+    const name = eatVarName(p);
     return GroupBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
@@ -284,8 +320,10 @@ function parseAGroup(p) {
     base = Quant(base, q.op, q.min, q.max);
   }
 
-  // Handle alternation
+  // Handle alternation or else (same precedence, cannot mix)
+  // Both produce Alt nodes; else sets prioritized=true
   if (p.peek('|')) {
+    // Parse alternation chain: A | B | C → Alt([A,B,C], false)
     const alts = [base];
     while (p.maybe('|')) {
       let alt = parseAGroupBase(p);
@@ -295,7 +333,27 @@ function parseAGroup(p) {
       }
       alts.push(alt);
     }
-    return Alt(alts);
+    if (p.peek('else')) {
+      p.fail("cannot mix '|' and 'else' without parentheses");
+    }
+    return Alt(alts, false);
+  }
+
+  if (p.peek('else')) {
+    // Parse else chain: A else B else C → Alt([A,B,C], true)
+    const alts = [base];
+    while (p.maybe('else')) {
+      let alt = parseAGroupBase(p);
+      const q = p.backtrack(() => parseAQuant(p));
+      if (q) {
+        alt = Quant(alt, q.op, q.min, q.max);
+      }
+      alts.push(alt);
+      if (p.peek('|')) {
+        p.fail("cannot mix '|' and 'else' without parentheses");
+      }
+    }
+    return Alt(alts, true);
   }
 
   return base;
@@ -310,28 +368,34 @@ function parseAGroupBase(p) {
   }
 
   // Parenthesized A_BODY or binding
+  // Must use backtracking because ($x else B) is grouping, not binding
   if (p.peek('(')) {
-    p.eat('(');
-    // Check for binding syntax: ($x=...) or (@x=...)
-    if (p.peek('$')) {
-      p.eat('$');
-      const name = p.eat('id').v;
-      p.eat('=');
-      const items = parseABody(p, ')');
-      p.eat(')');
-      const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
-      return SBind(name, pat);
-    }
-    if (p.peek('@')) {
-      p.eat('@');
-      const name = p.eat('id').v;
-      p.eat('=');
-      const items = parseABody(p, ')');
-      p.eat(')');
-      const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
-      return GroupBind(name, pat);
-    }
+    const bindingResult = p.backtrack(() => {
+      p.eat('(');
+      if (p.peek('$')) {
+        p.eat('$');
+        const name = eatVarName(p);
+        p.eat('=');  // throws if not '=', triggering backtrack
+        const items = parseABody(p, ')');
+        p.eat(')');
+        const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
+        return SBind(name, pat);
+      }
+      if (p.peek('@')) {
+        p.eat('@');
+        const name = eatVarName(p);
+        p.eat('=');  // throws if not '=', triggering backtrack
+        const items = parseABody(p, ')');
+        p.eat(')');
+        const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
+        return GroupBind(name, pat);
+      }
+      p.fail('expected binding');  // not $ or @, trigger backtrack
+    });
+    if (bindingResult) return bindingResult;
+
     // Just grouping
+    p.eat('(');
     const items = parseABody(p, ')');
     p.eat(')');
     if (items.length === 1) return items[0];
@@ -341,14 +405,14 @@ function parseAGroupBase(p) {
   // Bare group variable: @x (short for (@x=_*))
   if (p.peek('@')) {
     p.eat('@');
-    const name = p.eat('id').v;
+    const name = eatVarName(p);
     return GroupBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
   // Bare scalar variable: $x (short for ($x=_))
   if (p.peek('$')) {
     p.eat('$');
-    const name = p.eat('id').v;
+    const name = eatVarName(p);
     return SBind(name, Any());
   }
 
@@ -469,7 +533,7 @@ function parseORemnant(p) {
     p.eat('(');
     if (!p.peek('@')) return null;
     p.eat('@');
-    const name = p.eat('id').v;
+    const name = eatVarName(p);
     if (!p.maybe('=')) return null;
     if (!isRemainderMarker()) return null;
     eatRemainderMarker();
@@ -573,7 +637,7 @@ function parseOGroup(p) {
     // Check for group binding: (@x=...)
     if (p.peek('@')) {
       p.eat('@');
-      const name = p.eat('id').v;
+      const name = eatVarName(p);
       p.eat('=');
       const groups = [];
       while (!p.peek(')')) {

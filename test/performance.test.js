@@ -41,12 +41,15 @@ function generateRandomTree(numNodes) {
 
   while (queue.length > 0 && nodesCreated < numNodes) {
     const [container, remainingSlots] = queue.shift();
+    // Ensure at least one slot is a container to prevent early termination
+    const forceContainerAt = randomInt(remainingSlots);
 
     for (let i = 0; i < remainingSlots && nodesCreated < numNodes; i++) {
       nodesCreated++;
 
       // Decide if this should be a leaf (40% chance) or container (60% chance)
-      if (Math.random() < 0.4) {
+      // Force at least one container per batch to prevent early termination
+      if (i !== forceContainerAt && Math.random() < 0.4) {
         // Create leaf
         const leaf = randomChar();
         if (Array.isArray(container)) {

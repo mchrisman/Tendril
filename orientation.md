@@ -78,6 +78,7 @@ src/
   
 test/
   engine.test.js           # Main engine tests
+  else.test.js             # 'else' operator (prioritized choice)
   object-semantics-v2.test.js  # Slice-based object matching
   residual-tracking.test.js    # Coverage-based remainder
   optional-patterns.test.js    # K:>V? syntax

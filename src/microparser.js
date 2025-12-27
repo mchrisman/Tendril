@@ -116,16 +116,17 @@ export function tokenize(src) {
     if (reId.test(src)) {
       const j = reId.lastIndex;
       const w = src.slice(i, j);
+      // Check for /i suffix FIRST - case-insensitive bareword takes precedence over keywords
+      if (src.slice(j, j + 2) === '/i') {
+        push('ci', { lower: w.toLowerCase(), desc: src.slice(i, j + 2) }, (j + 2) - i);
+        continue;
+      }
       // if (w === 'AND')   { push('kw', 'AND', j - i); continue; }
       if (w === '_')     { push('any', '_',   j - i); continue; }
       if (w === 'true')  { push('bool', true, j - i); continue; }
       if (w === 'false') { push('bool', false, j - i); continue; }
       if (w === 'null')  { push('null', null, j - i); continue; }
-      // Check for /i suffix (case-insensitive bareword)
-      if (src.slice(j, j + 2) === '/i') {
-        push('ci', { lower: w.toLowerCase(), desc: src.slice(i, j + 2) }, (j + 2) - i);
-        continue;
-      }
+      if (w === 'else')  { push('else', 'else', j - i); continue; }
       push('id', w, j - i);
       continue;
     }

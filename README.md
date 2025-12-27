@@ -1377,19 +1377,15 @@ Save the label/input example for a "Real-World Examples" section or one of the s
 I am thinking of making some changes to the syntax to address some unpleasantness before publishing a beta. 
 
 
-1. We want to write unanchored array patterns all the time, and `[.. seq ..]` is noisy.
-
-Current thinking, leave it alone, but allow slice expressions for searches.
+1.  Allow slice expressions for as the top-level search pattern, `find("(a b)")` so that you don't have to say `find("[... (@this=a b) ...]")`, which makes replace operations harder.
 
 2. Introduce 'A else B' as committing alternation. Make sure the semantics are consistent with the use case: "I want to parse scheme A, but if scheme A is not found, I want to fall back to parsing scheme B (legacy); But never treat it as B if it could be A. "
 
 3. '..' is nonintuitive.
 
-Suggestion: change to '...'. Ellipsis is extremely clear, and it's worth the cost of the extra character.  Support unicode ellipsis.
+arrays: use `[... foo ...]`; also accept `[… foo …]`
 
-arrays: [... foo ...] or [… foo …]
-
-Paths: use ** instead:  { foo.**.bar }
+Paths: use `**` instead:  `{ foo.**.bar }`
 
 4. Add a very minimal EL to support
     - is a number
@@ -1403,35 +1399,17 @@ Paths: use ** instead:  { foo.**.bar }
 
 **This proposal would replace the existing spec about how object matching works, Which was confusing and somewhat incoherent. .** 
 
-Does this definition make sense and clarify everything?
-
 Object patterns are conjunctions of K:V assertions, where K and V are patterns. For example:
 
     `{ status:good userId:$id } // match all good users, enumerating userIds`
 
 Syntax:
 
-    `K:V` matches all k,v in the object such that (k~K and v~V), and asserts there is at least one such.
+    `K:V` covers all k,v in the object such that (k~K and v~V), and asserts there is at least one such.
 
-    `K::V` matches all k,v in the object such that (k~K), and asserts that there is at least one such, and that k~K implies v~V.
+    `K::V` covers all k,v in the object such that (k~K), and asserts that there is at least one such, and that k~K implies v~V.
 
     `K:V ?` or `K::V ?` is the same, without the 'at least one such' assertion
-
-More formally
-
-    Objects are matched by predicates over key/value pairs. Let O be an object. A predicate has a key pattern K and value pattern V.
-    
-    **Domain.** Dom(O,K,E) = { (k,v) ∈ entries(O) | k matches K is satisfiable in environment E }. Computation of the domain involves testing each k individually, discarding any bindings created (bindings do not persist/unify between keys).
-
-    **Else.**  `A else B` matches an item X in environment E if (x~A is satisfiable in some extension of E (such extensions are then enumerated)) OR (x~A is not satisfiable in any extension of E AND x~B is satisfiable in some extension of E (such extensions are then enumerated))
-
-    **Plain predicate `K::V`** matches O in environment E iff Dom(O,K,E) is nonempty and for every (k,v) in Dom(O,K,E), the match (k~K ∧ v~V) is satisfiable in some extension of E.
-    Solutions are enumerated by enumerating each witness (k,v) ∈ Dom(O,K,E) and returning the bindings produced by matching (k~K ∧ v~V) on that witness, then continuing left-to-right with unification against E.
-    
-    **Plain lenient predicate `K:V`** matches O in environment E iff Dom(O,K,E) is nonempty and there exists (k,v) in Dom(O,K,E) such that (k~K ∧ v~V) is satisfiable in some extension of E.
-    Solutions are enumerated by enumerating each (k,v) ∈ Dom(O,K,E) and returning the bindings produced by matching (k~K ∧ v~V) on that witness, then continuing left-to-right with unification against E.
-
-    **predicates `K::V?' and 'K:V?'** are similar except that they do not assert that at least one such key exists; the slice they define may be empty.
 
 Example:
 
@@ -1500,28 +1478,27 @@ More examples:
 
 And the idiom for categorization/fallback is
 
-    `K:A else B` - rules of precedence make this `K:(A else B)`
+    `K::A else B` - rules of precedence make this `K::(A else B)`
 
-And while the idiom for binding a slice generally and logically encompasses *sets of k,v pairs*,
+Note that 'else' carries its usual meaning, the result being a natural partitioning of the properties into two buckets.
 
-    `{ (@s= K1:V1 K2:V2) }`, if it matches, defines the slice of all properties k,v matching (k~K1 AND v~V1 OR k~K2 AND v~V2)
+This idiosyncratic syntax is for capturing these buckets as object slices is:
 
-This idiosyncratic idiom is for binding slices defined by the 'else' branches:
-
-    `{ K: @S1=V1 else @S2=V2 }`
+    `{ K:: @S1=V1 else @S2=V2 }`
 
 for example,
 
 ```
-    { _: @goodStatus=OK|perfect @others=_ }
+    { _:: @goodStatus=(OK|perfect) else @others=_ }
     // matches { proc1:"OK", proc2:"perfect", proc3:"bad"}
     // with solution = 
     // {
     //    goodStatus: { proc1:"OK", proc2:"perfect"}
     //    others:     { proc3:"bad"}
     // }
-
 ```
+
+This example should make you realize that `K:V` is equivalent to `K::(V else _)` plus the assertion that at least one k,v matches both K and V. It's an implicit "nonempty good bucket".
 
 **Remainder**
 
@@ -1542,3 +1519,75 @@ Syntax:
 ```
 
 END object semantics cleanup proposal
+
+6. Defaults for nomatching bindigns?
+
+7. Recursive descent
+
+A breadcrumb path is really just an array of instructions for navigating somewhere else in the structure.
+
+We already have p.**.q indicating remote ancestry. This works only for the simple case of chained parent-child relationships. It is equivalent to `p(._)*.q` -- We are already treating this path as a **pattern on the array of navigation instructions**.
+
+ This could be generalized to navigations other than simple keyed/indexed child descent.
+
+For example, what if you wanted to find a cycle in a directed graph like `[ [$from,$to]* ]`?
+
+Introduce a descent rule syntax `..↳($from, $to where PATTERN )` Which for this directed graph example would be 
+    `↳($a,$b where ($b=$a[1]))`
+
+Then a cyclic graph is `[... $start..(↳($a,$b where ($b=$a[1])):$start) ...]`
+
+(You don't need to point out that this particular example would be very inefficient, and that we'd need a 'visited' flag and a depth limit, and that this is a complication to the language that is prima facie unjustified. )
+    ``
+
+
+
+8..
+hmm. A simpler version that accomplishes the same thing *and* also modifies the structure in place to materialize the required view - that's a good thing or a bad thing depending on what you're driving for, but it enables super simple inline edits; If you really don't like that, it could be, as you say, a virtual edit that is removed at the end.
+
+Add a force operator❗. The forced expression cannot be ambiguous or have unbound variables.
+
+      "[$i { p.q[$i]: $r }]" ~= [3 {p: {q: ['a','b','c','d']}}]
+```
+data = {
+    users: [ {id:1,ability:11,team:X},
+             {id:2,ability:12,team:X}, 
+             {id:3,ability:12,team:Y}, 
+             {id:4,ability:13,team:Y}, 
+             {id:5,ability:14,team:Y},
+             {id:6,ability:11,team:Z},
+             {id:7,ability:12,team:Z},
+             {id:8,ability:12,team:Z},
+             ]
+    abilities: [ {id:11,name:wizard}
+                 {id:12,name:miner}
+                 {id:13,name:priest}
+                 {id:14,name:leader}]
+    teams: [{id:X}, {id:Y}]
+}
+Desired output: pairs of teams with identical abilities
+[ 
+   ["X", "Z",  [wizard,miner]],
+]
+  
+
+
+
+```
+data.teams[_]:{name:$tname, act[$actid]:$uid‼️}
+
+data.teams[_]:{name:$tname, members:[]} // teams with no users
+data.teams[_]:{name:$tname, activeMembers:[$first, ...]} // teams with at least one active user
+
+
+So: declarative views/extensions that become part of the matchable shape.
+extend data.teams[_] as $t with {
+members: data.users[_] where .teamId = $t.id,
+activeMembers: .members where .id in data.activities[_]:{targetType:"user", targetId:*}
+}
+Now patterns can just say:
+data.teams[_]:{name:$tname, members:[]} // teams with no users
+data.teams[_]:{name:$tname, activeMembers:[$first, ...]} // teams with at least one active user
+The data "looks like" it has inline arrays of members even though it doesn't. Patterns stay intuitive because you're still matching shapes — the shapes are just richer than the raw JSON.
+
+
