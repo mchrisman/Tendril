@@ -242,20 +242,22 @@ The `:>` operator adds an implication constraint: if a key matches K, its value 
 { /a.*/:1 }        // matches {"ab":1, "ac":2}
                    // At least one /a.*/ key with value 1 (bad entries allowed)
 
-{ /a.*/:>1 }       // does NOT match {"ab":1, "ac":2}
+{ /a.*/:1! }       // does NOT match {"ab":1, "ac":2}
                    // "ac":2 is a bad entry (key matches /a.*/, value doesn't match 1)
 
-{ /a.*/:>1 }       // matches {"ab":1, "xyz":99}
+{ /a.*/:1! }       // matches {"ab":1, "xyz":99}
                    // "xyz" doesn't match /a.*/, so it's not a bad entry
 
 { a:1? }           // matches {} and {"a":1} and {"a":2}
                    // No assertion - just for binding
 
-{ a:>1? }          // matches {} and {"a":1}, but NOT {"a":2}
-                   // No existence required, but if 'a' exists, value must be 1
+{ a:1?!}            // matches {} and {"a":1}, but NOT {"a":2}
+                   // No existence required, the value must be 1.
 ```
 
-Commas are optional. Multiple assertions can match the same key-value pair. Terms are evaluated left-to-right, so bindings from earlier terms are visible to later terms.
+Commas are optional. Multiple assertions can match the same key-value pair. 
+Terms are evaluated left-to-right, so bindings from earlier terms are visible 
+to later terms.
 
 ```javascript
 { /a|b/:/x/ /b|c/:/y/ }  // matches {"b":"xy"} - "b":"xy" satisfies both assertions
@@ -1392,6 +1394,7 @@ I am thinking of making some changes to the syntax to address some unpleasantnes
 1.  Allow slice expressions for as the top-level search pattern, `find("(a b)")` so that you don't have to say `find("[... (@this=a b) ...]")`, which makes replace operations harder.
 
 2. Introduce 'A else B' as committing alternation. Make sure the semantics are consistent with the use case: "I want to parse scheme A, but if scheme A is not found, I want to fall back to parsing scheme B (legacy); But never treat it as B if it could be A. "
+ IMPLEMENTED.
 
 3. '..' is nonintuitive.
 
@@ -1407,21 +1410,33 @@ Paths: use `**` instead:  `{ foo.**.bar }`
         - Numerical comparison, support e.g. ` [ $x where ($x<3) ] `
         - simple invertible arithmetic, support e.g. `{ foo[1+$x]:bar }`
 
-== Objects semantics cleanup proposal
+5. Objects semantics cleanup proposal
 
 **This proposal would replace the existing spec about how object matching works, Which was confusing and somewhat incoherent. .** 
 
 Object patterns are conjunctions of K:V assertions, where K and V are patterns. For example:
 
-    `{ status:good userId:$id } // match all good users, enumerating userIds`
+    `{ status:good userId:$id } 
+     // match all good users, enumerating userIds`
 
-Syntax:
+Syntax: `K:V`
 
-    `K:V` covers all k,v in the object such that (k~K and v~V), and asserts there is at least one such.
+Meaning: 
+1. The term represents the **slice** (subset of object properties k:v) for which k~K, and
+2. Asserts that the slice is nonempty.
+3. Asserts that there is at least one k:v for which k~K AND v~V.
 
-    `K::V` covers all k,v in the object such that (k~K), and asserts that there is at least one such, and that k~K implies v~V.
+The form `K:V?` removes the second constraint.
+The form `K:V!` Strengthens the third constraint: for all k:v, k~K implies v~V.
+The combination `K:V?!" does both.
 
-    `K:V ?` or `K::V ?` is the same, without the 'at least one such' assertion
+| Short form | Meaning                                       |
+|------------|-----------------------------------------------|
+| `K:V`      | At least one matching k,v                     |
+| `K:V!`     | At least one matching k, and for all k~K, v~V |
+| `K:V?`     | Zero or more matching k, and at least one v~V |
+| `K:V!?`    | Zero or more matching k, and for all k~K, v~V |
+
 
 Example:
 
@@ -1429,15 +1444,15 @@ Example:
     "{ /a/:1 }" ~= {ab:1, ac:1} // => true
     "{ /a/:1 }" ~= {ab:1, ac:1, ad:0} // => true
     "{ /a/:1 }" ~= {ab:1, ac:1, d:0} // => true
-    "{ /a/::1 }" ~= {ab:1, ac:1} // => true
-    "{ /a/::1 }" ~= {ab:1, ac:1, ad:0} // => false
-    "{ /a/::1 }" ~= {ab:1, ac:1, d:0} // => true
+    "{ /a/:1 ! }" ~= {ab:1, ac:1} // => true
+    "{ /a/:1 ! }" ~= {ab:1, ac:1, ad:0} // => false
+    "{ /a/:1 ! }" ~= {ab:1, ac:1, d:0} // => true
 ```
 
 Unbound variables in K:V create branches, as usual. Slice variables in objects denote sets of K:V pairs, as before.
 
 ```
-    "{ @X=(/a/:_ /b/:_) ($y=/c/):_ } ~= {a1:1,a2:2,b:3,c1:4,c2:5,d:6} 
+    "{ (@X=/a/:_ /b/:_) ($y=/c/):_ } ~= {a1:1,a2:2,b:3,c1:4,c2:5,d:6} 
      // ==> True, solutions:
      // {X:{a1:1,a2:2,b:3},y:'c1'}, {X:{a1:1,a2:2,b:3},y:'c2'}, 
 ```     
@@ -1490,18 +1505,22 @@ More examples:
 
 And the idiom for categorization/fallback is
 
-    `K::A else B` - rules of precedence make this `K::(A else B)`
+    `K:A else B` - rules of precedence make this `K:(A else B)`
 
 Note that 'else' carries its usual meaning, the result being a natural partitioning of the properties into two buckets.
 
 This idiosyncratic syntax is for capturing these buckets as object slices is:
 
-    `{ K:: @S1=V1 else @S2=V2 }`
+    `{
+         K: V1      ->@S1 
+            else V2 ->@S2
+            else V3 ->@S3 // etc.
+     }`
 
 for example,
 
 ```
-    { _:: @goodStatus=(OK|perfect) else @others=_ }
+    { _:: (OK|perfect)->@goodStatus else _->@others } 
     // matches { proc1:"OK", proc2:"perfect", proc3:"bad"}
     // with solution = 
     // {
@@ -1509,8 +1528,6 @@ for example,
     //    others:     { proc3:"bad"}
     // }
 ```
-
-This example should make you realize that `K:V` is equivalent to `K::(V else _)` plus the assertion that at least one k,v matches both K and V. It's an implicit "nonempty good bucket".
 
 **Remainder**
 
@@ -1532,7 +1549,7 @@ Syntax:
 
 END object semantics cleanup proposal
 
-6. Defaults for nomatching bindigns?
+6. Defaults for nomatching bindings?
 
 7. Recursive descent
 
@@ -1554,8 +1571,8 @@ Then a cyclic graph is `[... $start..(↳($a,$b where ($b=$a[1])):$start) ...]`
 
 
 
-8..
-hmm. A simpler version that accomplishes the same thing *and* also modifies the structure in place to materialize the required view - that's a good thing or a bad thing depending on what you're driving for, but it enables super simple inline edits; If you really don't like that, it could be, as you say, a virtual edit that is removed at the end.
+8. This is a lame suggestion, but I'm keeping it because it's not entirely uninteresting.
+   hmm. A simpler version that accomplishes the same thing *and* also modifies the structure in place to materialize the required view - that's a good thing or a bad thing depending on what you're driving for, but it enables super simple inline edits; If you really don't like that, it could be, as you say, a virtual edit that is removed at the end.
 
 Add a force operator❗. The forced expression cannot be ambiguous or have unbound variables.
 
