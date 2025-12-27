@@ -204,7 +204,14 @@ Parentheses group elements for operators:
 [1 2 (3 4|5 6)]    // matches [1, 2, 5, 6] — alternation
 ```
 
-The `|` operator creates alternatives. Quantifiers bind tighter than adjacency. Lookaheads test without consuming:
+The `|` operator creates alternatives (all matches enumerated). The `else` operator creates prioritized alternatives (first match wins):
+
+```javascript
+[1 (2|3) 4]            // matches [1,2,4] and [1,3,4] — both alternatives
+[1 (2 else 3) 4]       // matches [1,2,4] (if 2 matches) or [1,3,4] (only if 2 fails)
+```
+
+Quantifiers bind tighter than adjacency. Lookaheads test without consuming:
 
 ```javascript
 [(! .. 3 4) ..]   // matches arrays NOT containing subsequence [3,4]
@@ -541,10 +548,12 @@ In objects:
 2. Optional `?`, quantifiers `+`, `*`, etc.
 3. Breadcrumb operators `.`, `..`, `[]`
 4. Adjacency/commas (in arrays and objects)
-5. Alternation `|`
+5. Alternation `|`, prioritized choice `else`
 6. Key-value separator `:`, `:>`
 
 Parentheses override precedence. Lookaheads always require parentheses.
+
+Note: `|` and `else` have the same precedence but cannot be mixed without parentheses. Use `((A|B) else C)` or `(A else (B|C))` to combine them.
 
 ---
 
@@ -740,7 +749,7 @@ QUOTED_STRING := "..." | '...'            # supports \n \r \t \" \' \\ \uXXXX \u
 REGEX         := /pattern/flags           # JS RegExp; 'g' and 'y' flags not allowed
 CI_STRING     := IDENT/i | QUOTED_STRING/i  # case-insensitive literal (no space before /i)
 
-BAREWORD      := IDENT, except '_' 'true' 'false' 'null' are special-cased
+BAREWORD      := IDENT, except '_' 'true' 'false' 'null' 'else' are special-cased
 LITERAL       := NUMBER | BOOLEAN | NULL | QUOTED_STRING | REGEX | CI_STRING | BAREWORD
 
 # Whitespace and // line comments allowed between tokens everywhere.
@@ -755,7 +764,8 @@ S_ITEM  := '$' IDENT
 S_GROUP := '@' IDENT
 
 ITEM :=
-    ITEM_TERM ('|' ITEM_TERM)*
+      ITEM_TERM ('|' ITEM_TERM)*              # alternation: enumerate all matches
+    | ITEM_TERM ('else' ITEM_TERM)*           # prioritized: first match wins
 
 ITEM_TERM :=
       '(' ITEM ')'
@@ -782,7 +792,9 @@ A_BODY := (A_GROUP (','? A_GROUP)*)?           # commas optional
 A_GROUP :=
       '..' A_QUANT?                            # spread token in arrays
     | A_GROUP_BASE A_QUANT?                    # quantifiers bind tight
-      ('|' (A_GROUP_BASE A_QUANT?))*           # alternation at A_GROUP level
+      ( ('|' (A_GROUP_BASE A_QUANT?))*         # alternation: enumerate all
+      | ('else' (A_GROUP_BASE A_QUANT?))*      # prioritized: first match wins
+      )
 
 A_GROUP_BASE :=
       LOOK_AHEAD
