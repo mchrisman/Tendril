@@ -1395,14 +1395,46 @@ Save the label/input example for a "Real-World Examples" section or one of the s
 I am thinking of making some changes to the syntax to address some unpleasantness before publishing a beta. 
 
 
-1.  Allow array slice expressions for as the top-level search pattern, `find("(a b)")` so that you don't have to say `find("[... @this=(a b) ...]")`, which makes replace operations harder.
+1. **Find slices** 
 
+**Proposal:**
 
-3. '..' is nonintuitive.
+Allow array slice expressions for as the top-level search pattern, `find("(a b)")` so that you don't have to say `find("[... @this=(a b) ...]")`, which makes replace operations harder.
 
+Plan A: New APIs, findSlice() and firstSlice() behaves like find() and first() but for finding slices.  In this case, `ROOT_PATTERN := A_BODY`.
+
+Plan B: find() and first() are extended with asSlice options.
+
+Plan C: find() and first() permit a new syntax, find("@(A_BODY)"), i.e. 
+```
+< ROOT_PATTERN := ITEM
+> ROOT_PATTERN := '@(' A_BODY ')' | ITEM
+```
+
+Plan D: find() and first() use the following parsing logic to determine whether it's an item search or a slice search (no special syntax):
+
+```
+< ROOT_PATTERN := ITEM
+> ROOT_PATTERN := '(' A_BODY ')'   // parenthesis is a hint to prefer A_BODY interpretation 
+>               | ITEM 
+>               | A_BODY
+```
+
+All plans:
+- The finder processes *location* as well as *content* so that it knows the extent of what is to be replaced (if using replaceAll/editAll). For arrays, the location would be a starting and an ending index. For objects, the location would be a set of keys.
+-   The special variable $0 will be an array, not a scalar, when searching for a slice.
+-   It is a warning if the slice pattern could have been parsed as an ITEM.
+
+- Object slices would be supported too. For example (using Plan C syntax) it should be possible to find("@{ foo.bar }").replaceAll({ baz:"fuz"}).  (Currently replaceAll would replace the whole object.)
+
+Note, There is no ambiguity about which keys get replaced. It should be compatible with object slice bindings; in other words, findSlice("{ K:V K2:V2}") should be implemented like findSlice("{ @0=(K:V K2:V2) }"). That's the same strategy we already used for array slices.
+
+3. '..' is nonintuitive and is overloaded to indicate an indeterminate sequence in arrays or an indeterminate path descent in paths.
+
+**Proposal:**
 arrays: use `[... foo ...]`; also accept `[… foo …]`
-
 Paths: use `**` instead:  `{ foo.**.bar }`
+
 
 4. Add a very minimal EL to support
     - is a number
@@ -1411,155 +1443,6 @@ Paths: use `**` instead:  `{ foo.**.bar }`
     - Future direction:
         - Numerical comparison, support e.g. ` [ $x where ($x<3) ] `
         - simple invertible arithmetic, support e.g. `{ foo[1+$x]:bar }`
-
-5. Objects semantics cleanup proposal
-
-**This proposal would replace the existing spec about how object matching works, Which was confusing and somewhat incoherent. .** 
-
-Object patterns are conjunctions of K:V assertions, where K and V are patterns. For example:
-
-    `{ status:good userId:$id } 
-     // match all good users, enumerating userIds`
-
-### `K:V` - existential match
-
-Meaning:  It asserts that there is at least one k:v in the object such that (k~K AND v~V).
-
-Bound to an object slice, as in `@foo=( K:V)`, the slice comprises all k:v where k~K (including pairs where v does not match V). For example, @s=(/a/:1) matching {a1:1, a2:2} binds s to {a1:1, a2:2}.
-
-It is a domain-wide generator: it iterates all properties k:v, attempting to match (k~K AND v~V), ignoring failures, and may bind fresh variables per property. Variables unbound at entry may be bound independently for each k:v. Variables already bound before the term are effectively constants, and must unify across all keys.
-
-### `K:V !!` - no counterexamples
-
-Meaning:
-
-1. It asserts that there is at least one k:v in the object such that (k~K AND v~V).
-2. It asserts that for all k:v in the object, (k~K implies v~V).
-
-Each value is matched independently against V. This does not require that all values are identical, only that each individually satisfies V.
-
-Bound to an object slice, as in `@foo=( K:V)`, the slice comprises all k:v in the object such that k~K (which then implies v~V)
-
-It is a domain-wide generator: it iterates all properties k:v, attempting to match (k~K AND v~V), and may bind fresh variables per property. Variables unbound at entry may be bound independently for each k:v. Variables already bound before the term are effectively constants, and must unify across all keys.
-
-### `K:V?` - optional
-
-This form makes no assertions. It binds like `K:V`. If no (k,v) satisfy the match, the term produces exactly one solution with no new bindings.
-
-### `K:V!!?` - optional, no counterexample
-
-The optional form of `K:V!!`. It asserts that for all k:v in the object, (k~K implies v~V), but does not assert the existence of such k:v. It binds like `K:V!!`. If any k:v fails the assertion, the term fails.
-
-The combination `!!?` is canonical but `?!!` is equivalent.
-
-
-
-| Short form | Meaning                                                               |
-|------------|-----------------------------------------------------------------------|
-| `K:V`      | At least one matching k, and of those, at least one matching v        |
-| `K:V!!`    | At least one matching k, and for all k~K, v~V (fresh bindings per key) |
-| `K:V?`     | Zero or more matching k (no assertion, used only for binding)         |
-| `K:V!!?`   | Zero or more matching k, and for all k~K, v~V (fresh bindings per key) |
-
-Example:
-```
-    "{ /a/:1 }" ~= {ab:1, ac:1} // => true
-    "{ /a/:1 }" ~= {ab:1, ac:1, ad:0} // => true
-    "{ /a/:1 }" ~= {ab:1, ac:1, d:0} // => true
-    "{ /a/:1 !! }" ~= {ab:1, ac:1} // => true
-    "{ /a/:1 !! }" ~= {ab:1, ac:1, ad:0} // => false
-    "{ /a/:1 !! }" ~= {ab:1, ac:1, d:0} // => true
-```
-Or as another illustration of the above definition,
-```
-    K:V   ≡ K:V#{1,}
-    K:V?  ≡ K:V#{0,}
-    K:V!!  ≡ (! (K:(!V)) ) K:V#{1,} 
-    K:V!!? ≡ (! (K:(!V)) ) K:V#{0,} 
-```
-
-Unbound variables in K:V create separate solutions per key, as before. Slice variables in objects denote sets of K:V pairs, as before.
-
-```
-    "{ @X=(/a/:_ /b/:_) $y=(/c/):_ } ~= {a1:1,a2:2,b:3,c1:4,c2:5,d:6} 
-     // ==> True, solutions:
-     // {X:{a1:1,a2:2,b:3},y:'c1'}, {X:{a1:1,a2:2,b:3},y:'c2'}, 
-```     
-
-Unification happens normally:
-
-```
-  "{ _: [$x $x]}" ~= {a: [3,3], b:[3,3] }   // ==> true, 
-       // one solution {x:3} deduped from multiple locations 
-  "{ a: [$x $x]}" ~= {a: [3,4]}   // ==> false
-  "{ $x: [$x $x]}" ~= {a: ['a','a']}   // ==> true, one solution {x:'a'}
-```
-
-Variables unify across terms:
-
-```
-    { name:$name creditCard:{name:$name} } 
-    // => Matches if the person's name is equal to the name on their credit card. 
-```
-
-Variables unify between K and V:
-
-```
-    // Reminder: bare $id is shorthand for $id=(_)
-    { $id:{id:$id} }  // The items are correctly indexed by ID
-    
-    matches { "3", {name='Mark', id:3},
-              "4", {name='Sue', id:4}}
-    doesn't match  { "3", {name='Mark', id:3},
-                     "4", {name='Sue', id:3}}      
-```
-
-### "Same-values" idiom
-
-❌ "K:V!!" does not mean all values are the same; it merely means all values (individually) match V.
-```
-    // Does not demand that all the colors are the same.
-    "{ $k=(/color/):$c !! }" matches {backgroundColor:"green", color:"white"}
-    // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}] 
-```
-
-✅ Use this idiom to enforce universal equality over values:
-```
-    "{ $k=(/color/):$c  $k=(/color/):$c!! }"
-```
-It works because variables unify across terms.
-
-
-### More examples:
-
-```
-    `{ _:$x }`  // Todo: lint this as a probable bug
-                // With $x unbound: cannot fail 
-                // and will cause every value to become a solution.
-                // With $x previously bound: all props have the same value
-    `{ $x:$x }` // All keys must have values equal to the keys
-```
-
-
-**Remainder**
-
-The "remainder", symbolized '%', is the slice containing all *keys* that don't fall into any of the "domains". The *values* are immaterial. Example:
-
-```
-   "{ /a/:1 /b/:1 % }" ~= { a1:1 a2:2 b:3 c:4 } => true; remainder is {c:4}
-```
-
-Syntax:
-
-```
-   "{ KV_TERMS % }" - Asserts the remainder is not empty.  
-   "{ KV_TERMS (!%) }" - Asserts the remainder is empty, i.e. "anchored" pattern.  
-   "{ KV_TERMS @S=(%) }" - Binds the remainder to @S and asserts not empty
-   "{ KV_TERMS @S=(%?) }" - Binds the remainder to @S, may be empty
-   
-```
-
-END object semantics cleanup proposal
 
 5.5. Categorization in object syntax.
 
@@ -1611,55 +1494,5 @@ Then a cyclic graph is `[... $start..(↳($a,$b where $b=($a[1])):$start) ...]`
 
 (You don't need to point out that this particular example would be very inefficient, and that we'd need a 'visited' flag and a depth limit, and that this is a complication to the language that is prima facie unjustified. )
     ``
-
-
-
-8. This is a lame suggestion, but I'm keeping it because it's not entirely uninteresting.
-   hmm. A simpler version that accomplishes the same thing *and* also modifies the structure in place to materialize the required view - that's a good thing or a bad thing depending on what you're driving for, but it enables super simple inline edits; If you really don't like that, it could be, as you say, a virtual edit that is removed at the end.
-
-Add a force operator❗. The forced expression cannot be ambiguous or have unbound variables.
-
-      "[$i { p.q[$i]: $r }]" ~= [3 {p: {q: ['a','b','c','d']}}]
-```
-data = {
-    users: [ {id:1,ability:11,team:X},
-             {id:2,ability:12,team:X}, 
-             {id:3,ability:12,team:Y}, 
-             {id:4,ability:13,team:Y}, 
-             {id:5,ability:14,team:Y},
-             {id:6,ability:11,team:Z},
-             {id:7,ability:12,team:Z},
-             {id:8,ability:12,team:Z},
-             ]
-    abilities: [ {id:11,name:wizard}
-                 {id:12,name:miner}
-                 {id:13,name:priest}
-                 {id:14,name:leader}]
-    teams: [{id:X}, {id:Y}]
-}
-Desired output: pairs of teams with identical abilities
-[ 
-   ["X", "Z",  [wizard,miner]],
-]
-  
-
-
-
-```
-data.teams[_]:{name:$tname, act[$actid]:$uid‼️}
-
-data.teams[_]:{name:$tname, members:[]} // teams with no users
-data.teams[_]:{name:$tname, activeMembers:[$first, ...]} // teams with at least one active user
-
-
-So: declarative views/extensions that become part of the matchable shape.
-extend data.teams[_] as $t with {
-members: data.users[_] where .teamId = $t.id,
-activeMembers: .members where .id in data.activities[_]:{targetType:"user", targetId:*}
-}
-Now patterns can just say:
-data.teams[_]:{name:$tname, members:[]} // teams with no users
-data.teams[_]:{name:$tname, activeMembers:[$first, ...]} // teams with at least one active user
-The data "looks like" it has inline arrays of members even though it doesn't. Patterns stay intuitive because you're still matching shapes — the shapes are just richer than the raw JSON.
 
 
