@@ -611,7 +611,7 @@ occSet.solutions().count()  // number of unique solutions
 
 ## Replacement and Editing
 
-All edit/replace operations are **pure by default** — they return a new copy of the data.
+All edit/replace operations are **pure by default** — they return a new copy of the data (unless you specify mutate:true).
 
 ```javascript
 // replaceAll: replace $0 (entire match) at each occurrence
@@ -627,7 +627,7 @@ const result = pattern.find(data).editAll({x: $ => $.x * 2});
 const result = occSet.first().edit({x: 99});
 const result = occSet.solutions().first().edit({x: 99});
 
-// Opt into mutation (rare)
+// Opt into mutation - If you want to perform surgery on the original data rather than a copy. 
 pattern.find(data).editAll({x: 99}, {mutate: true});
 ```
 
@@ -641,6 +641,17 @@ Tendril("[$x ..]").find([[1,2], 3]).editAll({x: [9,9]})
 // Pattern with @x (group): array elements are spliced
 Tendril("[@x ..]").find([1, 2, 3]).editAll({x: [9,9]})
 // → [9, 9, 3]  (spliced two elements where @x was)
+
+// Replace an object slice: collapse any pw_* properties into one marker.
+Tendril("{ @slice=(/^pw_/:_) }")        // K:V implies “at least one” matching kv-pair.
+.find(data)
+.editAll({slice: {sanitized: true}});
+
+// Variant: allow zero matches. (`?` removes the nonempty requirement for the slice.)
+Tendril("{ @slice=(/^pw_/:_?) }")       // Always matches; slice may be empty.
+.find(data)
+.editAll({slice: {sanitized: true}});  // Adds sanitized:true everywhere.
+
 ```
 
 **Replacement examples:**
@@ -1399,35 +1410,46 @@ I am thinking of making some changes to the syntax to address some unpleasantnes
 
 **Proposal:**
 
-Allow array slice expressions for as the top-level search pattern, `find("(a b)")` so that you don't have to say `find("[... @this=(a b) ...]")`, which makes replace operations harder.
-
-Plan A: New APIs, findSlice() and firstSlice() behaves like find() and first() but for finding slices.  In this case, `ROOT_PATTERN := A_BODY`.
-
-Plan B: find() and first() are extended with asSlice options.
-
-Plan C: find() and first() permit a new syntax, find("@(A_BODY)"), i.e. 
+In the find() and first() API, which currently take patterns of the form 
 ```
-< ROOT_PATTERN := ITEM
-> ROOT_PATTERN := '@(' A_BODY ')' | ITEM
+ROOT_PATTERN := ITEM
 ```
-
-Plan D: find() and first() use the following parsing logic to determine whether it's an item search or a slice search (no special syntax):
-
+Add support for searching for object and array slices triggered by the special syntax "@( )":
 ```
-< ROOT_PATTERN := ITEM
-> ROOT_PATTERN := '(' A_BODY ')'   // parenthesis is a hint to prefer A_BODY interpretation 
->               | ITEM 
->               | A_BODY
+ROOT_PATTERN := ITEM       // Search for single item. 
+             |  '@(' O_GROUP ')'  // Search for object slice  -- new
+             |  '@(' A_BODY ')'   // Search for array slice   -- new
+```
+This enables usages like
+```
+pattern.find("@( foo:bar )").replaceAll({ baz:"fuz"}).  // (Currently replaceAll would replace the whole object.)
 ```
 
-All plans:
-- The finder processes *location* as well as *content* so that it knows the extent of what is to be replaced (if using replaceAll/editAll). For arrays, the location would be a starting and an ending index. For objects, the location would be a set of keys.
--   The special variable $0 will be an array, not a scalar, when searching for a slice.
--   It is a warning if the slice pattern could have been parsed as an ITEM.
+- It is a warning if the slice pattern could have been parsed as an ITEM.
+- The special variable @0 will be an array, not a scalar, when searching for a slice.
 
-- Object slices would be supported too. For example (using Plan C syntax) it should be possible to find("@{ foo.bar }").replaceAll({ baz:"fuz"}).  (Currently replaceAll would replace the whole object.)
+It is worth noting that we're not adding any truly new functionality here. The new find/match inputs, like the old ones, are syntactic sugar on the same slice-replacement mechanism.
 
-Note, There is no ambiguity about which keys get replaced. It should be compatible with object slice bindings; in other words, findSlice("{ K:V K2:V2}") should be implemented like findSlice("{ @0=(K:V K2:V2) }"). That's the same strategy we already used for array slices.
+Remember, the existing replaceAll is syntactic sugar on editAll's slice-replace function:
+```
+Tendril("{K:V}")  .find(data).replaceAll({foo:bar}) 
+    // may be defined as: Tendril("$0=(K:V)").find(data) .editAll({"0":$=>{foo:bar}})
+    
+Tendril("[ A B ]").find(data).replaceAll(["c","d","e"]) 
+    // may be defined as: Tendril("$0=[A B]") .find(data).editAll({"0":$=>["c","d","e"]})
+```
+The new idioms are built on the same function:
+```
+Tendril("@(K:V)") .find(data).replaceAll({foo:bar}) 
+    is new sugar for Tendril("{ @0=(K:V) }") ..find(data)editAll({"0":$=>{foo:bar}})
+    
+Tendril("@(A B)") .find(data).replaceAll(["c","d","e"]) 
+    is new sugar for Tendril("[... @0=(A B) ...]") .find(data).editAll({"0":$=>["c","d","e"]})
+```
+(Remember, $0 and @0 collapse to "0" in JS, for $x and @x are the same variable name with different types.  In the API you would refer to it by name, e.g. find(...).editAll({"0":_=>foo}))
+
+
+
 
 3. '..' is nonintuitive and is overloaded to indicate an indeterminate sequence in arrays or an indeterminate path descent in paths.
 
