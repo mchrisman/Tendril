@@ -11,7 +11,7 @@ Object patterns are conjunctions of K:V assertions, where K and V are patterns. 
 
 Meaning:  It asserts that there is at least one k:v in the object such that (k~K AND v~V).
 
-Bound to an object slice, as in `@foo=( K:V)`, the slice comprises all k:v where k~K (including pairs where v does not match V). For example, @s=(/a/:1) matching {a1:1, a2:2} binds s to {a1:1, a2:2}.
+Bound to an object slice, as in `@foo=( K:V)`, the slice comprises all k:v where k~K AND v~V. For example, @s=(/a/:1) matching {a1:1, a2:2} binds s to {a1:1, a2:2}.
 
 It is a domain-wide generator: it iterates all properties k:v, attempting to match (k~K AND v~V), ignoring failures, and may bind fresh variables per property. Variables unbound at entry may be bound independently for each k:v. Variables already bound before the term are effectively constants, and must unify across all keys.
 
@@ -24,7 +24,7 @@ Meaning:
 
 Each value is matched independently against V. This does not require that all values are identical, only that each individually satisfies V.
 
-Bound to an object slice, as in `@foo=( K:V)`, the slice comprises all k:v in the object such that k~K (which then implies v~V)
+Bound to an object slice, as in `@foo=( K:V)`, the slice comprises all k:v in the object such that k~K AND v~V
 
 It is a domain-wide generator: it iterates all properties k:v, attempting to match (k~K AND v~V), and may bind fresh variables per property. Variables unbound at entry may be bound independently for each k:v. Variables already bound before the term are effectively constants, and must unify across all keys.
 

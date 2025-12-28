@@ -220,20 +220,25 @@ Quantifiers bind tighter than adjacency. Lookaheads test without consuming:
 
 ## Objects
 
-Object patterns differ fundamentally from array patterns. Rather than matching positionally, object patterns are lists of assertions about key-value pairs.
+Object patterns differ fundamentally from array patterns. Rather than matching positionally, object patterns are composed of **field clauses**—each making an assertion about key-value pairs, in the form `K:V`:
+```
+    { a:1 b:$x }  // The object contains a property named 'b' with value 1, 
+                  // and a property named 'b' with value bound to the 
+                  // variable $x.  
+```
 
 ### Slice-Based Semantics
 
-Each `K:V` term defines a **slice**: the set of key-value pairs where the key matches K AND the value matches V. It also implicitly defines a **bad** set: pairs where the key matches K but the value does NOT match V.
+Each field clause `K:V` defines a **slice**: the set of the object's properties where the key matches K AND the value matches V. It also implicitly defines a **bad** set: pairs where the key matches K but the value does NOT match V.
 
 | Short form | Meaning |
 |------------|---------|
 | `K:V`      | At least one matching k:v pair exists |
 | `K:>V`     | At least one matching k:v pair exists, AND no bad entries (implication: all keys matching K must have values matching V) |
-| `K:V?`     | No assertion (use for optional binding) |
+| `K:V?`     | No existence requirement (use for optional binding) |
 | `K:>V?`    | No bad entries allowed (but key doesn't need to exist) |
 
-The `:>` operator adds an implication constraint: if a key matches K, its value MUST match V.
+The `:>` operator, visually reminiscent of an arrow, adds an implication constraint: if a key matches K, its value MUST match V.
 
 ```javascript
 { a: 1 }            // matches {"a":1} and {"a":1, "b":2}
@@ -249,27 +254,27 @@ The `:>` operator adds an implication constraint: if a key matches K, its value 
                    // "xyz" doesn't match /a.*/, so it's not a bad entry
 
 { a: 1 ? }           // matches {} and {"a":1} and {"a":2}
-                   // No assertion - just for binding
+                   // No existence requirement - just for binding
 
-{ a:> 1}            // matches {} and {"a":1}, but NOT {"a":2}
+{ a:> 1}            // matches {} and {"b":1} and {"a":1}, but NOT {"a":2}
                    // No existence required, the value must be 1.
 ```
 
-Commas are optional. Multiple assertions can match the same key-value pair. 
-Terms are evaluated left-to-right, so bindings from earlier terms are visible 
-to later terms. 
+Commas between clauses are optional. Multiple clauses can match the same key-value pair.
 
 ```javascript
-{ /a|b/:/x/ /b|c/:/y/ }  // matches {"b":"xy"} - "b":"xy" satisfies both assertions
+{ /a|b/:/x/ /b|c/:/y/ }  // matches {"b":"xy"} - "b":"xy" satisfies both field clauses
 ```
+Field clauses are evaluated left-to-right, so bindings from earlier clauses are
+visible to later ones.
 
 ### Remainder
 
-The **remainder** (`%` or `remainder`) consists of keys NOT covered by any key pattern K. A key is "covered" if it matches ANY K in the pattern, regardless of whether the value matched V.
+The **remainder** (`%` or `remainder`) is a special clause representing the slice of properties whose *keys* (ignoring *values*) are not touched (do not match any K of the K:V clauses).  
 
 ```
 { a:b }            // matches {"a":"b", "c":"d"}
-                   // remainder is {"c":"d"} (uncovered keys)
+                   // remainder is {"c":"d"} 
 
 { a:b % }          // matches {"a":"b", "c":"d"}
                    // '%' asserts a nonempty remainder
@@ -280,8 +285,8 @@ The **remainder** (`%` or `remainder`) consists of keys NOT covered by any key p
 { a:_ $ }          // matches iff 'a' is the only key
 
 { /a.*/:1 %#{0} }  // matches {"ab":1, "ac":2}
-                   // Both 'ab' and 'ac' are covered by /a.*/
-                   // Bad entries (ac:2) are covered, just not in slice
+                   // Both 'ab' and 'ac' are touched by /a.*/
+                   // Bad entries (ac:2) are touched, just not in slice
 ```
 
 Bind the remainder to capture it:
@@ -294,14 +299,14 @@ Bind the remainder to capture it:
                      // %? allows empty remainder
 ```
 
-### Operators on Predicates
+### Operators on Field Clauses
 
-Alternation applies to keys, values, or entire predicates:
+Alternation applies to keys, values, or entire field clauses:
 
 ```
 { (a|b):c }        // key is 'a' or 'b', value is 'c'
 { a:(b|c) }        // key is 'a', value is 'b' or 'c'
-{ a:b | c:d }      // either predicate (or both)
+{ a:b | c:d }      // either field clause (or both)
 ```
 
 Negation uses lookahead syntax:
@@ -321,6 +326,7 @@ The syntax for variable binding is `$x=(pattern)` or `@x=(pattern)`. **Parenthes
 ```
 Tendril([1 2 3 4 5]).match("[.. $x=(2|4) $y=(_) ..]"  // two solutions: {x:2,y:3} and {x:4,y:5}
 ```
+You cannot use both '@x' and '$x' in the same pattern.  (The JS API treats them as the same variable 'x'. The sigil is a type marker.) 
 
 `$x` (without the pattern) is short for `$x=(_)`, and `@x` is short for `@x=(_*)`.  
 
@@ -345,7 +351,7 @@ Tendril("[@x @x]").find([1, [2, 2]]).editAll({x:_=>['the','replacement'])  // ['
 
 **Groups in object patterns**
 
-Object patterns only support group variables. Group one or more predicates, and the variable will bind to the set of key-value pairs that match at least one of them.
+Object patterns only support group variables. Group one or more field clauses, and the variable will bind to the set of key-value pairs that match at least one of them.
 ```
 Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}) // matches with binding {x:{Big:1, Alice:3}}
 Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}).edit({x:_=>{foo:"bar"}}) // -> {foo:"bar",Cute:2}
@@ -431,7 +437,7 @@ Scalar variables are constrained to match only single items, not groups. This ef
 
 ## Paths (breadcrumb notation)
 
-Object assertions can navigate through nested structures using breadcrumb notation:
+Field clauses can navigate through nested structures using breadcrumb notation:
 
 ```javascript
 { a.b.c:d }        // equivalent to { a:{ b:{ c:d } } }
@@ -512,7 +518,7 @@ Object quantifiers count matching key-value pairs after all matches are found (n
 { a:b remainder #{0} } // require no residual pairs (closed object)
 ```
 
-The `#` quantifier follows an assertion and requires a specific count range. Unlike array quantifiers, object quantifiers operate globally over all key-value pairs, not sequentially.
+The `#` quantifier follows a field clause and requires a specific count range. Unlike array quantifiers, object quantifiers operate globally over all key-value pairs, not sequentially.
 
 ## Lookaheads
 
@@ -526,6 +532,24 @@ Lookaheads test conditions without consuming data:
 **Binding behavior:**
 - Positive lookaheads (`(?P)`) commit bindings on success. If the pattern can match multiple ways (e.g., with wildcard keys), all binding possibilities are enumerated.
 - Negative lookaheads (`(!P)`) never commit bindings, since the pattern must fail to match.
+
+### "Same-values" idiom
+
+❌ "K:V!!" does not mean all values are the same; it merely means all values (individually) match V.
+
+```
+    // Does not demand that all the colors are the same.
+    "{ $k=(/color/):$c !! }" matches {backgroundColor:"green", color:"white"}
+    // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}] 
+```
+
+✅ Use this idiom to enforce universal equality over values:
+
+```
+    "{ $k=(/color/):$c  $k=(/color/):$c!! }"
+```
+
+It works because variables unify across terms.
 
 In arrays:
 
@@ -907,7 +931,7 @@ BREADCRUMB :=
 - **Strings:** strict equality for literals; regex patterns match substrings unless anchored
 - **null:** matches only `null` or `_`
 - **Arrays:** matched positionally with backtracking
-- **Objects:** matched via assertions (non-consuming, conjunctive, non-exclusive)
+- **Objects:** matched via field clauses (non-consuming, conjunctive, non-exclusive)
 
 ### Binding and Unification
 
@@ -922,9 +946,9 @@ Group bindings (`@x`) succeed when:
 
 Bare variables are shorthand: `$x` ≡ `$x=(_)`, `@x` ≡ `@x=(_*)`.
 
-### Object Assertions (Slice-Based Semantics)
+### Field Clauses (Slice-Based Semantics)
 
-Each K:V term defines both a **slice** (the set of object fields that satisfy both k~K and v~V) and a set denoted by **bad** (k~K AND NOT(v~V)).
+Each field clause defines both a **slice** (the set of object fields that satisfy both k~K and v~V) and a set denoted by **bad** (k~K AND NOT(v~V)).
 
 In the following short forms, `>` signifies "no bad values" (i.e. k~K => v~V), and `?` signifies that the key is optional:
 
@@ -932,7 +956,7 @@ In the following short forms, `>` signifies "no bad values" (i.e. k~K => v~V), a
 |------------|----------------------|---------|
 | `K:V`      | `K:V  #{1,} bad#{0,}`  | At least one matching k,v |
 | `K:>V`     | `K:V  #{1,} bad#{0}`   | At least one matching k,v, and no bad values |
-| `K:V?`     | `K:V  #{0,} bad#{0,}`  | No assertion (use for binding) |
+| `K:V?`     | `K:V  #{0,} bad#{0,}`  | No existence requirement (use for binding) |
 | `K:>V?`    | `K:V  #{0,} bad#{0}`   | No bad values |
 
 Binding keys or values:
@@ -947,25 +971,25 @@ Binding slices:
 { @x=(K1:V1) @x=(K2:V2) }   # asserting two slices are the same
 ```
 
-`%`, pronounced "remainder", defines the slice of fields that didn't fall into any of the declared slices or bad sets; in other words, the **entries whose keys did not match any of the terms, regardless of whether the values matched.**  (The predominant use case is the fall-through of unrecognized fields, not the fall-through of invalid values.)
+`%`, pronounced "remainder", defines the slice of fields that didn't fall into any of the declared slices or bad sets; in other words, the **entries whose keys did not match any of the field clauses, regardless of whether the values matched.**  (The predominant use case is the fall-through of unrecognized fields, not the fall-through of invalid values.)
 
 It may appear only once in the object pattern, only at the end. You can bind it or quantify it.
 
 ```
-{ K1:V1 K2:V2 }             # No assertion about remainder
+{ K1:V1 K2:V2 }             # No constraint on remainder
 { K1:V1 K2:V2 % }           # Remainder is nonempty
 { K1:V1 K2:V2 $ }           # Remainder is empty (short for %#{0})
 { K1:V1 K2:V2 %#{3,4} }     # Remainder is of size 3-4
 { K1:V1 K2:V2 @rest=(%) }   # Bind it
 ```
 
-Assertions are evaluated non-exclusively: a single key-value pair may satisfy multiple assertions.
+Field clauses are evaluated non-exclusively: a single key-value pair may satisfy multiple clauses.
 
 ### Object Evaluation Order
 
-Object terms produce results consistent with **left-to-right evaluation**. Bindings established by earlier terms are visible to later terms. This enables patterns where one term binds a variable and a subsequent term constrains it.
+Field clauses produce results consistent with **left-to-right evaluation**. Bindings established by earlier clauses are visible to later ones. This enables patterns where one clause binds a variable and a subsequent clause constrains it.
 
-Each term selects a **witness** — one key-value pair where both K and V match. If multiple pairs qualify, the matcher branches, producing one solution per witness:
+Each field clause selects a **witness** — one key-value pair where both K and V match. If multiple pairs qualify, the matcher branches, producing one solution per witness:
 
 ```javascript
 { /a.*/:$x }  matching {a1:1, a2:2}
@@ -974,7 +998,7 @@ Each term selects a **witness** — one key-value pair where both K and V match.
 
 **`:>` with unbound variables:**
 
-When V contains an unbound variable like `$x`, matching V against a value *binds* `$x`. This means the value is in the slice, not the bad set. Therefore `:>` is not a "universal equality" operator — it means "no bad entries exist," where bad means "fails to match V":
+When V contains an unbound variable like `$x`, matching V against a value *binds* `$x`. This means the value is in the slice, not the bad set. Therefore `:>` is not a "universal equality" operator — it means "no bad entries exist," where bad means "fails to match the field clause's value pattern":
 
 ```javascript
 { /a.*/:>$x }  matching {a1:1, a2:2}
@@ -989,7 +1013,7 @@ When V contains an unbound variable like `$x`, matching V against a value *binds
 
 ```javascript
 { /a.*/:$x  /a.*/:>$x }  matching {a1:1, a2:2}
-// Fails — first term binds x, second requires ALL /a.*/
+// Fails — first clause binds x, second requires ALL /a.*/
 // values to match that x. With x=1, a2:2 is a bad entry.
 
 { /a.*/:$x  /a.*/:>$x }  matching {a1:1, a2:1}
@@ -1117,7 +1141,7 @@ const pat = `{ ..:{type:output_text text:$t} }`;
 
 ## Golden 2: OpenAI streaming-ish “delta” chunks → only final assembled text
 
-**Purpose:** alternation + optional keys + find() vs match() + object assertions.
+**Purpose:** alternation + optional keys + find() vs match() + field clauses.
 
 **Fixture:**
 
