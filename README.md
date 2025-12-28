@@ -220,7 +220,7 @@ Quantifiers bind tighter than adjacency. Lookaheads test without consuming:
 
 ## Objects
 
-Object patterns differ fundamentally from array patterns. Rather than matching positionally, object patterns are sets of assertions about key-value pairs (called "slices").
+Object patterns differ fundamentally from array patterns. Rather than matching positionally, object patterns are lists of assertions about key-value pairs.
 
 ### Slice-Based Semantics
 
@@ -236,28 +236,28 @@ Each `K:V` term defines a **slice**: the set of key-value pairs where the key ma
 The `:>` operator adds an implication constraint: if a key matches K, its value MUST match V.
 
 ```javascript
-{ a:1 }            // matches {"a":1} and {"a":1, "b":2}
+{ a: 1 }            // matches {"a":1} and {"a":1, "b":2}
                    // At least one 'a' with value 1
 
-{ /a.*/:1 }        // matches {"ab":1, "ac":2}
+{ /a.*/: 1 }        // matches {"ab":1, "ac":2}
                    // At least one /a.*/ key with value 1 (bad entries allowed)
 
-{ /a.*/:1! }       // does NOT match {"ab":1, "ac":2}
+{ /a.*/:> 1 }       // does NOT match {"ab":1, "ac":2}
                    // "ac":2 is a bad entry (key matches /a.*/, value doesn't match 1)
 
-{ /a.*/:1! }       // matches {"ab":1, "xyz":99}
+{ /a.*/:> 1 }       // matches {"ab":1, "xyz":99}
                    // "xyz" doesn't match /a.*/, so it's not a bad entry
 
-{ a:1? }           // matches {} and {"a":1} and {"a":2}
+{ a: 1 ? }           // matches {} and {"a":1} and {"a":2}
                    // No assertion - just for binding
 
-{ a:1?!}            // matches {} and {"a":1}, but NOT {"a":2}
+{ a:> 1}            // matches {} and {"a":1}, but NOT {"a":2}
                    // No existence required, the value must be 1.
 ```
 
 Commas are optional. Multiple assertions can match the same key-value pair. 
 Terms are evaluated left-to-right, so bindings from earlier terms are visible 
-to later terms.
+to later terms. 
 
 ```javascript
 { /a|b/:/x/ /b|c/:/y/ }  // matches {"b":"xy"} - "b":"xy" satisfies both assertions
