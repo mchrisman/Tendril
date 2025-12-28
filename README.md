@@ -191,7 +191,7 @@ Tendril borrows quantifiers from regex, applying them to array elements rather t
 ?, ??, ?+          // optional (greedy, lazy, possessive)
 *, *?, *+          // zero or more (greedy, lazy, possessive)
 +, +?, ++          // one or more (greedy, lazy, possessive)
-{m,n}, {m,}, {m}   // specific repetitions (greedy, possessive)
+{m,n}, {m,}, {m}   // specific repetitions (greedy, nonpossessive)
 
 ..                 // lazy wildcard group (equivalent to _*?)
 ```
@@ -222,9 +222,8 @@ Quantifiers bind tighter than adjacency. Lookaheads test without consuming:
 
 Object patterns differ fundamentally from array patterns. Rather than matching positionally, object patterns are composed of **field clauses**—each making an assertion about key-value pairs, in the form `K:V`:
 ```
-    { a:1 b:$x }  // The object contains a property named 'b' with value 1, 
-                  // and a property named 'b' with value bound to the 
-                  // variable $x.  
+    { a:1 b:$x }  // The object contains a property named 'a' with value 1,
+                  // and a property named 'b' with value bound to $x.  
 ```
 
 ### Slice-Based Semantics
@@ -256,8 +255,8 @@ The `:>` operator, visually reminiscent of an arrow, adds an implication constra
 { a: 1 ? }           // matches {} and {"a":1} and {"a":2}
                    // No existence requirement - just for binding
 
-{ a:> 1}            // matches {} and {"b":1} and {"a":1}, but NOT {"a":2}
-                   // No existence required, the value must be 1.
+{ a:> 1}            // matches {"a":1} and {"a":1,"b":2}, but NOT {"a":2}
+                   // 'a' must exist with value 1; 'b' is uncovered, irrelevant.
 ```
 
 Commas between clauses are optional. Multiple clauses can match the same key-value pair.
@@ -270,7 +269,7 @@ visible to later ones.
 
 ### Remainder
 
-The **remainder** (`%` or `remainder`) is a special clause representing the slice of properties whose *keys* (ignoring *values*) are not touched (do not match any K of the K:V clauses).  
+The **remainder** (spelled `%`, pronounced "remainder") is a special clause representing the slice of properties whose *keys* (ignoring *values*) are not touched (do not match any K of the K:V clauses).  
 
 ```
 { a:b }            // matches {"a":"b", "c":"d"}
@@ -324,7 +323,7 @@ Tendril has two kinds of variables. **Scalar variables** (prefix `$`) capture si
 
 The syntax for variable binding is `$x=(pattern)` or `@x=(pattern)`. **Parentheses are mandatory**. 
 ```
-Tendril([1 2 3 4 5]).match("[.. $x=(2|4) $y=(_) ..]"  // two solutions: {x:2,y:3} and {x:4,y:5}
+Tendril("[.. $x=(2|4) $y=(_) ..]").match([1, 2, 3, 4, 5])  // two solutions: {x:2,y:3} and {x:4,y:5}
 ```
 You cannot use both '@x' and '$x' in the same pattern.  (The JS API treats them as the same variable 'x'. The sigil is a type marker.) 
 
@@ -342,16 +341,16 @@ Tendril("[@x @y]").match([3,4,5,6])      // five matches, {x:[], y:[3,4,5,6]}, {
 ```
 The type of variable matters **when performing replacements/edits**:
 ```
-Tendril("[$x $x]").find([1, [2, 2]]).editAll({x:_=>['the','replacement']) // ['the','replacement'] treated as a scalar 
-   // -> [1, ['the','replacement'],['the','replacement']]]
-    
-Tendril("[@x @x]").find([1, [2, 2]]).editAll({x:_=>['the','replacement'])  // ['the','replacement'] treated as a group/slice
-   // -> [1, ['the','replacement', 'the','replacement']]]
+Tendril("[$x $x]").find([1, [2, 2]]).editAll({x: _ => ['the','replacement']}) // ['the','replacement'] treated as a scalar
+   // -> [1, ['the','replacement'], ['the','replacement']]
+
+Tendril("[@x @x]").find([1, [2, 2]]).editAll({x: _ => ['the','replacement']})  // ['the','replacement'] treated as a group/slice
+   // -> [1, ['the','replacement', 'the','replacement']]
 ```
 
-**Groups in object patterns**
+**Capturing field clauses as slices**
 
-Object patterns only support group variables. Group one or more field clauses, and the variable will bind to the set of key-value pairs that match at least one of them.
+To capture a set of matching key-value pairs, use a group variable with one or more field clauses. (Scalar variables work normally within K or V positions, but capturing entire field clauses requires a group.)
 ```
 Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}) // matches with binding {x:{Big:1, Alice:3}}
 Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}).edit({x:_=>{foo:"bar"}}) // -> {foo:"bar",Cute:2}
@@ -536,7 +535,7 @@ Object quantifiers count matching key-value pairs after all matches are found (n
 ```javascript
 { /a.*/:_#{2, 4} }     // object has 2-4 keys matching /a.*/
 { /a.*/:_ #{0} }       // object has no keys matching /a.*/
-{ a:b remainder #{0} } // require no residual pairs (closed object)
+{ a:b %#{0} }          // require no residual pairs (closed object)
 ```
 
 The `#` quantifier follows a field clause and requires a specific count range. Unlike array quantifiers, object quantifiers operate globally over all key-value pairs, not sequentially.
@@ -676,9 +675,11 @@ const result = pattern.find(data).editAll({x: $ => $.x * 2});
 const result = occSet.first().edit({x: 99});
 const result = occSet.solutions().first().edit({x: 99});
 
-// Opt into mutation - If you want to perform surgery on the original data rather than a copy. 
+// Opt into mutation - If you want to perform surgery on the original data rather than a copy.
 pattern.find(data).editAll({x: 99}, {mutate: true});
 ```
+
+> **Note:** The identifier `0` is reserved internally to represent the entire match. You cannot use numeric identifiers like `$0` in patterns (the grammar requires identifiers to start with a letter or underscore), but the API exposes the whole match as `"0"` in solution objects and `replaceAll` operates on it implicitly.
 
 **Scalar vs Group replacement:** The pattern determines semantics, not the value type.
 
@@ -870,7 +871,7 @@ A_GROUP_BASE :=
     | ITEM_TERM                                # including nested ARR/OBJ
 
 A_QUANT :=
-      '?' | '??'
+      '?' | '??' | '?+'
     | '+' | '+?' | '++'
     | '*' | '*?' | '*+'
     | '{' INTEGER '}'                          # exact
@@ -885,7 +886,7 @@ OBJ := '{' O_GROUP* O_REMNANT? '}'
     # O_GROUPs parsed greedily until they stop parsing, then O_REMNANT attempted once at end
 
 # Global remainder ("unmatched entries") is a special tail clause, only once, only at end.
-# '%' is the new spelling (alias old 'remainder' if desired).
+# Spelled '%', pronounced "remainder".
 
 O_REMNANT :=
       S_GROUP '=' '(' '%' O_REM_QUANT? ')' ','?
@@ -897,6 +898,7 @@ O_REM_QUANT :=
       '#{' INTEGER (',' INTEGER?)? '}'         # #{m} or #{m,n} or #{m,}
     | '#{' ',' INTEGER '}'                     # #{,n}
     | '#' '?'                                  # shorthand for "0..∞" (same as #{0,})
+    | '?'                                      # shorthand for "0..∞" (bare ? also allowed)
 
 # --------------------------------------------------------------------
 # Object groups and terms
@@ -984,6 +986,8 @@ In the following short forms, `>` signifies "no bad values" (i.e. k~K => v~V), a
 | `K:V?`     | `K:V  #{0,} bad#{0,}`  | No existence requirement (use for binding) |
 | `K:>V?`    | `K:V  #{0,} bad#{0}`   | No bad values |
 
+> Note: The "Equivalent long form" column uses `bad#{...}` as notation to describe semantics, not actual syntax. (TODO: notation for nonmatching slice)
+
 Binding keys or values:
 ```
 { $myKey=(K):$myVal=(V) }
@@ -996,7 +1000,7 @@ Binding slices:
 { @x=(K1:V1) @x=(K2:V2) }   # asserting two slices are the same
 ```
 
-`%`, pronounced "remainder", defines the slice of fields that didn't fall into any of the declared slices or bad sets; in other words, the **entries whose keys did not match any of the field clauses, regardless of whether the values matched.**  (The predominant use case is the fall-through of unrecognized fields, not the fall-through of invalid values.)
+`%` (pronounced "remainder") defines the slice of fields that didn't fall into any of the declared slices or bad sets; in other words, the **entries whose keys did not match any of the field clauses, regardless of whether the values matched.**  (The predominant use case is the fall-through of unrecognized fields, not the fall-through of invalid values.)
 
 It may appear only once in the object pattern, only at the end. You can bind it or quantify it.
 
@@ -1074,7 +1078,7 @@ The data model is JSON-like: objects, arrays, strings, numbers, booleans, null. 
 
 ## Open Design Questions
 
-- **Bare identifiers as strings** is convenient, but creates ambiguity with future keywords and makes error messages harder ("did you mean a string or a variable?"). Already special-cased `_ true false null bad` etc; this tends to grow.
+- **Bare identifiers as strings** is convenient, but creates ambiguity with future keywords and makes error messages harder ("did you mean a string or a variable?"). Already special-cased `_ true false null else` etc; this tends to grow.
 
 - **`find()` + `..` redundancy**: The admonition ("don't combine") is good, but users will do it anyway. Could make it harmless by having the engine detect redundant `..` in root-object terms during scan.
 
@@ -1249,7 +1253,7 @@ Then:
 
 ## Golden 4: Config validation with universal object semantics + closed object
 
-**Purpose:** universal `K:V`, optional `?:`, `(!remainder)`.
+**Purpose:** universal `K:V`, optional `?:`, `(!%)`.
 
 **Fixture:**
 
@@ -1281,7 +1285,7 @@ const closed = `{ id:_ /^x_/:/^\d+$/ (!%) }`;
 **Expected:**
 
 * `closed` matches `{id:"abc", x_port:"8080", x_host:"123"}` only if *every* key is `id` or `x_*` and values satisfy.
-* A stray key should fail due to `(!remainder)`.
+* A stray key should fail due to `(!%)`.
 
 (If you prefer to validate “numbers are numbers”, use literal numeric fixtures and match with `_` and key coverage; the point is universal + remainder.)
 
@@ -1500,14 +1504,14 @@ Tendril("@(A B)") .find(data).replaceAll(["c","d","e"])
 
 
 
-3. '..' is nonintuitive and is overloaded to indicate an indeterminate sequence in arrays or an indeterminate path descent in paths.
+2. '..' is nonintuitive and is overloaded to indicate an indeterminate sequence in arrays or an indeterminate path descent in paths.
 
 **Proposal:**
 arrays: use `[... foo ...]`; also accept `[… foo …]`
 Paths: use `**` instead:  `{ foo.**.bar }`
 
 
-4. Add a very minimal EL to support
+3. Add a very minimal EL to support
     - is a number
     - is a string
     - coerce to numbr/string/boolean
@@ -1515,7 +1519,7 @@ Paths: use `**` instead:  `{ foo.**.bar }`
         - Numerical comparison, support e.g. ` [ $x where ($x<3) ] `
         - simple invertible arithmetic, support e.g. `{ foo[1+$x]:bar }`
 
-5.5. Categorization in object syntax.
+4. Categorization in object syntax.
 
 The pattern `K:(V1 else V2 else V3)` is just a special case of `K:V` where `V` is an else-chain. Therefore, the else chain is applied independently to each value, routing that property to the first Vi that matches its value, forming a partition of the domain (no overlap).
 
@@ -1546,9 +1550,9 @@ for example,
 
 \[Note: This right arrow syntax is idiosyncratic and a bit inconsistent with the rest of the document. It is meant to emphasize that the k:v slices (not V slices) are being collected across multiple keys rather than simply enclosing part of the V pattern with parentheses. ]
 
-6. Defaults for nomatching bindings?
+5. Defaults for nomatching bindings?
 
-7. Recursive descent
+6. Recursive descent
 
 A breadcrumb path is really just an array of instructions for navigating somewhere else in the structure.
 

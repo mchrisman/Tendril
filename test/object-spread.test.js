@@ -8,49 +8,49 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Tendril } from '../src/tendril-api.js';
 
-test('valid: remainder at end {k:$v remainder}', () => {
-  const t = Tendril('{k:$v remainder}');
+test('valid: % at end {k:$v %}', () => {
+  const t = Tendril('{k:$v %}');
   const matchSet = t.match({k: 1, extra: 2});
   assert.ok(matchSet.hasMatch(), 'Should match with extra keys');
 });
 
-test('valid: group binding at end {k:$v @rest=(remainder)}', () => {
-  const t = Tendril('{k:$v @rest=(remainder)}');
+test('valid: group binding at end {k:$v @rest=(%)}', () => {
+  const t = Tendril('{k:$v @rest=(%)}');
   const matchSet = t.match({k: 1, extra: 2});
   assert.ok(matchSet.hasMatch(), 'Should match');
   const sol = matchSet.solutions().first();
   assert.deepEqual(sol.rest, {extra: 2});
 });
 
-test('invalid: remainder at beginning throws', () => {
+test('invalid: % at beginning throws', () => {
   try {
-    const t = Tendril('{remainder k:$v}');
+    const t = Tendril('{% k:$v}');
     t.match({});  // Trigger compilation
     assert.fail('Should have thrown parse error');
   } catch (e) {
-    assert.ok(e.message.includes('expected }'), 'Error indicates remainder must be at end');
+    assert.ok(e.message.includes('expected }'), 'Error indicates % must be at end');
   }
 });
 
-test('invalid: remainder in middle throws', () => {
+test('invalid: % in middle throws', () => {
   try {
-    const t = Tendril('{k:$v remainder m:$n}');
+    const t = Tendril('{k:$v % m:$n}');
     t.match({});  // Trigger compilation
     assert.fail('Should have thrown parse error');
   } catch (e) {
-    assert.ok(e.message.includes('expected }'), 'Error indicates remainder must be at end');
+    assert.ok(e.message.includes('expected }'), 'Error indicates % must be at end');
   }
 });
 
 test('group binding captures residual keys', () => {
-  const t = Tendril('{a:$x @rest=(remainder)}');
+  const t = Tendril('{a:$x @rest=(%)}');
   const sol = t.match({a: 1, b: 2, c: 3}).solutions().first();
   assert.equal(sol.x, 1);
   assert.deepEqual(sol.rest, {b: 2, c: 3});
 });
 
 test('group bindings with patterns match whole object, can overlap', () => {
-  const t = Tendril('{@a=(/[ab]/:_) @b=(/[bc]/:_) @c=(remainder)}');
+  const t = Tendril('{@a=(/[ab]/:_) @b=(/[bc]/:_) @c=(%)}');
   const matchSet = t.match({b: 1, x: 2});
   assert.ok(matchSet.hasMatch(), 'Should match');
   const sol = matchSet.solutions().first();

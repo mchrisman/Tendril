@@ -6,7 +6,7 @@
  * - K:>V = slice exists, no bad entries (implication)
  * - K:V? = optional (no existence assertion)
  * - K:>V? = implication only (no existence, no bad entries)
- * - % = remainder (keys not covered by any key pattern)
+ * - % = % (keys not covered by any key pattern)
  * - $ = closed object (short for %#{0})
  *
  * Run with: node --test test/object-semantics-v2.test.js
@@ -39,7 +39,7 @@ test('K:V with literal key - basic match', () => {
 });
 
 test('K:V with literal key - extra keys allowed', () => {
-  // Extra keys are in the remainder, which has no constraint by default
+  // Extra keys are in the %, which has no constraint by default
   assert.ok(matches('{a:1}', {a: 1, b: 2}));
 });
 
@@ -81,7 +81,7 @@ test('K:>V with regex key - forbids bad entries', () => {
   assert.ok(!matches('{/a.*/:>1}', {ab: 1, ac: 2}),
     'K:>V should forbid bad entries (key matches but value differs)');
 
-  // Keys not matching /a.*/ are fine (they're in remainder, not bad)
+  // Keys not matching /a.*/ are fine (they're in %, not bad)
   assert.ok(matches('{/a.*/:>1}', {ab: 1, xyz: 99}));
 });
 
@@ -135,33 +135,33 @@ test('K:>V? with regex key - validate without requiring existence', () => {
   assert.ok(!matches('{/secret/:>/^\\*+$/?}', {api_secret: 'exposed'}));
 });
 
-// ==================== % (remainder) ====================
+// ==================== % (%) ====================
 
-test('% alone - asserts nonempty remainder', () => {
-  // {% } means "remainder must be nonempty"
+test('% alone - asserts nonempty %', () => {
+  // {% } means "% must be nonempty"
   assert.ok(matches('{%}', {a: 1}));
   assert.ok(matches('{%}', {a: 1, b: 2}));
-  assert.ok(!matches('{%}', {}), '% should require nonempty remainder');
+  assert.ok(!matches('{%}', {}), '% should require nonempty %');
 });
 
-test('% with assertions - remainder is uncovered keys', () => {
+test('% with assertions - % is uncovered keys', () => {
   // {a:1 %} means "a:1 must match AND there must be other keys"
   assert.ok(matches('{a:1 %}', {a: 1, b: 2}));
-  assert.ok(!matches('{a:1 %}', {a: 1}), 'No remainder when only a exists');
+  assert.ok(!matches('{a:1 %}', {a: 1}), 'No % when only a exists');
 });
 
-test('%#{n} - count constraint on remainder', () => {
+test('%#{n} - count constraint on %', () => {
   assert.ok(matches('{a:1 %#{1}}', {a: 1, b: 2}));
   assert.ok(!matches('{a:1 %#{1}}', {a: 1, b: 2, c: 3}));
   assert.ok(matches('{a:1 %#{2}}', {a: 1, b: 2, c: 3}));
 });
 
-test('%#{0} - empty remainder (explicit closed object)', () => {
+test('%#{0} - empty % (explicit closed object)', () => {
   assert.ok(matches('{a:1 %#{0}}', {a: 1}));
   assert.ok(!matches('{a:1 %#{0}}', {a: 1, b: 2}));
 });
 
-test('@rest=(%) - bind remainder', () => {
+test('@rest=(%) - bind %', () => {
   const result = extract('{a:1 @rest=(%)}', {a: 1, b: 2, c: 3});
   assert.ok(result);
   assert.deepEqual(result.rest, {b: 2, c: 3});
@@ -191,25 +191,25 @@ test('$ alone - empty object', () => {
 
 // ==================== Remainder is coverage-based ====================
 
-test('remainder excludes keys covered by key patterns', () => {
+test('% excludes keys covered by key patterns', () => {
   // With {/a.*/:1}, all keys matching /a.*/ are "covered", regardless of value
-  // So remainder = keys NOT matching /a.*/
+  // So % = keys NOT matching /a.*/
 
-  // {ab:1, xyz:99} - 'ab' covered by /a.*/, 'xyz' is remainder
+  // {ab:1, xyz:99} - 'ab' covered by /a.*/, 'xyz' is %
   const result = extract('{/a.*/:1 @rest=(%)}', {ab: 1, xyz: 99});
   assert.ok(result);
-  assert.deepEqual(result.rest, {xyz: 99}, 'xyz should be in remainder');
+  assert.deepEqual(result.rest, {xyz: 99}, 'xyz should be in %');
 });
 
-test('bad entries are covered (not in remainder)', () => {
+test('bad entries are covered (not in %)', () => {
   // {ab:1, ac:2} with pattern {/a.*/:1}
   // Both ab and ac match /a.*/, so both are covered
   // ab:1 is in slice, ac:2 is in bad set
-  // Neither is in remainder
+  // Neither is in %
 
   const result = extract('{/a.*/:1 @rest=(%?)}', {ab: 1, ac: 2});
   assert.ok(result);
-  assert.deepEqual(result.rest, {}, 'ac:2 should be covered, not remainder');
+  assert.deepEqual(result.rest, {}, 'ac:2 should be covered, not %');
 });
 
 // ==================== Multiple K:V terms ====================

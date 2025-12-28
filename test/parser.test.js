@@ -55,16 +55,16 @@ test('object quantifier - negative should throw', () => {
   assert.throws(() => parsePattern('{ a:b #{-2} }'));
 });
 
-test('remainder quantifier - valid integer', () => {
+test('% quantifier - valid integer', () => {
   const ast = parsePattern('{ a:b %#{2} }');
   assert.equal(ast.type, 'Obj');
 });
 
-test('remainder quantifier - decimal should throw', () => {
+test('% quantifier - decimal should throw', () => {
   assert.throws(() => parsePattern('{ a:b %#{1.5} }'));
 });
 
-test('remainder quantifier - negative should throw', () => {
+test('% quantifier - negative should throw', () => {
   assert.throws(() => parsePattern('{ a:b %#{-2} }'));
 });
 

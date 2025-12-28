@@ -189,29 +189,29 @@ test('array nested', () => {
 test('empty object', () => {
   assert.ok(matches('{}', {}));
   assert.ok(matches('{}', {a: 1})); // no assertions = all assertions satisfied
-  assert.ok(!matches('{(!remainder)}', {a: 1})); // explicitly forbid keys with (!remainder)
+  assert.ok(!matches('{(!%)}', {a: 1})); // explicitly forbid keys with (!%)
 });
 
 test('object single property', () => {
   assert.ok(matches('{a:1}', {a: 1}));
   assert.ok(!matches('{a:1}', {}));
   assert.ok(!matches('{a:1}', {a: 2}));
-  assert.ok(matches('{a:1}', {a: 1, b: 2})); // extra keys allowed without remainder
-  assert.ok(!matches('{a:1 (!remainder)}', {a: 1, b: 2})); // (!remainder) forbids extra keys
+  assert.ok(matches('{a:1}', {a: 1, b: 2})); // extra keys allowed without %
+  assert.ok(!matches('{a:1 (!%)}', {a: 1, b: 2})); // (!%) forbids extra keys
 });
 
 test('object multiple properties', () => {
   assert.ok(matches('{a:1 b:2}', {a: 1, b: 2}));
   assert.ok(!matches('{a:1 b:2}', {a: 1}));
   assert.ok(matches('{a:1 b:2}', {a: 1, b: 2, c: 3})); // extra keys allowed
-  assert.ok(!matches('{a:1 b:2 (!remainder)}', {a: 1, b: 2, c: 3})); // (!remainder) forbids extras
+  assert.ok(!matches('{a:1 b:2 (!%)}', {a: 1, b: 2, c: 3})); // (!%) forbids extras
 });
 
-test('object with remainder binding', () => {
-  // Use remainder? to allow empty residual (bare remainder requires nonempty)
-  assert.ok(matches('{a:1 @x=(remainder?)}', {a: 1}));
-  assert.ok(matches('{a:1 @x=(remainder)}', {a: 1, b: 2, c: 3}));
-  assert.ok(!matches('{a:1 @x=(remainder)}', {b: 2}));
+test('object with % binding', () => {
+  // Use %? to allow empty residual (bare % requires nonempty)
+  assert.ok(matches('{a:1 @x=(%?)}', {a: 1}));
+  assert.ok(matches('{a:1 @x=(%)}', {a: 1, b: 2, c: 3}));
+  assert.ok(!matches('{a:1 @x=(%)}', {b: 2}));
 });
 
 test('object wildcard key', () => {
@@ -539,10 +539,10 @@ test('greedy quantifiers - optional object emits longest match first', () => {
     {tag: 'span', children: 'after'}
   ];
 
-  // Use remainder? to allow empty residual (bare remainder requires nonempty)
+  // Use %? to allow empty residual (bare % requires nonempty)
   const pattern = `[.. @whenelse=(
-    {tag:when/i @otherProps=(remainder)}
-    {tag:else/i children:$else remainder?}?
+    {tag:when/i @otherProps=(%)}
+    {tag:else/i children:$else %?}?
   ) ..]`;
 
   const solutions = Tendril(pattern).match(input).solutions().toArray();
@@ -567,10 +567,10 @@ test('replace uses first solution only (longest match)', () => {
     {tag: 'span', children: 'after'}
   ];
 
-  // Use remainder? to allow empty residual (bare remainder requires nonempty)
+  // Use %? to allow empty residual (bare % requires nonempty)
   const pattern = `[.. @whenelse=(
-    {tag:when/i @otherProps=(remainder)}
-    {tag:else/i children:$else remainder?}?
+    {tag:when/i @otherProps=(%)}
+    {tag:else/i children:$else %?}?
   ) ..]`;
 
   // editAll is now PURE (returns copy)
@@ -583,6 +583,36 @@ test('replace uses first solution only (longest match)', () => {
   assert.equal(result[1].tag, 'when');
   assert.equal(result[1].children2, 'or this');
   assert.equal(result[1].condition, true);
+});
+
+// ==================== Possessive Quantifiers ====================
+
+test('possessive optional ?+ does not backtrack', () => {
+  // ?+ consumes if possible and never gives back
+  // [1?+ 1] should NOT match [1] because ?+ consumes the 1 and won't backtrack
+  assert.ok(!matches('[1?+ 1]', [1]));
+  // But it should match [1, 1] - first 1 consumed by ?+, second by literal
+  assert.ok(matches('[1?+ 1]', [1, 1]));
+  // And [] 1 should fail (no 1 for the required literal)
+  assert.ok(!matches('[1?+ 1]', []));
+});
+
+test('possessive zero-or-more *+ does not backtrack', () => {
+  // [1*+ 1] should NOT match [1] because *+ consumes all 1s greedily
+  assert.ok(!matches('[1*+ 1]', [1]));
+  // Should not match [1,1,1] either - *+ takes all, none left for literal
+  assert.ok(!matches('[1*+ 1]', [1, 1, 1]));
+  // But [1*+ 2] should match [1,1,1,2]
+  assert.ok(matches('[1*+ 2]', [1, 1, 1, 2]));
+});
+
+test('possessive one-or-more ++ does not backtrack', () => {
+  // [1++ 1] needs at least one 1 for ++, then another for literal
+  assert.ok(!matches('[1++ 1]', [1])); // ++ takes it, none left
+  assert.ok(!matches('[1++ 1]', [1, 1])); // ++ takes both, none left
+  // But [1++ 2] should match [1,2]
+  assert.ok(matches('[1++ 2]', [1, 2]));
+  assert.ok(matches('[1++ 2]', [1, 1, 1, 2]));
 });
 
 // ==================== Edge Cases ====================

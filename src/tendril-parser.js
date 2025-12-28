@@ -398,13 +398,14 @@ function parseAGroupBase(p) {
 // isAQuant removed - use backtracking with parseAQuant instead
 
 function parseAQuant(p) {
-  // A_QUANT := '?' | '??'
+  // A_QUANT := '?' | '??' | '?+'
   //          | '+' | '+?' | '++'
   //          | '*' | '*?' | '*+'
   //          | '{' INTEGER '}'
   //          | '{' INTEGER ',' INTEGER? '}'
   //          | '{' ',' INTEGER '}'
 
+  if (p.maybe('?+')) return {op: '?+', min: 0, max: 1};
   if (p.maybe('??')) return {op: '??', min: 0, max: 1};
   if (p.maybe('?'))  return {op: '?', min: 0, max: 1};
   if (p.maybe('++')) return {op: '++', min: 1, max: null};
@@ -472,18 +473,16 @@ function parseObj(p) {
 }
 
 function parseORemnant(p) {
-  // O_REMNANT := '@' IDENT '=' '(' ('%' | 'remainder') ')' O_REM_QUANT?
-  //            | ('%' | 'remainder') O_REM_QUANT?
+  // O_REMNANT := '@' IDENT '=' '(' '%' ')' O_REM_QUANT?
+  //            | '%' O_REM_QUANT?
   //            | '$'                                      // shortcut for %#{0}
-  //            | '(!' ('%' | 'remainder') ')'            // closed-object assertion
+  //            | '(!' '%' ')'                             // closed-object assertion
 
-  // Helper to check if current token is remainder marker (% or 'remainder')
-  const isRemainderMarker = () =>
-    p.peek('%') || (p.peek('id') && p.peek().v === 'remainder');
+  // Helper to check if current token is remainder marker (%)
+  const isRemainderMarker = () => p.peek('%');
 
   const eatRemainderMarker = () => {
     if (p.peek('%')) return p.eat('%');
-    if (p.peek('id') && p.peek().v === 'remainder') return p.eat('id');
     return null;
   };
 
@@ -501,8 +500,8 @@ function parseORemnant(p) {
   });
   if (closedObj) return closedObj;
 
-  // Try @x=(%) or @x=(%?) or @x=(remainder) with optional quantifier
-  // Syntax: @x=(%) - variable, equals, then parens around remainder marker
+  // Try @x=(%) or @x=(%?) with optional quantifier
+  // Syntax: @x=(%) - variable, equals, then parens around %
   const bindRemnant = p.backtrack(() => {
     if (!p.peek('@')) return null;
     p.eat('@');
@@ -526,14 +525,14 @@ function parseORemnant(p) {
   });
   if (bindRemnant) return bindRemnant;
 
-  // Try bare '%' or 'remainder' with optional quantifier
+  // Try bare '%' with optional quantifier
   const bareRemnant = p.backtrack(() => {
     if (!isRemainderMarker()) return null;
     eatRemainderMarker();
-    // Handle %? or remainder? shorthand for optional (can be empty)
+    // Handle %? shorthand for optional (can be empty)
     let quant = null;
     if (p.maybe('?')) {
-      quant = {min: 0, max: null}; // %? or remainder? means 0..∞
+      quant = {min: 0, max: null}; // %? means 0..∞
     } else {
       quant = parseRemainderQuant(p);
     }
@@ -542,7 +541,7 @@ function parseORemnant(p) {
   });
   if (bareRemnant) return bareRemnant;
 
-  // Try (!%) or (!remainder)
+  // Try (!%)
   const negRemnant = p.backtrack(() => {
     if (!p.peek('(!')) return null;
     p.eat('(!');
@@ -554,9 +553,9 @@ function parseORemnant(p) {
   });
   if (negRemnant) return negRemnant;
 
-  // Check for common mistake: using '..' instead of '%' or 'remainder'
+  // Check for common mistake: using '..' instead of '%'
   if (p.peek('..')) {
-    p.fail('bare ".." not allowed in objects; use "%" or "remainder" instead');
+    p.fail('bare ".." not allowed in objects; use "%" instead');
   }
 
   return null;

@@ -137,6 +137,7 @@ export function tokenize(src) {
     if (c2 === '..')  { push('..', '..', 2); continue; }
     if (c2 === ':>')  { push(':>', ':>', 2); continue; }   // implication operator (K implies V)
     if (c2 === '??')  { push('??', '??', 2); continue; }   // lazy optional
+    if (c2 === '?+')  { push('?+', '?+', 2); continue; }   // possessive optional
     if (c2 === '++')  { push('++', '++', 2); continue; }   // possessive plus
     if (c2 === '*+')  { push('*+', '*+', 2); continue; }   // possessive star
     if (c2 === '+?')  { push('+?', '+?', 2); continue; }   // lazy plus

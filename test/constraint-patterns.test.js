@@ -48,12 +48,12 @@ test('negative assertion with already-bound variable - fails when present', () =
 });
 
 test('closed object assertion - no residual keys', () => {
-  const result = Tendril('{a:1 (!remainder)}').match({a: 1}).solutions().toArray();
+  const result = Tendril('{a:1 (!%)}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 1);
 });
 
 test('closed object assertion - fails with extra keys', () => {
-  const result = Tendril('{a:1 (!remainder)}').match({a: 1, b: 2}).solutions().toArray();
+  const result = Tendril('{a:1 (!%)}').match({a: 1, b: 2}).solutions().toArray();
   assert.equal(result.length, 0);
 });
 
@@ -63,7 +63,7 @@ test('multiple negative assertions', () => {
 });
 
 test('negative assertion does not leak bindings', () => {
-  // Variables bound inside (!remainder) should not escape
+  // Variables bound inside (!%) should not escape
   const result = Tendril('{(!$x:1) a:2}').match({a: 2}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.equal(result[0].x, undefined); // x should not be bound
@@ -135,14 +135,14 @@ test('array group binding with pattern - any elements', () => {
 // ============================================================================
 
 test('object group binding - residual keys', () => {
-  const result = Tendril('{a:1 @x=(remainder)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
+  const result = Tendril('{a:1 @x=(%)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {b: 2, c: 3});
 });
 
 test('object group binding - empty residual', () => {
-  // Use remainder? to allow empty residual (bare remainder requires nonempty)
-  const result = Tendril('{a:1 @x=(remainder?)}').match({a: 1}).solutions().toArray();
+  // Use %? to allow empty residual (bare % requires nonempty)
+  const result = Tendril('{a:1 @x=(%?)}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {});
 });
