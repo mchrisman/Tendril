@@ -419,6 +419,27 @@ When the same variable appears multiple times, all occurrences must match the sa
                        // $x='a' doesn't unify with $x='b'
 ```
 
+Unification works the same way in objects—variables unify across field clauses, and even between keys and values:
+
+```javascript
+// Cross-clause unification: name must match on both paths
+{ name:$name  creditCard:{name:$name} }
+// Matches if person's name equals the name on their credit card
+
+// Key-value unification: the key must equal the nested id
+{ $id:{id:$id} }
+// Matches {"3": {id: "3", name: "Alice"}} but not {"3": {id: "4", name: "Bob"}}
+
+// Self-referential: all keys must equal their values
+{ $x:$x }
+// Matches {a: "a", b: "b"} but not {a: "b"}
+
+// Caution: wildcards with unbound variables can explode solutions
+{ _:$x }
+// With $x unbound: cannot fail, every value becomes a separate solution
+// With $x already bound: asserts all values equal $x
+```
+
 The syntax `$x=(PATTERN)` binds variable `$x` if `PATTERN` matches and the matched value is a single item. Bare `$x` is shorthand for `$x=(_)`.
 
 ### Using scalars to force single-item matches
@@ -535,35 +556,39 @@ Lookaheads test conditions without consuming data:
 
 ### "Same-values" idiom
 
-❌ "K:V!!" does not mean all values are the same; it merely means all values (individually) match V.
+❌ "K:>V" does not mean all values are the same; it merely means all values (individually) match V.
 
 ```
     // Does not demand that all the colors are the same.
-    "{ $k=(/color/):$c !! }" matches {backgroundColor:"green", color:"white"}
+    "{ $k=(/color/):>$c }" matches {backgroundColor:"green", color:"white"}
     // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}] 
 ```
 
 ✅ Use this idiom to enforce universal equality over values:
 
 ```
-    "{ $k=(/color/):$c  $k=(/color/):$c!! }"
+    "{ $k=(/color/):$c  $k=(/color/):>$c }"
 ```
 
 It works because variables unify across terms.
 
-In arrays:
+### Lookaheads `(? )`, negative lookaheads `(! )`
 
-```javascript
+In array context, a positive lookahead matches the next subsequence but does not consume it.
+```
 [ (? $x=(/[ab]/)) $x .. ]  // first element must match /[ab]/, bind to $x
-
+```
+A negative look ahead cannot have bindings.
+```
 [ (! .. 3 4) .. ]           // array must not contain [3,4] subsequence
 ```
 
-In objects:
+In objects, a positive lookahead is redundant. But you can have negative lookaheads:
 
-```javascript
-{ (? a:$x) b:$x }           // assert a exists, bind its value, require b equals it
-{ (! secret:_) .. }         // assert no key named 'secret' exists
+```
+{ (! secret:_) }      // assert no key named 'secret' exists
+{ (! secret:>yes) }   // assert no key named 'secret' exists, or some secret key does not have value "yes"
+
 ```
 
 ## Precedence
