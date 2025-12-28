@@ -141,7 +141,7 @@ This is a **local cut**: it prevents backtracking *into* P, but not backtracking
 
 3. **Eager scalar binding:**
    ```
-   ($x=once(pattern))
+   $x=(once(pattern))
    ```
    Binds `x` to the first match of `pattern`, doesn't enumerate alternatives.
 
@@ -156,7 +156,7 @@ This is a **local cut**: it prevents backtracking *into* P, but not backtracking
 `once` is a general-purpose pattern operator, not special binding syntax:
 
 * `once(P)` — anywhere a pattern is expected
-* `($x=once(P))` — eager binding (regular binding with once-wrapped pattern)
+* `$x=(once(P))` — eager binding (regular binding with once-wrapped pattern)
 * `{ once($k):V }` — eager key binding
 * `once(A|B)` — first successful alternative only
 
@@ -217,7 +217,7 @@ If key patterns are handled specially (direct iteration without matchItem), ensu
 
 1. **Basic truncation:**
    * `once(_|_)` yields one solution where `(_|_)` yields multiple
-   * `($x=once(pattern))` binds once vs `($x=pattern)` binds multiple times
+   * `$x=(once(pattern))` binds once vs `$x=(pattern)` binds multiple times
 
 2. **Backtracking prevention:**
    * Pattern where first witness fails downstream but second would succeed
@@ -234,7 +234,7 @@ If key patterns are handled specially (direct iteration without matchItem), ensu
 
 5. **Composition:**
    * `once(once(P))` — should behave same as `once(P)`
-   * `once(($x=P))` — eager binding via wrapping
+   * `once($x=(P))` — eager binding via wrapping
 
 ---
 
@@ -251,7 +251,7 @@ If key patterns are handled specially (direct iteration without matchItem), ensu
 * **One concept instead of two** — no "eager binding" vs "once operator" distinction
 * **Composable** — works anywhere, not just in binding position
 * **Same implementation complexity** — wrapping emit is the same either way
-* **Cleaner** — `($x=once(P))` is regular binding with a once-wrapped pattern
+* **Cleaner** — `$x=(once(P))` is regular binding with a once-wrapped pattern
 
 ## Relationship to cut
 

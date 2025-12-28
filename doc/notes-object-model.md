@@ -42,7 +42,7 @@ Example:
 Unbound variables in K:V create branches, as usual. Slice variables in objects denote sets of K:V pairs, as before.
 
 ```
-    "{ @X=(/a/:_ /b/:_) ($y=/c/):_ } ~= {a1:1,a2:2,b:3,c1:4,c2:5,d:6} 
+    "{ @X=(/a/:_ /b/:_) $y=(/c/):_ } ~= {a1:1,a2:2,b:3,c1:4,c2:5,d:6} 
      // ==> True, solutions:
      // {X:{a1:1,a2:2,b:3},y:'c1'}, {X:{a1:1,a2:2,b:3},y:'c2'}, 
 ```     
@@ -63,7 +63,7 @@ Variables unify across terms:
 ```
 Variables unify between K and V:
 ```
-    // Reminder: bare $id is shorthand for ($id=_)
+    // Reminder: bare $id is shorthand for $id=(_)
     { $id:{id:$id} }  // The items are correctly indexed by ID
     
     matches { "3", {name='Mark', id:3},
@@ -73,7 +73,7 @@ Variables unify between K and V:
 ```
 Variables do not unify across keys (we always iterate over properties):
 ```
-    { ($k=/color/):$c }  // Does not demand that all the IDs are the same.
+    { $k=(/color/):$c }  // Does not demand that all the IDs are the same.
     // => matches {backgroundColor:"green", color:"white"}
     // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}] 
 ```
@@ -95,7 +95,7 @@ And the idiom for categorization/fallback is
 
 And while the idiom for binding a slice generally and logically encompasses *sets of k,v pairs*,
 
-    `{ (@s= K1:V1 K2:V2) }`, if it matches, defines the slice of all properties k,v matching (k~K1 AND v~V1 OR k~K2 AND v~V2)
+    `{ @s=( K1:V1 K2:V2) }`, if it matches, defines the slice of all properties k,v matching (k~K1 AND v~V1 OR k~K2 AND v~V2)
 
 This idiosyncratic idiom is for binding slices defined by the 'else' branches:
 
@@ -127,8 +127,8 @@ Syntax:
 ```
    "{ KV_TERMS % }" - Asserts the remainder is not empty.  
    "{ KV_TERMS (!%) }" - Asserts the remainder is empty, i.e. "anchored" pattern.  
-   "{ KV_TERMS (@S=%) }" - Binds the remainder to @S and asserts not empty
-   "{ KV_TERMS (@S=%?) }" - Binds the remainder to @S, may be empty
+   "{ KV_TERMS @S=(%) }" - Binds the remainder to @S and asserts not empty
+   "{ KV_TERMS @S=(%?) }" - Binds the remainder to @S, may be empty
    
 ```
 
@@ -148,7 +148,7 @@ Syntax:
 4. Choose A if any branch works. :
 ```
 [ 
-  [(.. @x $y) else (.. (@x=1))] 
+  [(.. @x $y) else (.. @x=(1))] 
   [$y]
 ]:
  
@@ -199,10 +199,10 @@ Tendril("{
   
   // to entities that may impact teams
   (
-      data[($mapv=teams)][_]?:{id:($impacted=$targid), name $tname, projectIds?:[...$projId...]}
-     | data[($mapv=users)][_]?:{id:$targid, name:$uname, teamId?:($impacted=$tid)}
-     | data[($mapv=projects)][_]?:{id:$targid, name:$pname}
-       data[($mapv=teams)][_]?:{id:$impacted, projectIds?:[...$targId...]}
+      data[$mapv=(teams)][_]?:{id:$impacted=($targid), name $tname, projectIds?:[...$projId...]}
+     | data[$mapv=(users)][_]?:{id:$targid, name:$uname, teamId?:$impacted=($tid)}
+     | data[$mapv=(projects)][_]?:{id:$targid, name:$pname}
+       data[$mapv=(teams)][_]?:{id:$impacted, projectIds?:[...$targId...]}
   )
   
 }")
@@ -295,11 +295,11 @@ OK. now tell me if I can use this 'else' semantics to solve one of my other big 
 
 The replacement object pattern specification would look like this.
 
-`(@slice= K::V)` means, in some fashion that is understandable but rigorous and commutative: let @slice be the set of all k:v properties of the object for which k~K; and assert that (for all k:v in @slice, (k~K and v~V)), and that the slice is nonempty.
+`@slice=( K::V)` means, in some fashion that is understandable but rigorous and commutative: let @slice be the set of all k:v properties of the object for which k~K; and assert that (for all k:v in @slice, (k~K and v~V)), and that the slice is nonempty.
 
 The phrase `K:: (V_A else V_B)` is then well-defined, from that definition and our definition of 'else'. This categorizes the properties of the slice into two buckets A and B, which may be captured by the special syntax
 
-    `K:: (@A=V_A else @B=V_B)`
+    `K:: @A=(V_A else @B=V_B)`
 
 which implies @A,@B is a partition of @slice (if I'm right).
 

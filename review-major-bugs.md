@@ -68,7 +68,7 @@ If you want README behavior: `typeof node === 'string'` before testing.
 
 ### 1) Object group binding collects keys incorrectly
 
-In object `GroupBind` for `(@var=pattern)`, you do:
+In object `GroupBind` for `@var=(pattern)`, you do:
 
 ```js
 const matchedKeys = new Set();
@@ -98,11 +98,11 @@ Parser implements `O_QUANT` as `#` followed by `{...}` (or `#?`) and attaches it
 
 ### 3) “Scalar bindings can’t bind sequences” is enforced inconsistently
 
-Engine rejects `($x=Seq)` at top-level (`SBind` case checks `item.pat.type === 'Seq'`), but the parser can generate `SBind(name, Seq)` inside arrays for `($x=1? 2?)`-style constructs. That means patterns the README explicitly advertises can fail unexpectedly depending on where they occur.
+Engine rejects `$x=(Seq)` at top-level (`SBind` case checks `item.pat.type === 'Seq'`), but the parser can generate `SBind(name, Seq)` inside arrays for `$x=(1? 2?)`-style constructs. That means patterns the README explicitly advertises can fail unexpectedly depending on where they occur.
 
 You probably want a clearer rule:
 
-* `($x=...)` in *array context* can bind a **single element** only (so inner pattern must match exactly one element), *or*
+* `$x=(...)` in *array context* can bind a **single element** only (so inner pattern must match exactly one element), *or*
 * allow `$x` to bind a whole subarray only when the value itself is an array (which is what “scalar” currently means in your API examples)
 
 Right now it’s a bit muddled.

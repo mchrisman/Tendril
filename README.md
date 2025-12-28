@@ -93,8 +93,8 @@ regardless of how distant the two nodes are in the tree.
 
 ```js
 Tendril(`{
-  .. ($L= { tag:'label', props:{for:$id}, children:[$text]   } )
-  ..      { tag:'input', props:{id:$id (@p=placeholder:_?) } }
+  .. $L=( { tag:'label', props:{for:$id}, children:[$text]   } )
+  ..      { tag:'input', props:{id:$id @p=(placeholder:_?) } }
 }`)
 .find(vdom)
 .editAll({
@@ -287,10 +287,10 @@ The **remainder** (`%` or `remainder`) consists of keys NOT covered by any key p
 Bind the remainder to capture it:
 
 ```
-{ a:b (@rest=%) }    // matches {"a":"b", "c":"d"}, binds {"c":"d"} to @rest
+{ a:b @rest=(%) }    // matches {"a":"b", "c":"d"}, binds {"c":"d"} to @rest
                      // Note: requires nonempty remainder
 
-{ a:b (@rest=%?) }   // also matches {"a":"b"}, binds {} to @rest
+{ a:b @rest=(%?) }   // also matches {"a":"b"}, binds {} to @rest
                      // %? allows empty remainder
 ```
 
@@ -315,14 +315,14 @@ Negation uses lookahead syntax:
 
 ## Binding Variables
 
-Tendril has two kinds of variables. **Scalar variables** (prefix `$`) capture single values.  **Group variables** (prefix `@`) capture contiguous subsequences in arrays, or subsets of properties of objects. Groups are like slices, neither a single element nor the entire array/object.
+Tendril has two kinds of variables. **Scalar variables** (prefix `$`) capture single values.  **Group variables** (prefix `@`) capture contiguous subsequences in arrays (**array slices**), or subsets of properties of objects (**object slices**). 
 
-The syntax for variable binding is `($x=pattern)` or `(@x=pattern)`. **Parentheses are mandatory**. 
+The syntax for variable binding is `$x=(pattern)` or `@x=(pattern)`. **Parentheses are mandatory**. 
 ```
-Tendril([1 2 3 4 5]).match("[.. ($x=2|4) ($y=_) ..]"  // two solutions: {x:2,y:3} and {x:4,y:5}
+Tendril([1 2 3 4 5]).match("[.. $x=(2|4) $y=(_) ..]"  // two solutions: {x:2,y:3} and {x:4,y:5}
 ```
 
-`$x` (without the pattern) is short for `($x=_)`, and `@x` is short for `(@x=_*)`.  
+`$x` (without the pattern) is short for `$x=(_)`, and `@x` is short for `@x=(_*)`.  
 
 ```
 Tendril("[3 4 $x $y]").match([3,4,5,6])  // one match, with bindings {x:5, y:6}
@@ -346,14 +346,14 @@ Tendril("[@x @x]").find([1, [2, 2]]).editAll({x:_=>['the','replacement'])  // ['
 **Groups in object patterns**
 
 Object patterns only support group variables. Group one or more predicates, and the variable will bind to the set of key-value pairs that match at least one of them.
-
-Tendril("{ (@x=/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}) // matches with binding {x:{Big:1, Alice:3}}
-Tendril("{ (@x=/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}).edit({x:_=>{foo:"bar"}}) // -> {foo:"bar",Cute:2}
-
+```
+Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}) // matches with binding {x:{Big:1, Alice:3}}
+Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}).edit({x:_=>{foo:"bar"}}) // -> {foo:"bar",Cute:2}
+```
 
 ### Scalars
 
-Scalars capture exactly one item. In arrays, this means one element. In objects, one key or one value:
+Scalars capture exactly one item. In arrays, this means one element. In objects, one key or one value.
 
 ```javascript
 // Multiple solutions
@@ -366,11 +366,10 @@ Tendril("[ .. $x .. ]")
 Tendril("[ $x .. ]")
   .match(["a", "b"])
   .solutions()
-  .first()
-// → {x: "a"}
+// → SolutionSet with {x: "a"}
 ```
 
-Each possible binding creates a separate solution. The scalar `$x` must bind to a single value, so the first pattern generates two solutions (one for each element), while the second generates only one (binding to the first element).
+Each possible binding creates a separate **solution**. The scalar `$x` must bind to a single value, so the first pattern generates two solutions (one for each element), while the second generates only one (binding to the first element).
 
 ### Groups
 
@@ -407,14 +406,14 @@ When the same variable appears multiple times, all occurrences must match the sa
 [ $x .. $x ]       // does NOT match ["a", "other", "b"]
                    // $x can't be both "a" and "b"
 
-[ $x ($x=/[ab]/) $y ]  // matches ['a', 'a', 'y']
+[ $x $x=(/[ab]/) $y ]  // matches ['a', 'a', 'y']
                        // $x binds to 'a', matches /[ab]/, unifies
 
-[ $x ($x=/[ab]/) $y ]  // does NOT match ['a', 'b', 'y']
+[ $x $x=(/[ab]/) $y ]  // does NOT match ['a', 'b', 'y']
                        // $x='a' doesn't unify with $x='b'
 ```
 
-The syntax `($x=PATTERN)` binds variable `$x` if `PATTERN` matches and the matched value is a single item. Bare `$x` is shorthand for `($x=_)`.
+The syntax `$x=(PATTERN)` binds variable `$x` if `PATTERN` matches and the matched value is a single item. Bare `$x` is shorthand for `$x=(_)`.
 
 ### Using scalars to force single-item matches
 
@@ -422,11 +421,12 @@ Scalar variables are constrained to match only single items, not groups. This ef
 ```
 [1? 2?]            // matches [], [1], [2], [1,2]
 
-[($x=1? 2?)]       // matches only [1] or [2]
-                   // $x must bind to a scalar, so can't match [] nor [1,2]
-
-[(@x=1? 2?)]       // matches [], [1], [2], [1,2]
-                   // @x can bind to zero, one, or two elements
+[@x=(1? 2?)]       // matches [], [1], [2], [1,2]
+                   // solutionSet = [ {x:[]}, {x:[1]}, {x:[2]}, {x:[1,2]} ]
+                   
+// $x must bind to a scalar, so this can't match [] nor [1,2]
+[$x=(1? 2?)]       // matches only [1] or [2]
+                   // solutionSet = [ {x:1}, {x:2} ]
 ```
 
 ## Paths (breadcrumb notation)
@@ -440,9 +440,9 @@ Object assertions can navigate through nested structures using breadcrumb notati
 { a[3].c:d }       // equivalent to { a:[_ _ _ { c:d } ..] }
                    // array index then object key
 
-Tendril("{ a.b.c[3].e:f }").match(object).hasMatch()   // like object?.a?.b?.c?.[3]?.e === "f"
+Tendril("{ a.b.c[3].e:f }").match(object).hasMatch()   
+                   // similar to Javascript (object?.a?.b?.c?.[3]?.e === "f")
 ```
-
 The `..` operator skips arbitrary levels of nesting:
 
 ```javascript
@@ -530,7 +530,7 @@ Lookaheads test conditions without consuming data:
 In arrays:
 
 ```javascript
-[ (? ($x=/[ab]/)) $x .. ]  // first element must match /[ab]/, bind to $x
+[ (? $x=(/[ab]/)) $x .. ]  // first element must match /[ab]/, bind to $x
 
 [ (! .. 3 4) .. ]           // array must not contain [3,4] subsequence
 ```
@@ -675,7 +675,7 @@ const result2 = Tendril("{ password:$p }").find(data1).editAll({p: "REDACTED"});
 // Macro expansion: <When>/<Else> → If node
 const result = Tendril(`[
   ..
-  (@whenelse=
+  @whenelse=(
     {tag:when/i children:$then}
     {tag:else/i children:$else}?
   )
@@ -760,7 +760,7 @@ LITERAL       := NUMBER | BOOLEAN | NULL | QUOTED_STRING | REGEX | CI_STRING | B
 # Core productions
 # --------------------------------------------------------------------
 
-ROOT_PATTERN := ITEM
+ROOT_PATTERN := ITEM 
 
 S_ITEM  := '$' IDENT
 S_GROUP := '@' IDENT
@@ -772,8 +772,10 @@ ITEM :=
 ITEM_TERM :=
       '(' ITEM ')'
     | LOOK_AHEAD
-    | S_ITEM | '(' S_ITEM  '=' ITEM ')'            # bare $x ≡ ($x=_)
-    | S_GROUP| '(' S_GROUP '=' A_GROUP ')'         # bare @x ≡ (@x=_*)
+    | S_ITEM '=' '(' ITEM ')'                      # binding with pattern
+    | S_ITEM                                       # bare $x ≡ $x=(_)
+    | S_GROUP '=' '(' A_GROUP ')'                  # binding with pattern
+    | S_GROUP                                      # bare @x ≡ @x=(_*)
     | '_'
     | LITERAL
     | OBJ
@@ -801,9 +803,11 @@ A_GROUP :=
 A_GROUP_BASE :=
       LOOK_AHEAD
     | '(' A_BODY ')'                           # if >1 element => Seq node
-    | S_GROUP| '(' S_GROUP '=' A_BODY ')'      # bare @x allowed here (≡ (@x=_*))
-    | S_ITEM | '(' S_ITEM  '=' A_BODY ')'      # bare $x allowed here (≡ ($x=_))
-    | ITEM_TERM                                 # including nested ARR/OBJ
+    | S_GROUP '=' '(' A_BODY ')'               # group binding with pattern
+    | S_GROUP                                  # bare @x ≡ @x=(_*)
+    | S_ITEM '=' '(' A_BODY ')'                # scalar binding with pattern
+    | S_ITEM                                   # bare $x ≡ $x=(_)
+    | ITEM_TERM                                # including nested ARR/OBJ
 
 A_QUANT :=
       '?' | '??'
@@ -824,7 +828,7 @@ OBJ := '{' O_GROUP* O_REMNANT? '}'
 # '%' is the new spelling (alias old 'remainder' if desired).
 
 O_REMNANT :=
-      '(' S_GROUP '=' '%' O_REM_QUANT? ')' ','?
+      S_GROUP '=' '(' '%' O_REM_QUANT? ')' ','?
     | '%' O_REM_QUANT? ','?
     | '$' ','?                                 # shortcut for '%#{0}'
     | '(!' '%' ')' ','?                       # closed-object assertion (equiv to '$')
@@ -841,7 +845,7 @@ O_REM_QUANT :=
 O_GROUP :=
       O_LOOKAHEAD
     | '(' O_GROUP* ')'                         # OGroup node
-    | '(' S_GROUP '=' O_GROUP* ')'           # group binding in object context (no bare @x)
+    | S_GROUP '=' '(' O_GROUP* ')'             # group binding in object context
     | O_TERM
 
 O_LOOKAHEAD :=
@@ -905,7 +909,7 @@ Group bindings (`@x`) succeed when:
 1. The pattern matches (may match zero or more items)
 2. If `@x` was previously bound, the new group equals the old group (structural equality)
 
-Bare variables are shorthand: `$x` ≡ `($x=_)`, `@x` ≡ `(@x=_*)`.
+Bare variables are shorthand: `$x` ≡ `$x=(_)`, `@x` ≡ `@x=(_*)`.
 
 ### Object Assertions (Slice-Based Semantics)
 
@@ -922,14 +926,14 @@ In the following short forms, `>` signifies "no bad values" (i.e. k~K => v~V), a
 
 Binding keys or values:
 ```
-{ ($myKey=K):($myVal=V) }
+{ $myKey=(K):$myVal=(V) }
 ```
 
 Binding slices:
 ```
-{ (@slice1=K1:V1)       }   # bind one slice
-{ (@slice2=K2:V2 K3:V3) }   # bind a union of slices
-{ (@x=K1:V1) (@x=K2:V2) }   # asserting two slices are the same
+{ @slice1=(K1:V1)       }   # bind one slice
+{ @slice2=(K2:V2 K3:V3) }   # bind a union of slices
+{ @x=(K1:V1) @x=(K2:V2) }   # asserting two slices are the same
 ```
 
 `%`, pronounced "remainder", defines the slice of fields that didn't fall into any of the declared slices or bad sets; in other words, the **entries whose keys did not match any of the terms, regardless of whether the values matched.**  (The predominant use case is the fall-through of unrecognized fields, not the fall-through of invalid values.)
@@ -941,7 +945,7 @@ It may appear only once in the object pattern, only at the end. You can bind it 
 { K1:V1 K2:V2 % }           # Remainder is nonempty
 { K1:V1 K2:V2 $ }           # Remainder is empty (short for %#{0})
 { K1:V1 K2:V2 %#{3,4} }     # Remainder is of size 3-4
-{ K1:V1 K2:V2 (@rest=%) }   # Bind it
+{ K1:V1 K2:V2 @rest=(%) }   # Bind it
 ```
 
 Assertions are evaluated non-exclusively: a single key-value pair may satisfy multiple assertions.
@@ -1149,7 +1153,7 @@ const vdom = [
 ```js
 const pat = `[
   ..
-  ($node={ tag:FormattedAddress props:{ type:oneLine model:$m } })
+  $node=({ tag:FormattedAddress props:{ type:oneLine model:$m } })
   ..
 ]`;
 ```
@@ -1163,7 +1167,7 @@ Better pattern for in-place replacement:
 ```js
 const pat2 = `[
   ..
-  (@x={ tag:FormattedAddress props:{ type:oneLine model:$m } })
+  @x=({ tag:FormattedAddress props:{ type:oneLine model:$m } })
   ..
 ]`;
 ```
@@ -1199,13 +1203,13 @@ const cfgBad = { x_port: "8080", x_host: "localhost", id: "abc" };
 ```js
 // all x_* must be number OR string? pick one and test.
 // Here: x_* must be number
-const pat = `{ /^(x_)/: ($v=123|0|1|2|3|4|5|6|7|8|9|/^\d+$/) }`;
+const pat = `{ /^(x_)/: $v=(123|0|1|2|3|4|5|6|7|8|9|/^\d+$/) }`;
 ```
 
 That’s messy if you don’t have “number predicate”. Better golden test using existing primitives:
 
 ```js
-const pat = `{ /^x_/: ($n=/^\d+$/) }`;  // if x_* are strings of digits
+const pat = `{ /^x_/: $n=(/^\d+$/) }`;  // if x_* are strings of digits
 ```
 
 And add a closed object case:
@@ -1275,7 +1279,7 @@ const arr = [1, 2, 3, 4, 5, 6];
 **Pattern:**
 
 ```js
-const pat = `[ .. (@mid=3 4) .. ]`;
+const pat = `[ .. @mid=(3 4) .. ]`;
 ```
 
 **Edit:**
@@ -1291,7 +1295,7 @@ Replace `@mid` with 3 elements:
 Then a second edit in same run that splices earlier and later groups (two group sites) is even better:
 
 ```js
-const pat2 = `[ (@a=1 2) .. (@b=5 6) ]`;
+const pat2 = `[ @a=(1 2) .. @b=(5 6) ]`;
 editAll({ a:[10], b:[60,70,80] })
 ```
 
@@ -1302,7 +1306,7 @@ Expected:
 
 ## Golden 8: Object group capture + replace with new props
 
-**Purpose:** object `(@x=...)` capture, replacement semantics (delete captured keys then insert).
+**Purpose:** object `@x=(...)` capture, replacement semantics (delete captured keys then insert).
 
 **Fixture:**
 
@@ -1313,7 +1317,7 @@ const obj = { Big:1, Cute:2, Alice:3, c:99 };
 **Pattern:**
 
 ```js
-const pat = `{ (@x=/a/:_, /b/:_) /c/:_ }`;
+const pat = `{ @x=(/a/:_, /b/:_) /c/:_ }`;
 ```
 
 **Edit:**
@@ -1355,15 +1359,15 @@ This is more sophisticated than the If/Else example, but it's genuinely useful a
 
 ```javascript
 Tendril(`{
-  ..:(@label={
+  ..:@label=({
     tag: label, 
     props: {for: $id}, 
-    children: [($labelText=/.*/)]
+    children: [$labelText=(/.*/)]
   })
   ..:{
     tag: input, 
     props: {id: $id, type: text},
-    (@placeholder=placeholder:_?)
+    @placeholder=(placeholder:_?)
   }
 }`).match(data).editAll({
   label: undefined,  // delete it
@@ -1391,10 +1395,8 @@ Save the label/input example for a "Real-World Examples" section or one of the s
 I am thinking of making some changes to the syntax to address some unpleasantness before publishing a beta. 
 
 
-1.  Allow slice expressions for as the top-level search pattern, `find("(a b)")` so that you don't have to say `find("[... (@this=a b) ...]")`, which makes replace operations harder.
+1.  Allow array slice expressions for as the top-level search pattern, `find("(a b)")` so that you don't have to say `find("[... @this=(a b) ...]")`, which makes replace operations harder.
 
-2. Introduce 'A else B' as committing alternation. Make sure the semantics are consistent with the use case: "I want to parse scheme A, but if scheme A is not found, I want to fall back to parsing scheme B (legacy); But never treat it as B if it could be A. "
- IMPLEMENTED.
 
 3. '..' is nonintuitive.
 
@@ -1423,7 +1425,7 @@ Object patterns are conjunctions of K:V assertions, where K and V are patterns. 
 
 Meaning:  It asserts that there is at least one k:v in the object such that (k~K AND v~V).
 
-Bound to an object slice, as in `(@foo= K:V)`, the slice comprises all k:v where k~K (including pairs where v does not match V). For example, (@s=/a/:1) matching {a1:1, a2:2} binds s to {a1:1, a2:2}.
+Bound to an object slice, as in `@foo=( K:V)`, the slice comprises all k:v where k~K (including pairs where v does not match V). For example, @s=(/a/:1) matching {a1:1, a2:2} binds s to {a1:1, a2:2}.
 
 It is a domain-wide generator: it iterates all properties k:v, attempting to match (k~K AND v~V), ignoring failures, and may bind fresh variables per property. Variables unbound at entry may be bound independently for each k:v. Variables already bound before the term are effectively constants, and must unify across all keys.
 
@@ -1436,7 +1438,7 @@ Meaning:
 
 Each value is matched independently against V. This does not require that all values are identical, only that each individually satisfies V.
 
-Bound to an object slice, as in `(@foo= K:V)`, the slice comprises all k:v in the object such that k~K (which then implies v~V)
+Bound to an object slice, as in `@foo=( K:V)`, the slice comprises all k:v in the object such that k~K (which then implies v~V)
 
 It is a domain-wide generator: it iterates all properties k:v, attempting to match (k~K AND v~V), and may bind fresh variables per property. Variables unbound at entry may be bound independently for each k:v. Variables already bound before the term are effectively constants, and must unify across all keys.
 
@@ -1479,7 +1481,7 @@ Or as another illustration of the above definition,
 Unbound variables in K:V create separate solutions per key, as before. Slice variables in objects denote sets of K:V pairs, as before.
 
 ```
-    "{ (@X=/a/:_ /b/:_) ($y=/c/):_ } ~= {a1:1,a2:2,b:3,c1:4,c2:5,d:6} 
+    "{ @X=(/a/:_ /b/:_) $y=(/c/):_ } ~= {a1:1,a2:2,b:3,c1:4,c2:5,d:6} 
      // ==> True, solutions:
      // {X:{a1:1,a2:2,b:3},y:'c1'}, {X:{a1:1,a2:2,b:3},y:'c2'}, 
 ```     
@@ -1503,7 +1505,7 @@ Variables unify across terms:
 Variables unify between K and V:
 
 ```
-    // Reminder: bare $id is shorthand for ($id=_)
+    // Reminder: bare $id is shorthand for $id=(_)
     { $id:{id:$id} }  // The items are correctly indexed by ID
     
     matches { "3", {name='Mark', id:3},
@@ -1517,13 +1519,13 @@ Variables unify between K and V:
 ❌ "K:V!!" does not mean all values are the same; it merely means all values (individually) match V.
 ```
     // Does not demand that all the colors are the same.
-    "{ ($k=/color/):$c !! }" matches {backgroundColor:"green", color:"white"}
+    "{ $k=(/color/):$c !! }" matches {backgroundColor:"green", color:"white"}
     // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}] 
 ```
 
 ✅ Use this idiom to enforce universal equality over values:
 ```
-    "{ ($k=/color/):$c  ($k=/color/):$c!! }"
+    "{ $k=(/color/):$c  $k=(/color/):$c!! }"
 ```
 It works because variables unify across terms.
 
@@ -1552,8 +1554,8 @@ Syntax:
 ```
    "{ KV_TERMS % }" - Asserts the remainder is not empty.  
    "{ KV_TERMS (!%) }" - Asserts the remainder is empty, i.e. "anchored" pattern.  
-   "{ KV_TERMS (@S=%) }" - Binds the remainder to @S and asserts not empty
-   "{ KV_TERMS (@S=%?) }" - Binds the remainder to @S, may be empty
+   "{ KV_TERMS @S=(%) }" - Binds the remainder to @S and asserts not empty
+   "{ KV_TERMS @S=(%?) }" - Binds the remainder to @S, may be empty
    
 ```
 
@@ -1603,9 +1605,9 @@ We already have p.**.q indicating remote ancestry. This works only for the simpl
 For example, what if you wanted to find a cycle in a directed graph like `[ [$from,$to]* ]`?
 
 Introduce a descent rule syntax `..↳($from, $to where PATTERN )` Which for this directed graph example would be 
-    `↳($a,$b where ($b=$a[1]))`
+    `↳($a,$b where $b=($a[1]))`
 
-Then a cyclic graph is `[... $start..(↳($a,$b where ($b=$a[1])):$start) ...]`
+Then a cyclic graph is `[... $start..(↳($a,$b where $b=($a[1])):$start) ...]`
 
 (You don't need to point out that this particular example would be very inefficient, and that we'd need a 'visited' flag and a depth limit, and that this is a complication to the language that is prima facie unjustified. )
     ``

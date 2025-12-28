@@ -263,7 +263,7 @@ Tests per proposal:
 
 6. **Composition:**
    - `once(once(P))` ≡ `once(P)`
-   - `($x=once(P))` for eager binding
+   - `$x=(once(P))` for eager binding
 
 ---
 

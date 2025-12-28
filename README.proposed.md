@@ -205,10 +205,10 @@ Bind the remainder to capture it:
 ``` 
 
 // CAUTION: this form asserts that the remainder is nonempty
-{ a:b (@rest=remainder) }  // matches {"a":"b", "c":"d"}, binds {"c":"d"} to @rest
+{ a:b @rest=(remainder) }  // matches {"a":"b", "c":"d"}, binds {"c":"d"} to @rest
 
 // Special idiom: bind the remainder without asserting it's nonempty:
-{ a:b (@rest=remainder?) }
+{ a:b @rest=(remainder?) }
 ```
 
 ### Operators on Predicates
@@ -234,12 +234,12 @@ Negation uses lookahead syntax:
 
 Tendril has two kinds of variables. **Scalar variables** (prefix `$`) capture single values.  **Group variables** (prefix `@`) capture contiguous subsequences in arrays, or subsets of properties of objects. Groups are like slices, neither a single element nor the entire array/object.
 
-The syntax for variable binding is `($x=pattern)` or `(@x=pattern)`. **Parentheses are mandatory**. 
+The syntax for variable binding is `$x=(pattern)` or `@x=(pattern)`. **Parentheses are mandatory**. 
 ```
-Tendril([1 2 3 4 5]).match("[.. ($x=2|4) ($y=_) ..]"  // two solutions: {x:2,y:3} and {x:4,y:5}
+Tendril([1 2 3 4 5]).match("[.. $x=(2|4) $y=(_) ..]"  // two solutions: {x:2,y:3} and {x:4,y:5}
 ```
 
-`$x` (without the pattern) is short for `($x=_)`, and `@x` is short for `(@x=_*)`.  
+`$x` (without the pattern) is short for `$x=(_)`, and `@x` is short for `@x=(_*)`.  
 
 ```
 Tendril("[3 4 $x $y]").match([3,4,5,6])  // one match, with bindings {x:5, y:6}
@@ -264,8 +264,8 @@ Tendril("[@x @x]").find([1, [2, 2]]).editAll({x:_=>['the','replacement'])  // ['
 
 Object patterns only support group variables. Group one or more predicates, and the variable will bind to the set of key-value pairs that match at least one of them.
 
-Tendril("{ (@x=/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}) // matches with binding {x:{Big:1, Alice:3}}
-Tendril("{ (@x=/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}).edit({x:_=>{foo:"bar"}}) // -> {foo:"bar",Cute:2}
+Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}) // matches with binding {x:{Big:1, Alice:3}}
+Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}).edit({x:_=>{foo:"bar"}}) // -> {foo:"bar",Cute:2}
 
 
 ### Scalars
@@ -324,14 +324,14 @@ When the same variable appears multiple times, all occurrences must match the sa
 [ $x .. $x ]       // does NOT match ["a", "other", "b"]
                    // $x can't be both "a" and "b"
 
-[ $x ($x=/[ab]/) $y ]  // matches ['a', 'a', 'y']
+[ $x $x=(/[ab]/) $y ]  // matches ['a', 'a', 'y']
                        // $x binds to 'a', matches /[ab]/, unifies
 
-[ $x ($x=/[ab]/) $y ]  // does NOT match ['a', 'b', 'y']
+[ $x $x=(/[ab]/) $y ]  // does NOT match ['a', 'b', 'y']
                        // $x='a' doesn't unify with $x='b'
 ```
 
-The syntax `($x=PATTERN)` binds variable `$x` if `PATTERN` matches and the matched value is a single item. Bare `$x` is shorthand for `($x=_)`.
+The syntax `$x=(PATTERN)` binds variable `$x` if `PATTERN` matches and the matched value is a single item. Bare `$x` is shorthand for `$x=(_)`.
 
 ### Using scalars to force single-item matches
 
@@ -339,10 +339,10 @@ Scalar variables are constrained to match only single items, not groups. This ef
 ```
 [1? 2?]            // matches [], [1], [2], [1,2]
 
-[($x=1? 2?)]       // matches only [1] or [2]
+[$x=(1? 2?)]       // matches only [1] or [2]
                    // $x must bind to a scalar, so can't match [] nor [1,2]
 
-[(@x=1? 2?)]       // matches [], [1], [2], [1,2]
+[@x=(1? 2?)]       // matches [], [1], [2], [1,2]
                    // @x can bind to zero, one, or two elements
 ```
 
@@ -402,7 +402,7 @@ Lookaheads test conditions without consuming data:
 In arrays:
 
 ```javascript
-[ (?= ($x=/[ab]/)) $x .. ]  // first element must match /[ab]/, bind to $x
+[ (?= $x=(/[ab]/)) $x .. ]  // first element must match /[ab]/, bind to $x
 
 [ (?! .. 3 4) .. ]           // array must not contain [3,4] subsequence
 ```
@@ -516,7 +516,7 @@ Tendril("{ password:$p }").find(data1).editAll($ => ({p: "REDACTED"}));
 // Macro expansion: <When>/<Else> → If node
 Tendril(`[
   ..
-  (@whenelse=
+  @whenelse=(
     {tag:/^when$/i children:$then}
     {tag:/^else$/i children:$else}?
   )
@@ -610,8 +610,8 @@ ITEM :=
 ITEM_TERM :=
       '(' ITEM ')'
     | LOOK_AHEAD
-    | S_ITEM  ( '=' '(' ITEM ')' )?            # bare $x ≡ ($x=_)
-    | S_GROUP ( '=' '(' A_GROUP ')' )?         # bare @x ≡ (@x=_*)
+    | S_ITEM  ( '=' '(' ITEM ')' )?            # bare $x ≡ $x=(_)
+    | S_GROUP ( '=' '(' A_GROUP ')' )?         # bare @x ≡ @x=(_*)
     | '_'
     | LITERAL
     | OBJ
@@ -637,8 +637,8 @@ A_GROUP :=
 A_GROUP_BASE :=
       LOOK_AHEAD
     | '(' A_BODY ')'                           # if >1 element => Seq node
-    | S_GROUP ( '=' '(' A_BODY ')' )?          # bare @x allowed here (≡ (@x=_*))
-    | S_ITEM  ( '=' '(' A_BODY ')' )?          # bare $x allowed here (≡ ($x=_))
+    | S_GROUP ( '=' '(' A_BODY ')' )?          # bare @x allowed here (≡ @x=(_*))
+    | S_ITEM  ( '=' '(' A_BODY ')' )?          # bare $x allowed here (≡ $x=(_))
     | ITEM_TERM                                 # including nested ARR/OBJ
 
 A_QUANT :=
@@ -740,7 +740,7 @@ Group bindings (`@x`) succeed when:
 1. The pattern matches (may match zero or more items)
 2. If `@x` was previously bound, the new group equals the old group (structural equality)
 
-Bare variables are shorthand: `$x` ≡ `($x=_)`, `@x` ≡ `(@x=_*)`.
+Bare variables are shorthand: `$x` ≡ `$x=(_)`, `@x` ≡ `@x=(_*)`.
 
 ### Object Assertions
 
@@ -755,12 +755,12 @@ In the following short forms, '>' signifies "no bad values" (i.e. k~K => v~V), a
 | K:>V?      | K:V  #{0,} bad#{0}   | No bad values |
 
 Binding keys or values
-{ ($myKey=K):($myVal=V) }
+{ $myKey=(K):$myVal=(V) }
 
 Binding slices
-{ (@slice1=K1:V1)       } # bind one slice
-{ (@slice2=K2:V2 K3:V3) } # bind a union of slices
-{ (@x=K1:V1) (@x=K2:V2) } # asserting two slices are the same
+{ @slice1=(K1:V1)       } # bind one slice
+{ @slice2=(K2:V2 K3:V3) } # bind a union of slices
+{ @x=(K1:V1) @x=(K2:V2) } # asserting two slices are the same
 
 '%', pronounced 'remainder', defines the slice of fields that didn't fall into any of the declared slices. It may appear only once in the object pattern, only at the end. You can bind it or quantify it, nothing else.
 
@@ -768,7 +768,7 @@ Binding slices
 { K1:V1 K2:V1 % } # Remainder is nonempty  
 { K1:V1 K2:V1 $ } # Remainder is empty (short for %#{0})
 { K1:V1 K2:V1 %#{3,4} } # Remainder is of size 3-4
-{ K1:V1 K2:V1 (@rSlice=%) } # Bind it.
+{ K1:V1 K2:V1 @rSlice=(%) } # Bind it.
 
 ### Quantifiers
 

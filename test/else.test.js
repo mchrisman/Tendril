@@ -22,19 +22,19 @@ function matches(pattern, data) {
 // =============================================================================
 
 test('else: A wins when A matches', () => {
-  const sols = solutions('(($x=2) else ($x=3))', 2);
+  const sols = solutions('($x=(2) else $x=(3))', 2);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 2);
 });
 
 test('else: B used when A fails', () => {
-  const sols = solutions('(($x=2) else ($x=3))', 3);
+  const sols = solutions('($x=(2) else $x=(3))', 3);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 3);
 });
 
 test('else: neither matches', () => {
-  const sols = solutions('(($x=2) else ($x=3))', 4);
+  const sols = solutions('($x=(2) else $x=(3))', 4);
   assert.equal(sols.length, 0);
 });
 
@@ -86,19 +86,19 @@ test('else: order matters - q first with unbound x', () => {
 // =============================================================================
 
 test('else: chained - first wins', () => {
-  const sols = solutions('(($x=1) else ($x=2) else ($x=3))', 1);
+  const sols = solutions('($x=(1) else $x=(2) else $x=(3))', 1);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 1);
 });
 
 test('else: chained - second wins when first fails', () => {
-  const sols = solutions('(($x=1) else ($x=2) else ($x=3))', 2);
+  const sols = solutions('($x=(1) else $x=(2) else $x=(3))', 2);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 2);
 });
 
 test('else: chained - third wins when first two fail', () => {
-  const sols = solutions('(($x=1) else ($x=2) else ($x=3))', 3);
+  const sols = solutions('($x=(1) else $x=(2) else $x=(3))', 3);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 3);
 });
@@ -109,21 +109,21 @@ test('else: chained - third wins when first two fail', () => {
 
 test('else: alternation inside A branch', () => {
   // (1|2) matches 2, so else branch is not used
-  const sols = solutions('((($x=1)|($x=2)) else ($x=3))', 2);
+  const sols = solutions('(($x=(1)|$x=(2)) else $x=(3))', 2);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 2);
 });
 
 test('else: alternation inside A fails, B used', () => {
   // (1|2) doesn't match 3, so else branch is used
-  const sols = solutions('((($x=1)|($x=2)) else ($x=3))', 3);
+  const sols = solutions('(($x=(1)|$x=(2)) else $x=(3))', 3);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 3);
 });
 
 test('else: alternation inside B branch', () => {
   // 1 doesn't match 2, so B branch (2|3) is tried
-  const sols = solutions('(($x=1) else (($x=2)|($x=3)))', 2);
+  const sols = solutions('($x=(1) else ($x=(2)|$x=(3)))', 2);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 2);
 });
@@ -149,19 +149,19 @@ test('else: mixing else and | without parens is syntax error', () => {
 // =============================================================================
 
 test('else: in array context', () => {
-  const sols = solutions('[(($x=1) else ($x=2))]', [1]);
+  const sols = solutions('[($x=(1) else $x=(2))]', [1]);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 1);
 });
 
 test('else: in array context - B used', () => {
-  const sols = solutions('[(($x=1) else ($x=2))]', [2]);
+  const sols = solutions('[($x=(1) else $x=(2))]', [2]);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 2);
 });
 
 test('else: in array with spread', () => {
-  const sols = solutions('[.. (($x=1) else ($x=2)) ..]', [3, 1, 4]);
+  const sols = solutions('[.. ($x=(1) else $x=(2)) ..]', [3, 1, 4]);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 1);
 });
@@ -173,7 +173,7 @@ test('else: in array with spread', () => {
 test('else: A produces multiple solutions, all are used', () => {
   // Pattern matches any element, A is /[ab]/, B is _
   // [a, b, c] - 'a' and 'b' match A, 'c' would need B but A matched so we use A
-  const sols = solutions('[.. (($x=/[ab]/) else ($x=_)) ..]', ['a', 'b']);
+  const sols = solutions('[.. ($x=(/[ab]/) else $x=(_)) ..]', ['a', 'b']);
   assert.equal(sols.length, 2);
   assert.deepEqual(sols.map(s => s.x).sort(), ['a', 'b']);
 });
@@ -187,7 +187,7 @@ test('else: field partitioning - each field classified independently', () => {
   const data = {a: 1, b: 'x', c: 2};
 
   // Match fields with number values
-  const numSols = solutions('{ ($k=_):(($v=1)|($v=2)) }', data);
+  const numSols = solutions('{ $k=(_):($v=(1)|$v=(2)) }', data);
   assert.equal(numSols.length, 2); // a:1 and c:2
 
   // With else for fallback (though in this simple case both branches work)
@@ -221,20 +221,20 @@ test('else: schema versioning - new format preferred', () => {
 
 test('else: both A and B match same value - A wins', () => {
   // 2 matches both branches, but A should win
-  const sols = solutions('(($x=2) else ($x=2))', 2);
+  const sols = solutions('($x=(2) else $x=(2))', 2);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 2);
 });
 
 test('else: wildcard in A always wins', () => {
   // A is wildcard, always matches, B is never tried
-  const sols = solutions('(($x=_) else ($x=99))', 42);
+  const sols = solutions('($x=(_) else $x=(99))', 42);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 42);
 });
 
 test('else: nested else', () => {
-  const sols = solutions('((($x=1) else ($x=2)) else ($x=3))', 2);
+  const sols = solutions('(($x=(1) else $x=(2)) else $x=(3))', 2);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 2);
 });
@@ -244,15 +244,15 @@ test('else: nested else', () => {
 // =============================================================================
 
 test('else: A wins even though B also matches', () => {
-  // ($x=1 else 1) on 1: A wins, x is bound
-  const sols = solutions('(($x=1) else 1)', 1);
+  // $x=(1 else 1) on 1: A wins, x is bound
+  const sols = solutions('($x=(1) else 1)', 1);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 1);
 });
 
 test('else: wildcard A wins, no binding from B', () => {
   // (_ else $x=1) on 1: A wins (wildcard matches), x is NOT bound
-  const sols = solutions('(_ else ($x=1))', 1);
+  const sols = solutions('(_ else $x=(1))', 1);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, undefined); // x was never bound
 });
@@ -293,7 +293,7 @@ test('else: (A|B) else C parses correctly', () => {
 });
 
 test('else: $else is a valid variable name', () => {
-  const sols = solutions('($else=42)', 42);
+  const sols = solutions('$else=(42)', 42);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].else, 42);
 });
@@ -344,7 +344,7 @@ test('else: negative lookahead containing else (item context)', () => {
 test('else: lookahead does not leak bindings through else', () => {
   // In array context: lookahead with else, ensure bindings persist
   // Pattern: [(lookahead) $y] matches exactly 1 element (after zero-width lookahead)
-  const sols = solutions('[(?(($x=1) else ($x=2))) $y]', [1]);
+  const sols = solutions('[(?($x=(1) else $x=(2))) $y]', [1]);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].y, 1);
   // Note: positive lookahead DOES leak bindings, so x should be bound
@@ -354,7 +354,7 @@ test('else: lookahead does not leak bindings through else', () => {
 test('else: negative lookahead does not leak bindings', () => {
   // Negative lookahead should not leak bindings even with else
   // Pattern: [(negative lookahead) $y] matches exactly 1 element
-  const sols = solutions('[(!(($x=99) else ($x=98))) $y]', [1]);
+  const sols = solutions('[(!($x=(99) else $x=(98))) $y]', [1]);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].y, 1);
   assert.equal(sols[0].x, undefined); // x should NOT be bound (negative lookahead)

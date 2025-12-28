@@ -69,15 +69,15 @@ Below is a summary of changes. Please also see:
 9. **Slice binding is explicit and stable**
 
    * Old: group bindings leaked across branches and paths.
-   * New: `(@x=K:V?)` binds a slice value (possibly empty) deterministically.
+   * New: `@x=(K:V?)` binds a slice value (possibly empty) deterministically.
 
 10. **“bound but empty” vs “not bound” is now well-defined**
 
     * Old: optional patterns made binding presence ambiguous.
     * New:
 
-      * `(@x=K:V?)` ⇒ `@x` always bound (empty allowed)
-      * `($x=K):V?` ⇒ `$x` bound only if a witness exists
+      * `@x=(K:V?)` ⇒ `@x` always bound (empty allowed)
+      * `$x=(K):V?` ⇒ `$x` bound only if a witness exists
 
 ---
 

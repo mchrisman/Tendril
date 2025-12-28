@@ -192,7 +192,7 @@ Below, “solutions” means the set of environments *visible outside the Else*,
 
 ```js
 data = 2
-pat = "($x=2 else $x=3)"
+pat = "$x=(2 else $x=3)"
 // Expect: hasMatch true, solutions => [{x:2}]
 ```
 
@@ -200,7 +200,7 @@ pat = "($x=2 else $x=3)"
 
 ```js
 data = 3
-pat = "($x=2 else $x=3)"
+pat = "$x=(2 else $x=3)"
 // Expect: solutions => [{x:3}]
 ```
 
@@ -221,8 +221,8 @@ data = { q:2, r:99 }
 
 // A can match q and bind x=2; later term forces x=1, so whole match should fail.
 // But B must NOT be tried for x=1 in a way that makes the whole thing succeed.
-pat = "{ q:($x else 2)  r:99  (! ($x=1))  ($x=1) }"
-// The last ($x=1) is just “force x=1” in your syntax style; any equivalent constraint is fine.
+pat = "{ q:($x else 2)  r:99  (! $x=(1))  $x=(1) }"
+// The last $x=(1) is just “force x=1” in your syntax style; any equivalent constraint is fine.
 // Expect: overall FAIL (no solutions). If it succeeds, you accidentally allowed “fallback after join failure.”
 ```
 
@@ -232,7 +232,7 @@ pat = "{ q:($x else 2)  r:99  (! ($x=1))  ($x=1) }"
 
 ```js
 data = 1
-pat = "(($a=1) else ($b=1))"
+pat = "($a=(1) else $b=(1))"
 // If neither a nor b appears outside this Else, interface is empty.
 // Expect: hasMatch true, and externally-visible bindings are {} (no a, no b).
 ```
@@ -249,7 +249,7 @@ pat = "{ p:$x  q:($x else 2) }"
 
 ```js
 data = {q:2}
-pat = "{ q:(($x=1) else ($x=2)) }"
+pat = "{ q:($x=(1) else $x=(2)) }"
 // Here x is interface only if observed outside; assume solutions(["x"]).
 // Expect: solutions => [{x:2}]
 ```
@@ -258,7 +258,7 @@ pat = "{ q:(($x=1) else ($x=2)) }"
 
 ```js
 data = ["a","a"]
-pat = "[ .. ( ($x=/a/ ($t=_)) else ($x=/a/ ($u=_)) ) .. ]"
+pat = "[ .. ( $x=(/a/ $t=(_)) else $x=(/a/ $u=(_)) ) .. ]"
 // Arrange so A produces two different locals t but same interface x="a".
 // Expect: B produces nothing with x="a" (even though B would match), because projection x="a" is present in A.
 ```
@@ -269,7 +269,7 @@ pat = "[ .. ( ($x=/a/ ($t=_)) else ($x=/a/ ($u=_)) ) .. ]"
 
 ```js
 data = [1,2]
-pat = "[ .. ( ($x=1) else ($x=2) ) .. ]"
+pat = "[ .. ( $x=(1) else $x=(2) ) .. ]"
 // Expect: solutions => [{x:1},{x:2}] depending on occurrences; crucially, x=2 is not excluded because A has no x=2.
 ```
 
@@ -286,7 +286,7 @@ pat2 = "(1 | (2 else 3))"
 
 ```js
 data = 2
-pat = "((($x=1 else $x=2) else $x=3))"
+pat = "(($x=(1 else $x=2) else $x=3))"
 // Expect: x=2 (inner else selects 2; outer else sees A has x=2 so excludes 3 for x=2).
 ```
 
@@ -294,7 +294,7 @@ pat = "((($x=1 else $x=2) else $x=3))"
 
 ```js
 data = 1
-pat = "((?($x=1)) ($x else 2))"
+pat = "((?$x=(1)) ($x else 2))"
 // Expect: succeeds with x=1. Lookahead binds x=1; else sees interface bound and must choose A quickly.
 ```
 
@@ -302,7 +302,7 @@ pat = "((?($x=1)) ($x else 2))"
 
 ```js
 data = 2
-pat = "((!($x=1)) ($x else 2))"
+pat = "((!$x=(1)) ($x else 2))"
 // Expect: x should not be bound by the negative lookahead; else should bind/choose normally -> x=2 if $x is in interface/output.
 ```
 
@@ -310,6 +310,6 @@ pat = "((!($x=1)) ($x else 2))"
 
 ```js
 data = 2
-pat = "($x=2 else $x=2)"
+pat = "$x=(2 else $x=2)"
 // matchFirst should return the A-branch solution, not B, even though equal.
 ```

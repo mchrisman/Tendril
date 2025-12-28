@@ -202,10 +202,10 @@ map:{$mapk,$mapv}
 
 // to entities that may impact teams
 (
-data[($mapv=teams)][_]?:{id:($impacted=$targid), name $tname, projectIds?:[...$projId...]}
-| data[($mapv=users)][_]?:{id:$targid, name:$uname, teamId?:($impacted=$tid)}
-| data[($mapv=projects)][_]?:{id:$targid, name:$pname}
-data[($mapv=teams)][_]?:{id:$impacted, projectIds?:[...$targId...]}
+data[$mapv=(teams)][_]?:{id:$impacted=($targid), name $tname, projectIds?:[...$projId...]}
+| data[$mapv=(users)][_]?:{id:$targid, name:$uname, teamId?:$impacted=($tid)}
+| data[$mapv=(projects)][_]?:{id:$targid, name:$pname}
+data[$mapv=(teams)][_]?:{id:$impacted, projectIds?:[...$targId...]}
 )
 
 }")
@@ -217,13 +217,13 @@ Show more
 
 Identified variable naming inconsistencies and missing bindings in pattern logic.
 
-That's cleaner — alternation with | and inline assignment/constraint with ($var=value) makes the intent readable.
+That's cleaner — alternation with | and inline assignment/constraint with $var=(value) makes the intent readable.
 
 Two things I think are bugs:
 
 Typo in projects branch: $targId vs $targid — case mismatch means the project lookup isn't actually constraining against the team's projectIds array.
 Missing $impacted in projects branch: The teams and users branches both bind $impacted to the affected team's ID, but the projects branch never sets it. Should be something like:
-| data[($mapv=projects)][_]?:{id:$targid, name:$pname}
+| data[$mapv=(projects)][_]?:{id:$targid, name:$pname}
 data.teams[_]?:{id:$impacted, projectIds?:[...$targid...]}
 With those fixed, the logic reads as: "for each activity, dispatch on target type, and in each branch establish which team is $impacted — either directly, via user membership, or via project ownership."
 
@@ -241,7 +241,7 @@ So each branch is a multi-statement sequence, and the alternation is over sequen
 
 Okay, so with the typo fixed:
 
-| data[($mapv=projects)][_]?:{id:$targid, name:$pname}
+| data[$mapv=(projects)][_]?:{id:$targid, name:$pname}
 data.teams[_]?:{id:$impacted, projectIds?:[...$targid...]}
 This should produce, for each activity, solutions that include which team was impacted plus whatever entity-specific fields were bound ($tname, $uname, or $pname depending on branch). Then grouping by $action and flattening the names gives you the final structure.
 

@@ -208,7 +208,7 @@ The test:
 2. `{ /a/:b }` vs `{ /a/::b }` vs `{ /a/:b ! }`
 5. `{ /a/:b }` vs `{ /a/:b else c }`
 6. `{ $x:1 }` vs `{ $x::1 }` vs ` { $x::1 ?}`
-7. `{ (@s=/a/:b) }`
+7. `{ @s=(/a/:b) }`
 8. `{ /a/: @s=b else @t=_ }` vs `{ /a/:: @s=b else @t=_ }`
 9. How would you write "An object that has at least one key starting with 'd'"?
 10 How would you write "An object that has at least one key starting with 'd', and any key starting with 'd' must have some kind of array value"?

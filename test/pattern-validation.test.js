@@ -2,7 +2,7 @@
  * Pattern Validation Tests
  *
  * Tests that bound variables still validate against their inner patterns.
- * Example: {a=$x ($x=/abc/)=$y} should verify that the bound value of $x
+ * Example: {a=$x $x=(/abc/)=$y} should verify that the bound value of $x
  * matches the pattern /abc/ before using it.
  *
  * Run with: node test/pattern-validation.test.js
@@ -19,7 +19,7 @@ test('pattern validation - bound variable with non-matching regex pattern', () =
     abc123: 'also_found'
   };
 
-  const pattern = '{a:$x ($x=/abc/):$y}';
+  const pattern = '{a:$x $x=(/abc/):$y}';
   const result = Tendril(pattern).match(data).solutions().toArray();
 
   // Should find 0 solutions because "xyz" does not match /abc/
@@ -33,7 +33,7 @@ test('pattern validation - bound variable with matching regex pattern', () => {
     xyz: 'not_found'
   };
 
-  const pattern = '{a:$x ($x=/abc/):$y}';
+  const pattern = '{a:$x $x=(/abc/):$y}';
   const result = Tendril(pattern).match(data).solutions().toArray();
 
   // Should find 1 solution because "abc123" matches /abc/
@@ -48,7 +48,7 @@ test('pattern validation - bound variable with literal pattern', () => {
     c: 'wrong'
   };
 
-  const pattern = '{a:$x ($x="b"):$y}';
+  const pattern = '{a:$x $x=("b"):$y}';
   const result = Tendril(pattern).match(data).solutions().toArray();
 
   // Should find 1 solution because "b" === "b"
@@ -63,7 +63,7 @@ test('pattern validation - bound variable that doesn\'t match literal pattern', 
     c: 'wrong'
   };
 
-  const pattern = '{a:$x ($x="b"):$y}';
+  const pattern = '{a:$x $x=("b"):$y}';
   const result = Tendril(pattern).match(data).solutions().toArray();
 
   // Should find 0 solutions because "c" !:: "b"
@@ -80,7 +80,7 @@ test('pattern validation - array index pattern validation', () => {
     idx: 1
   };
 
-  const pattern = '{idx:$i items[($i=1)][0]:$x}';
+  const pattern = '{idx:$i items[$i=(1)][0]:$x}';
   const result = Tendril(pattern).match(data).solutions().toArray();
 
   // Should find 1 solution because idx:1 matches pattern (1)
@@ -98,7 +98,7 @@ test('pattern validation - array index that doesn\'t match', () => {
     idx: 2
   };
 
-  const pattern = '{idx:$i items[($i=1)][0]:$x}';
+  const pattern = '{idx:$i items[$i=(1)][0]:$x}';
   const result = Tendril(pattern).match(data).solutions().toArray();
 
   // Should find 0 solutions because idx=2 doesn't match pattern (1)

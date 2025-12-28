@@ -3,7 +3,7 @@
 ## What we’ve done so far
 
 - Diagnosed and fixed the special `remainder?` idiom in the engine’s object-spread logic.
-- Added a regression test for `(@r=remainder?)` binding multiple residual keys.
+- Added a regression test for `@r=(remainder?)` binding multiple residual keys.
 - Updated the Tendril factory to enforce string-only patterns.
 - Moved legacy test scripts from the project root into `test/legacy/`.
 - Updated the test script in `package.json` to include nested test paths (`test/**/*.js`).

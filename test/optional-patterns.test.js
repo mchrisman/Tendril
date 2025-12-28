@@ -46,7 +46,7 @@ test('optional with value binding - key does not exist', () => {
 
 // Complex key pattern with alternation
 test('optional complex pattern - matches via key binding', () => {
-  // {(($x=/x/)|foo):>$x?} against {foo:5}
+  // {($x=(/x/)|foo):>$x?} against {foo:5}
   // Should match "foo" literal branch, but value $x needs to unify with key 'foo'
   // Since $x binds to the key pattern (alternation), and 'foo' matches literal 'foo',
   // $x would not be bound by the key match. Then value $x expects the value to match.

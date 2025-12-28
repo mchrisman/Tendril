@@ -113,19 +113,19 @@ test('array group binding - empty group', () => {
 });
 
 test('array group binding with pattern - specific sequence', () => {
-  const result = Tendril('[(@x=1 2) 3]').match([1, 2, 3]).solutions().toArray();
+  const result = Tendril('[@x=(1 2) 3]').match([1, 2, 3]).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual([...result[0].x], [1, 2]);
 });
 
 test('array group binding with pattern - quantified', () => {
-  const result = Tendril('[(@x=(1|2)*) 3]').match([1, 2, 1, 3]).solutions().toArray();
+  const result = Tendril('[@x=((1|2)*) 3]').match([1, 2, 1, 3]).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual([...result[0].x], [1, 2, 1]);
 });
 
 test('array group binding with pattern - any elements', () => {
-  const result = Tendril('[(@x=_*) 5]').match([1, 2, 3, 4, 5]).solutions().toArray();
+  const result = Tendril('[@x=(_*) 5]').match([1, 2, 3, 4, 5]).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual([...result[0].x], [1, 2, 3, 4]);
 });
@@ -135,20 +135,20 @@ test('array group binding with pattern - any elements', () => {
 // ============================================================================
 
 test('object group binding - residual keys', () => {
-  const result = Tendril('{a:1 (@x=remainder)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
+  const result = Tendril('{a:1 @x=(remainder)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {b: 2, c: 3});
 });
 
 test('object group binding - empty residual', () => {
   // Use remainder? to allow empty residual (bare remainder requires nonempty)
-  const result = Tendril('{a:1 (@x=remainder?)}').match({a: 1}).solutions().toArray();
+  const result = Tendril('{a:1 @x=(remainder?)}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {});
 });
 
 test('object group binding with pattern - match subset', () => {
-  const result = Tendril('{(@x=a:1 b:2) c:3}').match({a: 1, b: 2, c: 3}).solutions().toArray();
+  const result = Tendril('{@x=(a:1 b:2) c:3}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {a: 1, b: 2});
 });
@@ -203,20 +203,20 @@ test('existential matching with unification', () => {
 // ============================================================================
 
 test('group binding with negation', () => {
-  const result = Tendril('{(@x=a:1) (!b:_)}').match({a: 1, c: 2}).solutions().toArray();
+  const result = Tendril('{@x=(a:1) (!b:_)}').match({a: 1, c: 2}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {a: 1});
 });
 
 test('multiple groups and negations', () => {
-  const result = Tendril('{(@x=a:1) (@y=c:3) (!d:_)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
+  const result = Tendril('{@x=(a:1) @y=(c:3) (!d:_)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {a: 1});
   assert.deepEqual(result[0].y, {c: 3});
 });
 
 test('nested arrays with groups', () => {
-  const result = Tendril('[[(@x=1*) (@y=2*)]]').match([[1, 1, 2, 2]]).solutions().toArray();
+  const result = Tendril('[[@x=(1*) @y=(2*)]]').match([[1, 1, 2, 2]]).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual([...result[0].x], [1, 1]);
   assert.deepEqual([...result[0].y], [2, 2]);
