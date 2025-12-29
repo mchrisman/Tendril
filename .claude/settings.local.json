@@ -12,7 +12,8 @@
       "Bash(awk:*)",
       "Bash(./test/run-all.cjs:*)",
       "Bash(ls:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []

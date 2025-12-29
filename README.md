@@ -1503,7 +1503,7 @@ Tendril("@(A B)") .find(data).replaceAll(["c","d","e"])
 
 - It is a warning if the slice pattern could have been parsed as an ITEM.
 
-
+- We need to extend the representation of "an occurrance" to include specific positions within arrays.
 
 --- 
 
