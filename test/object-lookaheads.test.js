@@ -149,16 +149,16 @@ test('positive lookahead without binding - single solution (optimization)', () =
 // ==================== Array Context Lookahead Bindings ====================
 
 test('array positive lookahead with binding - enumerates solutions', () => {
-  // [(?$x) ..] where multiple elements could bind
-  const result = Tendril('[(?$x) ..]').match([1, 2, 3]).solutions().toArray();
+  // [(?$x) ...] where multiple elements could bind
+  const result = Tendril('[(?$x) ...]').match([1, 2, 3]).solutions().toArray();
   // The lookahead tests at position 0, so only 1 should bind
   assert.equal(result.length, 1);
   assert.equal(result[0].x, 1);
 });
 
 test('array lookahead with nested binding', () => {
-  // [(?[$x ..]) ..] - lookahead into nested array
-  const result = Tendril('[(?[$x ..]) ..]').match([[1, 2], [3, 4]]).solutions().toArray();
+  // [(?[$x ...]) ...] - lookahead into nested array
+  const result = Tendril('[(?[$x ...]) ...]').match([[1, 2], [3, 4]]).solutions().toArray();
   assert.equal(result.length, 1);
   assert.equal(result[0].x, 1);
 });

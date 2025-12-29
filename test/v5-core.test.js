@@ -143,27 +143,27 @@ test('array with wildcards', () => {
 });
 
 test('array spread - empty', () => {
-  assert.ok(matches('[..]', []));
-  assert.ok(matches('[..]', [1, 2, 3]));
+  assert.ok(matches('[...]', []));
+  assert.ok(matches('[...]', [1, 2, 3]));
 });
 
 test('array spread - prefix', () => {
-  assert.ok(matches('[1 ..]', [1]));
-  assert.ok(matches('[1 ..]', [1, 2, 3]));
-  assert.ok(!matches('[1 ..]', [2, 3]));
+  assert.ok(matches('[1 ...]', [1]));
+  assert.ok(matches('[1 ...]', [1, 2, 3]));
+  assert.ok(!matches('[1 ...]', [2, 3]));
 });
 
 test('array spread - suffix', () => {
-  assert.ok(matches('[.. 3]', [3]));
-  assert.ok(matches('[.. 3]', [1, 2, 3]));
-  assert.ok(!matches('[.. 3]', [1, 2]));
+  assert.ok(matches('[... 3]', [3]));
+  assert.ok(matches('[... 3]', [1, 2, 3]));
+  assert.ok(!matches('[... 3]', [1, 2]));
 });
 
 test('array spread - middle', () => {
-  assert.ok(matches('[1 .. 3]', [1, 3]));
-  assert.ok(matches('[1 .. 3]', [1, 2, 3]));
-  assert.ok(matches('[1 .. 3]', [1, 2, 2, 3]));
-  assert.ok(!matches('[1 .. 3]', [1, 2]));
+  assert.ok(matches('[1 ... 3]', [1, 3]));
+  assert.ok(matches('[1 ... 3]', [1, 2, 3]));
+  assert.ok(matches('[1 ... 3]', [1, 2, 2, 3]));
+  assert.ok(!matches('[1 ... 3]', [1, 2]));
 });
 
 test('array quantifier - exact', () => {
@@ -267,12 +267,12 @@ test('breadcrumb - mixed key and index', () => {
   assert.ok(matches('{a[1].b:2}', {a: [{b: 1}, {b: 2}]}));
 });
 
-test('breadcrumb - skip levels with ..', () => {
-  // Modern syntax: ..password means arbitrary depth (including zero) then password
-  assert.ok(matches('{..password:$x}', {password: 'secret'}));
-  assert.ok(matches('{..password:$x}', {user: {password: 'secret'}}));
-  assert.ok(matches('{..password:$x}', {user: {credentials: {password: 'secret'}}}));
-  assert.ok(matches('{..password:$x}', {a: {b: {c: {password: 'secret'}}}}));
+test('breadcrumb - skip levels with **', () => {
+  // Modern syntax: **.password means arbitrary depth (including zero) then password
+  assert.ok(matches('{**.password:$x}', {password: 'secret'}));
+  assert.ok(matches('{**.password:$x}', {user: {password: 'secret'}}));
+  assert.ok(matches('{**.password:$x}', {user: {credentials: {password: 'secret'}}}));
+  assert.ok(matches('{**.password:$x}', {a: {b: {c: {password: 'secret'}}}}));
 });
 
 test('breadcrumb - quantifiers NOT supported (v5)', () => {
@@ -284,7 +284,7 @@ test('breadcrumb - quantifiers NOT supported (v5)', () => {
 });
 
 test('breadcrumb - multiple matches at different depths', () => {
-  // ..password finds all password fields at any depth
+  // **.password finds all password fields at any depth
   const data = {
     password: 'top',
     user: {
@@ -294,19 +294,19 @@ test('breadcrumb - multiple matches at different depths', () => {
       }
     }
   };
-  const results = extractAll('{..password:$x}', data);
+  const results = extractAll('{**.password:$x}', data);
   assert.equal(results.length, 3);
   const passwords = results.map(r => r.x).sort();
   assert.deepEqual(passwords, ['deep', 'nested', 'top']);
 });
 
-test('breadcrumb - _..foo (wildcard then skip to foo)', () => {
-  // _..foo means: match any key, then descend to foo
+test('breadcrumb - _.**.foo (wildcard then skip to foo)', () => {
+  // _.**.foo means: match any key, then descend to foo
   const data = {
     user: {credentials: {foo: 1}},
     admin: {settings: {foo: 2}}
   };
-  const results = extractAll('{_..foo:$x}', data);
+  const results = extractAll('{_.**.foo:$x}', data);
   assert.equal(results.length, 2);
   const values = results.map(r => r.x).sort();
   assert.deepEqual(values, [1, 2]);
@@ -332,17 +332,17 @@ test('breadcrumb - ..:bar (any value at any depth)', () => {
   assert.equal(occSet.solutions().count(), 1, 'Should have 1 unique solution');
 });
 
-test('breadcrumb - ..foo:bar vs .. foo:bar (spacing)', () => {
-  // In Tendril, whitespace is a delimiter, so '.. foo' should be two tokens
-  // But since .. needs to be followed by a key in breadcrumb context,
-  // both should parse the same way if foo follows ..
+test('breadcrumb - **.foo:bar vs ** foo:bar (spacing)', () => {
+  // In Tendril, whitespace is a delimiter, so '** foo' should be two tokens
+  // But since ** needs to be followed by a key in breadcrumb context,
+  // both should parse the same way if foo follows **
   const data = {a: {foo: 'bar'}};
 
-  assert.ok(matches('{..foo:bar}', data), '..foo should match');
+  assert.ok(matches('{**.foo:bar}', data), '**.foo should match');
 
-  // With space: '.. foo' - the space should not affect parsing
+  // With space: '** foo' - the space should not affect parsing
   // since whitespace is generally insignificant except as delimiter
-  assert.ok(matches('{.. foo:bar}', data), '.. foo should match same as ..foo');
+  assert.ok(matches('{** foo:bar}', data), '** foo should match same as **.foo');
 });
 
 // ==================== Scalar Binding ($x) ====================
@@ -380,7 +380,7 @@ test('binding - with pattern constraint', () => {
 });
 
 test('binding - with spread', () => {
-  const results = extractAll('[.. $x ..]', [1, 2, 3]);
+  const results = extractAll('[... $x ...]', [1, 2, 3]);
   assert.ok(results.length >= 3); // should match each element
   assert.ok(results.some(r => r.x === 1));
   assert.ok(results.some(r => r.x === 2));
@@ -540,10 +540,10 @@ test('greedy quantifiers - optional object emits longest match first', () => {
   ];
 
   // Use %? to allow empty residual (bare % requires nonempty)
-  const pattern = `[.. @whenelse=(
+  const pattern = `[... @whenelse=(
     {tag:when/i @otherProps=(%)}
     {tag:else/i children:$else %?}?
-  ) ..]`;
+  ) ...]`;
 
   const solutions = Tendril(pattern).match(input).solutions().toArray();
 
@@ -568,10 +568,10 @@ test('replace uses first solution only (longest match)', () => {
   ];
 
   // Use %? to allow empty residual (bare % requires nonempty)
-  const pattern = `[.. @whenelse=(
+  const pattern = `[... @whenelse=(
     {tag:when/i @otherProps=(%)}
     {tag:else/i children:$else %?}?
-  ) ..]`;
+  ) ...]`;
 
   // editAll is now PURE (returns copy)
   const result = Tendril(pattern).find(input).editAll(v => ({

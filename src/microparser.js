@@ -134,7 +134,9 @@ export function tokenize(src) {
     // multi-character punctuation/operators (order matters - check longer tokens first!)
     if (c2 === '(?') { push('(?', '(?', 2); continue; }   // positive lookahead
     if (c2 === '(!') { push('(!', '(!', 2); continue; }   // negative lookahead
-    if (c2 === '..')  { push('..', '..', 2); continue; }
+    if (c3 === '...') { push('...', '...', 3); continue; }  // array spread (three dots)
+    if (c === '…')    { push('...', '...', 1); continue; }  // Unicode ellipsis → array spread
+    if (c2 === '**')  { push('**', '**', 2); continue; }    // path skip (glob-style)
     if (c2 === ':>')  { push(':>', ':>', 2); continue; }   // implication operator (K implies V)
     if (c2 === '??')  { push('??', '??', 2); continue; }   // lazy optional
     if (c2 === '?+')  { push('?+', '?+', 2); continue; }   // possessive optional

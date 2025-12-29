@@ -12,7 +12,7 @@
 //   Containers: Arr, Obj
 //   Bindings: SBind (scalar $x), GroupBind (group @x)
 //   Operators: Alt, Look, Quant
-//   Object: OTerm (with breadcrumbs), Spread (..)
+//   Object: OTerm (with breadcrumbs), Spread (...)
 //   Breadcrumbs: Breadcrumb (no quantifiers in v5)
 
 import {Parser, makeRegExp} from './microparser.js';
@@ -34,7 +34,7 @@ const Lit = (v) => ({type: 'Lit', value: v});
 const StringPattern = (kind, desc, matchFn) => ({type: 'StringPattern', kind, desc, matchFn});
 const Bool = (v) => ({type: 'Bool', value: v});
 const Null = () => ({type: 'Null'});
-const RootKey = () => ({type: 'RootKey'}); // Special marker for leading .. in paths
+const RootKey = () => ({type: 'RootKey'}); // Special marker for leading ** in paths
 
 // Bindings
 const SBind = (name, pat) => ({type: 'SBind', name, pat});  // $x=(pat)
@@ -67,7 +67,7 @@ const OTerm = (key, breadcrumbs, op, val, quant, optional = false) => ({
   optional       // true if '?' suffix (K:V? or K:>V?)
 });
 
-const Spread = (quant) => ({type: 'Spread', quant});  // .. with optional #{...}
+const Spread = (quant) => ({type: 'Spread', quant});  // ... with optional #{...}
 
 // Slice patterns at root level: @{ O_GROUP } or @[ A_BODY ]
 const SlicePattern = (kind, content) => ({type: 'SlicePattern', kind, content});
@@ -331,13 +331,13 @@ function parseAGroup(p) {
   //          | '(?' A_GROUP ')'
   //          | '(!' A_GROUP ')'
 
-  // Special handling for .. (spread)
-  if (p.peek('..')) {
-    p.eat('..');
-    // Quantifiers on .. are disallowed - they're either meaningless or a performance bomb
+  // Special handling for ... (spread)
+  if (p.peek('...')) {
+    p.eat('...');
+    // Quantifiers on ... are disallowed - they're either meaningless or a performance bomb
     const quant = p.backtrack(() => parseAQuant(p));
     if (quant) {
-      p.fail(`Quantifiers on '..' are not allowed (found '..${quant.op}')`);
+      p.fail(`Quantifiers on '...' are not allowed (found '...${quant.op}')`);
     }
     return Spread(null);
   }
@@ -581,10 +581,9 @@ function parseORemnant(p) {
   });
   if (negRemnant) return negRemnant;
 
-  // Check for common mistake: using '..' instead of '%'
-  if (p.peek('..')) {
-    p.fail('bare ".." not allowed in objects; use "%" instead');
-  }
+  // Check for common mistake: using old '..' syntax
+  // Note: '...' is not valid in objects (it's for arrays); '**' is for path skip
+  // This case shouldn't happen now that '..' isn't tokenized, but keep for safety
 
   return null;
 }
@@ -666,30 +665,30 @@ function parseOGroup(p) {
 
   // Otherwise parse O_TERM
   // O_TERM will parse KEY (including $x=(ITEM) patterns) normally via parseItem
-  // Leading .. is now allowed in OTerm for paths like {..password:$x}
+  // Leading ** is allowed in OTerm for paths like {**.password:$x}
   return parseOTerm(p);
 }
 
 function parseOTerm(p) {
   // O_TERM := KEY BREADCRUMB* (':' | ':>') VALUE O_KV_QUANT? '?'?
-  //         | '..' BREADCRUMB* (':' | ':>') VALUE O_KV_QUANT? '?'?
+  //         | '**' BREADCRUMB* (':' | ':>') VALUE O_KV_QUANT? '?'?
 
-  // Check for leading .. (e.g., {..password:$x})
+  // Check for leading ** (e.g., {**.password:$x})
   let key;
   const breadcrumbs = [];
 
-  if (p.peek('..')) {
-    // Leading .. means "start from root, match at any depth including zero"
+  if (p.peek('**')) {
+    // Leading ** means "start from root, match at any depth including zero"
     // Use special RootKey marker
     key = RootKey();
-    // Don't consume the '..' yet - it will be parsed as first breadcrumb
+    // Don't consume the '**' yet - it will be parsed as first breadcrumb
   } else {
     // KEY BREADCRUMB* op VALUE
     key = parseItem(p);
   }
 
-  // Parse breadcrumbs (. .. or [)
-  while (p.peek('.') || p.peek('..') || p.peek('[')) {
+  // Parse breadcrumbs (. ** or [)
+  while (p.peek('.') || p.peek('**') || p.peek('[')) {
     const bc = parseBreadcrumb(p);
     if (bc) breadcrumbs.push(bc);
     else break;
@@ -718,25 +717,38 @@ function parseOTerm(p) {
 }
 
 function parseBreadcrumb(p) {
-  // BREADCRUMB := '..' KEY          // skip levels
-  //             | '..' ':' or ':>'  // skip to any key (use _ as key)
+  // BREADCRUMB := '**' KEY          // skip levels (glob-style)
+  //             | '**' ':' or ':>'  // skip to any key (use _ as key)
   //             | '.' KEY            // single level
   //             | '[' KEY ']'        // array index
 
-  // Skip levels: .. KEY
-  if (p.peek('..')) {
-    p.eat('..');
-    // Special case: '..' immediately followed by ':' or ':>' means "any key at any depth"
+  // Skip levels: ** or **.KEY (glob-style)
+  if (p.peek('**')) {
+    p.eat('**');
+    // Special case: '**' immediately followed by ':' or ':>' means "any key at any depth"
     if (p.peek(':') || p.peek(':>')) {
       return Breadcrumb('skip', Any(), null);
     }
+    // Consume optional separator dot (supports both **.foo and **foo syntax)
+    p.maybe('.');
     const key = parseItem(p);
     return Breadcrumb('skip', key, null);
   }
 
   // Dot notation: . KEY
+  // But if . is followed by **, it's a skip breadcrumb (e.g., foo.**.bar)
   if (p.peek('.')) {
     p.eat('.');
+    // Check if this is actually .** (skip via dot-star-star)
+    if (p.peek('**')) {
+      p.eat('**');
+      if (p.peek(':') || p.peek(':>')) {
+        return Breadcrumb('skip', Any(), null);
+      }
+      p.maybe('.');
+      const key = parseItem(p);
+      return Breadcrumb('skip', key, null);
+    }
     const key = parseItem(p);
     return Breadcrumb('dot', key, null);
   }

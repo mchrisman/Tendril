@@ -139,12 +139,12 @@ test('match When/Else control flow pattern', () => {
 
   // Use %? to allow empty residual (bare % requires nonempty)
   const pattern3 = Tendril(`[
-    ..
+    ...
     @whenelse=(
       {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, %?}
       {tag: /^[Ee]lse$/, children: $else, %?}?
     )
-    ..
+    ...
   ]`);
 
   const sol3 = pattern3.match(test3).solutions().first();
@@ -177,12 +177,12 @@ test('replace group binding', () => {
 
   // Use %? to allow empty residual (bare % requires nonempty)
   const pattern4 = Tendril(`[
-    ..
+    ...
     @whenelse=(
       {tag: /^[Ww]hen$/, attrs: $attrs, children: $then, srcId: $id, %?}
       {tag: /^[Ee]lse$/, children: $else, %?}?
     )
-    ..
+    ...
   ]`);
 
   // editAll is now PURE (returns copy)

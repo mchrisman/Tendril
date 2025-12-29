@@ -51,11 +51,11 @@ Tendril("[1 2 3]").match([1, 2, 3, 4]).hasMatch()
 Tendril("[1 _ 3]").match([1, 99, 3]).hasMatch()
 // => true
 
-// Spread operator (..) matches any subsequence
-Tendril("[1 .. 5]").match([1, 2, 3, 4, 5]).hasMatch()
+// Spread operator (...) matches any subsequence
+Tendril("[1 ... 5]").match([1, 2, 3, 4, 5]).hasMatch()
 // => true
 
-Tendril("[.. $x ..]").match([1, 2, 3]).solutions().count()
+Tendril("[... $x ...]").match([1, 2, 3]).solutions().count()
 // => 3 (three solutions: x=1, x=2, x=3)
 ```
 
@@ -63,14 +63,14 @@ Tendril("[.. $x ..]").match([1, 2, 3]).solutions().count()
 
 ```javascript
 // Group variable captures subsequence
-Tendril("[@x ..]").match([1, 2, 3]).solutions().toArray()
+Tendril("[@x ...]").match([1, 2, 3]).solutions().toArray()
 // => [{x: []}, {x: [1]}, {x: [1,2]}, {x: [1,2,3]}]
 
 Tendril("[$x @y]").match([1, 2, 3]).solutions().first()
 // => {x: 1, y: [2, 3]}
 
 // Scalar must match exactly one element
-Tendril("[.. $x]").match([1, 2, 3]).solutions().first()
+Tendril("[... $x]").match([1, 2, 3]).solutions().first()
 // => {x: 3}
 
 Tendril("[$x]").match([1, 2]).hasMatch()
@@ -147,12 +147,12 @@ Tendril("{a.b.c: $x}").match({a: {b: {c: 3}}}).solutions().first()
 Tendril("{a[1].b: $x}").match({a: [null, {b: 5}]}).solutions().first()
 // => {x: 5}
 
-// .. skips arbitrary depth
-Tendril("{a..c: $x}").match({a: {p: {q: {c: 7}}}}).solutions().first()
+// ** skips arbitrary depth (glob-style)
+Tendril("{a.**.c: $x}").match({a: {p: {q: {c: 7}}}}).solutions().first()
 // => {x: 7}
 
-// Leading .. finds at any depth (including root)
-Tendril("{..password: $p}").match({user: {password: "secret"}}).solutions().first()
+// Leading ** finds at any depth (including root)
+Tendril("{**.password: $p}").match({user: {password: "secret"}}).solutions().first()
 // => {p: "secret"}
 ```
 
@@ -223,17 +223,17 @@ Tendril("{a: (1|2)}").match({a: 1}).solutions().count()
 
 ```javascript
 // Positive lookahead (? ) - test without consuming
-Tendril("[(? $x=(/[ab]/)) $x ..]").match([2, 3]).hasMatch()
+Tendril("[(? $x=(/[ab]/)) $x ...]").match([2, 3]).hasMatch()
 // => false (first element doesn't match /[ab]/)
 
-Tendril("[(? $x=(/[ab]/)) $x ..]").match(["a", "b"]).solutions().first()
+Tendril("[(? $x=(/[ab]/)) $x ...]").match(["a", "b"]).solutions().first()
 // => {x: "a"}
 
 // Negative lookahead (! ) - must not match
-Tendril("[(! .. 3 4) ..]").match([1, 2, 5]).hasMatch()
+Tendril("[(! ... 3 4) ...]").match([1, 2, 5]).hasMatch()
 // => true (no [3,4] subsequence)
 
-Tendril("[(! .. 3 4) ..]").match([1, 2, 3, 4]).hasMatch()
+Tendril("[(! ... 3 4) ...]").match([1, 2, 3, 4]).hasMatch()
 // => false (contains [3,4])
 
 // In objects
@@ -257,10 +257,10 @@ Tendril("{name: $n}").find({name: "alice"}).editAll({n: $ => $.n.toUpperCase()})
 // => {name: "ALICE"}
 
 // Scalar vs group semantics
-Tendril("[$x ..]").find([1, 2]).editAll({x: [9, 9]})
+Tendril("[$x ...]").find([1, 2]).editAll({x: [9, 9]})
 // => [[9, 9], 2] (scalar: replaces as one element)
 
-Tendril("[@x ..]").find([1, 2]).editAll({x: [9, 9]})
+Tendril("[@x ...]").find([1, 2]).editAll({x: [9, 9]})
 // => [9, 9, 2] (group: splices elements)
 ```
 

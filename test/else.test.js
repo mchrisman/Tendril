@@ -161,7 +161,7 @@ test('else: in array context - B used', () => {
 });
 
 test('else: in array with spread', () => {
-  const sols = solutions('[.. ($x=(1) else $x=(2)) ..]', [3, 1, 4]);
+  const sols = solutions('[... ($x=(1) else $x=(2)) ...]', [3, 1, 4]);
   assert.equal(sols.length, 1);
   assert.equal(sols[0].x, 1);
 });
@@ -173,7 +173,7 @@ test('else: in array with spread', () => {
 test('else: A produces multiple solutions, all are used', () => {
   // Pattern matches any element, A is /[ab]/, B is _
   // [a, b, c] - 'a' and 'b' match A, 'c' would need B but A matched so we use A
-  const sols = solutions('[.. ($x=(/[ab]/) else $x=(_)) ..]', ['a', 'b']);
+  const sols = solutions('[... ($x=(/[ab]/) else $x=(_)) ...]', ['a', 'b']);
   assert.equal(sols.length, 2);
   assert.deepEqual(sols.map(s => s.x).sort(), ['a', 'b']);
 });
@@ -299,7 +299,7 @@ test('else: $else is a valid variable name', () => {
 });
 
 test('else: @else is a valid group variable name', () => {
-  const sols = solutions('[.. @else ..]', [1, 2, 3]);
+  const sols = solutions('[... @else ...]', [1, 2, 3]);
   // @else captures all possible subsequences
   assert.ok(sols.length > 0);
   assert.ok(sols.some(s => Array.isArray(s.else)));

@@ -85,7 +85,7 @@ test('performance - large random tree basic scan', () => {
 
   // Simple scan: find all arrays
   const start = Date.now();
-  const matches = Tendril('[..]').find(data).toArray();
+  const matches = Tendril('[...]').find(data).toArray();
   const elapsed = Date.now() - start;
 
   console.log(`Found ${matches.length} arrays in ${elapsed}ms`);
@@ -110,7 +110,7 @@ test('performance - complex pattern on large tree', () => {
 
   // Find nested patterns: arrays containing objects with 'a' key
   const start = Date.now();
-  const matches = Tendril('[.. {a:$x} ..]').find(data).toArray();
+  const matches = Tendril('[... {a:$x} ...]').find(data).toArray();
   const elapsed = Date.now() - start;
 
   console.log(`Found ${matches.length} matching arrays in ${elapsed}ms`);
@@ -131,11 +131,11 @@ test('collapse adjacent equal arrays - simple case', () => {
 
   console.log('Original data:', JSON.stringify(data));
 
-  // Pattern: [.. @x=($y=([..]){2,}) ..]
+  // Pattern: [... @x=($y=([...]){2,}) ...]
   // - Matches runs of 2+ adjacent equal arrays
   // - $y must unify across all occurrences (enforces equality via unification!)
   // - Binds the entire run to @x (group binding for the slice)
-  const pattern = '[.. @x=($y=([..]){2,}) ..]';
+  const pattern = '[... @x=($y=([...]){2,}) ...]';
 
   // First, let's just find matches to verify the pattern works
   const matches = Tendril(pattern).find(data).toArray();

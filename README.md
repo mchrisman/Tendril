@@ -26,7 +26,7 @@ Tendril("[1 2 $x]")
 // → {x: 3}
 
 // Use wildcards
-Tendril("[1 .. 5]")
+Tendril("[1 ... 5]")
   .match([1, 2, 3, 4, 5])
   .hasMatch()
 // → true
@@ -93,8 +93,8 @@ regardless of how distant the two nodes are in the tree.
 
 ```js
 Tendril(`{
-  .. $L=( { tag:'label', props:{for:$id}, children:[$text]   } )
-  ..      { tag:'input', props:{id:$id @p=(placeholder:_?) } }
+  ** $L=( { tag:'label', props:{for:$id}, children:[$text]   } )
+  **      { tag:'input', props:{id:$id @p=(placeholder:_?) } }
 }`)
 .match(vdom)
 .editAll({
@@ -169,9 +169,9 @@ Square brackets indicate arrays. Items in arrays match in sequence left to right
 [1 2 3]        // matches [1,2,3] exactly
 [1 2]          // does NOT match [1,2,3] — too short
 [1 2 _]        // matches [1,2,3] — wildcard _ matches the third item
-[1 .. 3]       // matches [1,2,3] — .. matches any subsequence
-[1 ..]         // matches [1,2,3] and [1] and [1,99,100]
-[.. 1 2 3 ..]  // matches [1,2,3] — .. can match zero elements
+[1 ... 3]      // matches [1,2,3] — ... matches any subsequence
+[1 ...]        // matches [1,2,3] and [1] and [1,99,100]
+[... 1 2 3 ...]  // matches [1,2,3] — ... can match zero elements
 ```
 
 Commas are optional. Whitespace separates items but is otherwise insignificant. Whitespace acts as a delimiter: `[foobar]` matches a one-element array containing the string "foobar", while `[foo bar]` matches a two-element array.
@@ -193,7 +193,7 @@ Tendril borrows quantifiers from regex, applying them to array elements rather t
 +, +?, ++          // one or more (greedy, lazy, possessive)
 {m,n}, {m,}, {m}   // specific repetitions (greedy, nonpossessive)
 
-..                 // lazy wildcard group (equivalent to _*?)
+...                // lazy wildcard group (equivalent to _*?)
 ```
 
 Parentheses group elements for operators:
@@ -214,8 +214,8 @@ The `|` operator creates alternatives (all matches enumerated). The `else` opera
 Quantifiers bind tighter than adjacency. Lookaheads test without consuming:
 
 ```javascript
-[(! .. 3 4) ..]   // matches arrays NOT containing subsequence [3,4]
-                   // e.g., [4, 3, 2, 1] matches, [1, 2, 3, 4] doesn't
+[(! ... 3 4) ...]   // matches arrays NOT containing subsequence [3,4]
+                     // e.g., [4, 3, 2, 1] matches, [1, 2, 3, 4] doesn't
 ```
 
 ## Objects
@@ -323,7 +323,7 @@ Tendril has two kinds of variables. **Scalar variables** (prefix `$`) capture si
 
 The syntax for variable binding is `$x=(pattern)` or `@x=(pattern)`. **Parentheses are mandatory**. 
 ```
-Tendril("[.. $x=(2|4) $y=(_) ..]").match([1, 2, 3, 4, 5])  // two solutions: {x:2,y:3} and {x:4,y:5}
+Tendril("[... $x=(2|4) $y=(_) ...]").match([1, 2, 3, 4, 5])  // two solutions: {x:2,y:3} and {x:4,y:5}
 ```
 You cannot use both '@x' and '$x' in the same pattern.  (The JS API treats them as the same variable 'x'. The sigil is a type marker.) 
 
@@ -362,13 +362,13 @@ Scalars capture exactly one item. In arrays, this means one element. In objects,
 
 ```javascript
 // Multiple solutions
-Tendril("[ .. $x .. ]")
+Tendril("[ ... $x ... ]")
   .match(["a", "b"])
   .solutions()
 // → SolutionSet with {x: "a"}, {x: "b"}
 
 // First solution only
-Tendril("[ $x .. ]")
+Tendril("[ $x ... ]")
   .match(["a", "b"])
   .solutions()
 // → SolutionSet with {x: "a"}
@@ -381,7 +381,7 @@ Each possible binding creates a separate **solution**. The scalar `$x` must bind
 Groups capture zero or more items. In arrays, they capture subsequences. In objects, they capture sets of key-value pairs:
 
 ```javascript
-Tendril("[ @x .. ]")
+Tendril("[ @x ... ]")
   .match(["a", "b"])
   .solutions()
   .toArray()
@@ -405,10 +405,10 @@ Groups are exposed as plain arrays (for array slices) or plain objects (for obje
 When the same variable appears multiple times, all occurrences must match the same value (structural equality):
 
 ```javascript
-[ $x .. $x ]       // matches ["a", "stuff", "stuff", "a"]
+[ $x ... $x ]      // matches ["a", "stuff", "stuff", "a"]
                    // $x unifies to "a"
 
-[ $x .. $x ]       // does NOT match ["a", "other", "b"]
+[ $x ... $x ]      // does NOT match ["a", "other", "b"]
                    // $x can't be both "a" and "b"
 
 [ $x $x=(/[ab]/) $y ]  // matches ['a', 'a', 'y']
@@ -463,25 +463,25 @@ Field clauses can navigate through nested structures using breadcrumb notation:
 { a.b.c:d }        // equivalent to { a:{ b:{ c:d } } }
                    // descends through nested objects
 
-{ a[3].c:d }       // equivalent to { a:[_ _ _ { c:d } ..] }
+{ a[3].c:d }       // equivalent to { a:[_ _ _ { c:d } ...] }
                    // array index then object key
 
 Tendril("{ a.b.c[3].e:f }").match(object).hasMatch()   
                    // similar to Javascript (object?.a?.b?.c?.[3]?.e === "f")
 ```
-The `..` operator skips arbitrary levels of nesting:
+The `**` operator (glob-style) skips arbitrary levels of nesting:
 
 ```javascript
-{ a.b..c:d }       // matches 'c' at any depth under a.b
+{ a.b.**.c:d }     // matches 'c' at any depth under a.b
                    // e.g., {a: {b: {p: {q: {c: "d"}}}}}
 
-{ ..password:$p }  // matches 'password' at any depth (including top-level)
+{ **.password:$p } // matches 'password' at any depth (including top-level)
                    // e.g., {password: "x"} or {user: {password: "x"}}
 
-{ ..:$node }           // matches every node (Both leaves and internal nodes.)
+{ **:$node }       // matches every node (Both leaves and internal nodes.)
 ```
 
-Leading `..` means "start from root, navigate to any depth." Paths can combine dots, brackets, and skip operators freely.
+Leading `**` means "start from root, navigate to any depth." Paths can combine dots, brackets, and skip operators freely.
 
 ### Propositional idiom
 
@@ -512,9 +512,9 @@ const data = {
 const pattern = `{
   planets: { $name: { size: $size } }
   aka: [
-    ..
-    [ (?$name) .. $alias .. ]
-    ..
+    ...
+    [ (?$name) ... $alias ... ]
+    ...
   ]
 }`
 
@@ -575,11 +575,11 @@ It works because variables unify across terms.
 
 In array context, a positive lookahead matches the next subsequence but does not consume it.
 ```
-[ (? $x=(/[ab]/)) $x .. ]  // first element must match /[ab]/, bind to $x
+[ (? $x=(/[ab]/)) $x ... ]  // first element must match /[ab]/, bind to $x
 ```
 A negative look ahead cannot have bindings.
 ```
-[ (! .. 3 4) .. ]           // array must not contain [3,4] subsequence
+[ (! ... 3 4) ... ]         // array must not contain [3,4] subsequence
 ```
 
 In objects, a positive lookahead is redundant. But you can have negative lookaheads:
@@ -596,7 +596,7 @@ In objects, a positive lookahead is redundant. But you can have negative lookahe
 
 1. Binding `=`
 2. Optional `?`, quantifiers `+`, `*`, etc.
-3. Breadcrumb operators `.`, `..`, `[]`
+3. Breadcrumb operators `.`, `**`, `[]`
 4. Adjacency/commas (in arrays and objects)
 5. Alternation `|`, prioritized choice `else`
 6. Key-value separator `:`, `:>`
@@ -685,11 +685,11 @@ pattern.find(data).editAll({x: 99}, {mutate: true});
 
 ```javascript
 // Pattern with $x (scalar): array is a single value
-Tendril("[$x ..]").find([[1,2], 3]).editAll({x: [9,9]})
+Tendril("[$x ...]").find([[1,2], 3]).editAll({x: [9,9]})
 // → [[9,9], 3]  (replaced [1,2] with [9,9] as one element)
 
 // Pattern with @x (group): array elements are spliced
-Tendril("[@x ..]").find([1, 2, 3]).editAll({x: [9,9]})
+Tendril("[@x ...]").find([1, 2, 3]).editAll({x: [9,9]})
 // → [9, 9, 3]  (spliced two elements where @x was)
 
 // Replace an object slice: collapse any pw_* properties into one marker.
@@ -714,14 +714,14 @@ Tendril("[$x $y]").find([3, 4]).replaceAll($ => [$.y, $.x])
 // Redact passwords at any depth - two equivalent approaches:
 const data1 = {user: {password: "secret", name: "Alice"}};
 
-// Approach 1: Use .. with match() to search at any depth
-const result1 = Tendril("{ ..password:$p }").match(data1).editAll({p: "REDACTED"});
+// Approach 1: Use ** with match() to search at any depth
+const result1 = Tendril("{ **.password:$p }").match(data1).editAll({p: "REDACTED"});
 
-// Approach 2: Use find() without .. to search at any depth
+// Approach 2: Use find() without ** to search at any depth
 const result2 = Tendril("{ password:$p }").find(data1).editAll({p: "REDACTED"});
 
-// ⚠️ Anti-pattern: Don't combine .. with find() - it's redundant!
-// Tendril("{ ..password:$p }").find(data) // DON'T DO THIS
+// ⚠️ Anti-pattern: Don't combine ** with find() - it's redundant!
+// Tendril("{ **.password:$p }").find(data) // DON'T DO THIS
 ```
 
 ## Slice Patterns
@@ -758,12 +758,12 @@ Tendril("@{ name:$n }").find([{name: "Alice"}, {name: "Bob"}])
 ```javascript
 // Macro expansion: <When>/<Else> → If node
 const result = Tendril(`[
-  ..
+  ...
   @whenelse=(
     {tag:when/i children:$then}
     {tag:else/i children:$else}?
   )
-  ..
+  ...
 ]`).find(vdom).editAll($ => ({
   whenelse: [{
     tag: 'If',
@@ -880,7 +880,7 @@ ARR := '[' A_BODY ']'
 A_BODY := (A_GROUP (','? A_GROUP)*)?           # commas optional
 
 A_GROUP :=
-      '..' A_QUANT?                            # spread token in arrays
+      '...' A_QUANT?                           # spread token in arrays (three dots)
     | A_GROUP_BASE A_QUANT?                    # quantifiers bind tight
       ( ('|' (A_GROUP_BASE A_QUANT?))*         # alternation: enumerate all
       | ('else' (A_GROUP_BASE A_QUANT?))*      # prioritized: first match wins
@@ -941,7 +941,7 @@ O_LOOKAHEAD :=
 # Breadcrumb paths
 O_TERM :=
       KEY BREADCRUMB* OBJ_ASSERT_OP VALUE O_KV_QUANT? O_KV_OPT?
-    | '..' BREADCRUMB* OBJ_ASSERT_OP VALUE O_KV_QUANT? O_KV_OPT?   # leading .. allowed
+    | '**' BREADCRUMB* OBJ_ASSERT_OP VALUE O_KV_QUANT? O_KV_OPT?   # leading ** allowed (glob-style)
 
 KEY   := ITEM
 VALUE := ITEM
@@ -965,8 +965,8 @@ O_KV_OPT :=
       '?'                                      # meaning: slice defaults to #{0,} instead of #{1,}
 
 BREADCRUMB :=
-      '..' KEY                                 # skip any depth, then match KEY
-    | '..'                                     # if immediately followed by ':', ':>', or '?' then KEY := '_'
+      '**' KEY                                 # skip any depth (glob-style), then match KEY
+    | '**'                                     # if immediately followed by ':', ':>', or '?' then KEY := '_'
     | '.' KEY
     | '[' KEY ']'
 
@@ -1182,7 +1182,7 @@ const resp = {
 * Find all text fragments of type `output_text` anywhere:
 
 ```js
-const pat = `{ ..:{type:output_text text:$t} }`;
+const pat = `{ **:{type:output_text text:$t} }`;
 ```
 
 **Expected:**
@@ -1210,7 +1210,7 @@ const chunks = [
 **Pattern:**
 
 ```js
-const pat = `{ ..content:$t }`;
+const pat = `{ **content:$t }`;
 ```
 
 **Expected:**
@@ -1218,7 +1218,7 @@ const pat = `{ ..content:$t }`;
 * Extract `["Hel","lo","!"]` and join to `"Hello!"`
 * Ensure refusal is ignored.
 
-(You can also add a second pattern verifying the finish reason exists somewhere, e.g. `{ ..finish_reason:stop }` hasMatch.)
+(You can also add a second pattern verifying the finish reason exists somewhere, e.g. `{ **finish_reason:stop }` hasMatch.)
 
 ---
 
@@ -1240,9 +1240,9 @@ const vdom = [
 
 ```js
 const pat = `[
-  ..
+  ...
   $node=({ tag:FormattedAddress props:{ type:oneLine model:$m } })
-  ..
+  ...
 ]`;
 ```
 
@@ -1254,9 +1254,9 @@ Better pattern for in-place replacement:
 
 ```js
 const pat2 = `[
-  ..
+  ...
   @x=({ tag:FormattedAddress props:{ type:oneLine model:$m } })
-  ..
+  ...
 ]`;
 ```
 
@@ -1367,7 +1367,7 @@ const arr = [1, 2, 3, 4, 5, 6];
 **Pattern:**
 
 ```js
-const pat = `[ .. @mid=(3 4) .. ]`;
+const pat = `[ ... @mid=(3 4) ... ]`;
 ```
 
 **Edit:**
@@ -1383,7 +1383,7 @@ Replace `@mid` with 3 elements:
 Then a second edit in same run that splices earlier and later groups (two group sites) is even better:
 
 ```js
-const pat2 = `[ @a=(1 2) .. @b=(5 6) ]`;
+const pat2 = `[ @a=(1 2) ... @b=(5 6) ]`;
 editAll({ a:[10], b:[60,70,80] })
 ```
 
@@ -1447,13 +1447,13 @@ This is more sophisticated than the If/Else example, but it's genuinely useful a
 
 ```javascript
 Tendril(`{
-  ..:@label=({
-    tag: label, 
-    props: {for: $id}, 
+  **:@label=({
+    tag: label,
+    props: {for: $id},
     children: [$labelText=(/.*/)]
   })
-  ..:{
-    tag: input, 
+  **:{
+    tag: input,
     props: {id: $id, type: text},
     @placeholder=(placeholder:_?)
   }
@@ -1465,7 +1465,7 @@ Tendril(`{
 
 This showcases:
 
-- **Breadcrumbs** (`..:{...}`) finding elements at any depth
+- **Breadcrumbs** (`**:{...}`) finding elements at any depth
 - **Backreference** (`$id`) joining label to input
 - **Group variables** enabling surgical edits (delete label, update placeholder)
 - **Optional patterns** (`placeholder:_?`) handling cases where placeholder exists or not
@@ -1482,64 +1482,6 @@ Save the label/input example for a "Real-World Examples" section or one of the s
 
 I am thinking of making some changes to the syntax to address some unpleasantness before publishing a beta. 
 
-
-== CW 1. **Find slices**
-
-**Proposal:**
-
-In the `find()` and `first()` API, which currently take patterns of the form
-```
-ROOT_PATTERN := ITEM
-```
-Add support for searching for object and array slices using `@{ }` and `@[ ]` syntax:
-```
-ROOT_PATTERN := ITEM              // Search for single item
-             |  '@{' O_GROUP '}'  // Search for object slice
-             |  '@[' A_BODY ']'   // Search for array slice
-```
-
-This enables usages like:
-```javascript
-// Find objects containing foo:bar, replace just that slice (not the whole object)
-Tendril("@{ foo:bar }").find(data).replaceAll({baz:"fuz"})
-
-// Find arrays containing [A B] subsequence, replace just that slice
-Tendril("@[ A B ]").find(data).replaceAll(["C","D","E"])
-```
-
-**Why `@{ }` / `@[ ]` instead of `@( )`?**
-
-A slice is content without container — the interior of something, not the thing itself. While `@( )` would be conceptually pure (parentheses as neutral delimiters), `@{ }` and `@[ ]` provide:
-- **Error detection**: `@{ foo }` (missing `:`) is a parse error, not a silent misinterpretation
-- **Visual weight**: Braces/brackets signal "this is meaningful syntax", not just grouping
-- **Self-documentation**: The container type is explicit, aiding readability
-
-**Desugaring:**
-
-The new syntax is pure sugar over existing slice-replacement mechanisms:
-```javascript
-Tendril("@{ K:V }").find(data).replaceAll({foo:bar})
-    // desugars to:
-    Tendril("{ @0=(K:V) }").find(data).editAll({"0": () => ({foo:bar})})
-
-Tendril("@[ A B ]").find(data).replaceAll(["c","d","e"])
-    // desugars to:
-    Tendril("[.. @0=(A B) ..]").find(data).editAll({"0": () => ["c","d","e"]})
-```
-
-**Constraints:**
-
-- **`find()` and `first()` only**: Slice patterns are invalid with `match()`, which is anchored at root with no surrounding container. Using a slice pattern with `match()` is an error.
-- **Non-empty content required**: `@{ }` and `@[ ]` (empty slices) are parse errors.
-- The special variable `@0` captures the slice (group semantics, not scalar).
-
---- 
-
-== CW 2. '..' is nonintuitive and is overloaded to indicate an indeterminate sequence in arrays or an indeterminate path descent in paths.
-
-**Proposal:**
-arrays: use `[... foo ...]`; also accept `[… foo …]`
-Paths: use `**` instead:  `{ foo.**.bar }`
 
 == CW 3. Add a very minimal EL to support
     - is a number
