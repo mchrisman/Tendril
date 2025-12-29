@@ -96,7 +96,7 @@ Tendril(`{
   .. $L=( { tag:'label', props:{for:$id}, children:[$text]   } )
   ..      { tag:'input', props:{id:$id @p=(placeholder:_?) } }
 }`)
-.find(vdom)
+.match(vdom)
 .editAll({
   L: undefined,                    // delete the <label>  
   p: $ => ({placeholder: $.text})  // move its text into the <input>
@@ -278,10 +278,10 @@ The **remainder** (spelled `%`, pronounced "remainder") is a special clause repr
 { a:b % }          // matches {"a":"b", "c":"d"}
                    // '%' asserts a nonempty remainder
 
-{ a:b $ }          // does NOT match {"a":"b", "c":"d"}
-                   // '$' requires empty remainder (short for %#{0})
+{ a:b %#{0} }      // does NOT match {"a":"b", "c":"d"}
+                   // '%#{0}' requires empty remainder (closed object)
 
-{ a:_ $ }          // matches iff 'a' is the only key
+{ a:_ %#{0} }      // matches iff 'a' is the only key
 
 { /a.*/:1 %#{0} }  // matches {"ab":1, "ac":2}
                    // Both 'ab' and 'ac' are touched by /a.*/
@@ -891,8 +891,7 @@ OBJ := '{' O_GROUP* O_REMNANT? '}'
 O_REMNANT :=
       S_GROUP '=' '(' '%' O_REM_QUANT? ')' ','?
     | '%' O_REM_QUANT? ','?
-    | '$' ','?                                 # shortcut for '%#{0}'
-    | '(!' '%' ')' ','?                       # closed-object assertion (equiv to '$')
+    | '(!' '%' ')' ','?                        # closed-object assertion (equiv to %#{0})
 
 O_REM_QUANT :=
       '#{' INTEGER (',' INTEGER?)? '}'         # #{m} or #{m,n} or #{m,}
@@ -1007,7 +1006,7 @@ It may appear only once in the object pattern, only at the end. You can bind it 
 ```
 { K1:V1 K2:V2 }             # No constraint on remainder
 { K1:V1 K2:V2 % }           # Remainder is nonempty
-{ K1:V1 K2:V2 $ }           # Remainder is empty (short for %#{0})
+{ K1:V1 K2:V2 %#{0} }       # Remainder is empty (closed object)
 { K1:V1 K2:V2 %#{3,4} }     # Remainder is of size 3-4
 { K1:V1 K2:V2 @rest=(%) }   # Bind it
 ```
@@ -1454,12 +1453,12 @@ For the README, I'd still lean toward the If/Else merge—simpler pattern, clear
 Save the label/input example for a "Real-World Examples" section or one of the specialized guides?
 
 
-= Current work
+= Current work (CW)
 
 I am thinking of making some changes to the syntax to address some unpleasantness before publishing a beta. 
 
 
-1. **Find slices** 
+== CW 1. **Find slices** 
 
 **Proposal:**
 
@@ -1475,43 +1474,46 @@ ROOT_PATTERN := ITEM       // Search for single item.
 ```
 This enables usages like
 ```
-pattern.find("@( foo:bar )").replaceAll({ baz:"fuz"}).  // (Currently replaceAll would replace the whole object.)
+Tendril("@( foo:bar )").find(data).replaceAll({ baz:"fuz"}).  // (Currently replaceAll would replace the whole object.)
 ```
 
-- It is a warning if the slice pattern could have been parsed as an ITEM.
-- The special variable @0 will be an array, not a scalar, when searching for a slice.
-
-It is worth noting that we're not adding any truly new functionality here. The new find/match inputs, like the old ones, are syntactic sugar on the same slice-replacement mechanism.
-
-Remember, the existing replaceAll is syntactic sugar on editAll's slice-replace function:
+Remember, the **existing** replaceAll is syntactic sugar on editAll's slice-replace function. It works by adding a $0 binding to the pattern. This is not visible to the user. The $0 becomes the anchor for 'what should be replaced'.
 ```
 Tendril("{K:V}")  .find(data).replaceAll({foo:bar}) 
-    // may be defined as: Tendril("$0=(K:V)").find(data) .editAll({"0":$=>{foo:bar}})
+    // may be defined as: 
+    Tendril("$0=(K:V)").find(data) .editAll({"0":$=>{foo:bar}})
     
 Tendril("[ A B ]").find(data).replaceAll(["c","d","e"]) 
-    // may be defined as: Tendril("$0=[A B]") .find(data).editAll({"0":$=>["c","d","e"]})
+    // may be defined as: 
+    Tendril("$0=[A B]") .find(data).editAll({"0":$=>["c","d","e"]})
 ```
-The new idioms are built on the same function:
+
+With respect to the new functionality, note that we're not adding anything unprecedented here. The new find/match inputs, like the old ones, are syntactic sugar on the same slice-replacement mechanism in order to define @0. 
 ```
 Tendril("@(K:V)") .find(data).replaceAll({foo:bar}) 
-    is new sugar for Tendril("{ @0=(K:V) }") ..find(data)editAll({"0":$=>{foo:bar}})
+    // is new sugar for 
+    Tendril("{ @0=(K:V) }") ..find(data)editAll({"0":$=>{foo:bar}})
     
 Tendril("@(A B)") .find(data).replaceAll(["c","d","e"]) 
-    is new sugar for Tendril("[... @0=(A B) ...]") .find(data).editAll({"0":$=>["c","d","e"]})
+    // is new sugar for 
+    Tendril("[... @0=(A B) ...]") .find(data).editAll({"0":$=>["c","d","e"]})
 ```
-(Remember, $0 and @0 collapse to "0" in JS, for $x and @x are the same variable name with different types.  In the API you would refer to it by name, e.g. find(...).editAll({"0":_=>foo}))
+
+- The special variable @0 will be an array, not a scalar, when searching for a slice.
+
+- It is a warning if the slice pattern could have been parsed as an ITEM.
 
 
 
+--- 
 
-2. '..' is nonintuitive and is overloaded to indicate an indeterminate sequence in arrays or an indeterminate path descent in paths.
+== CW 2. '..' is nonintuitive and is overloaded to indicate an indeterminate sequence in arrays or an indeterminate path descent in paths.
 
 **Proposal:**
 arrays: use `[... foo ...]`; also accept `[… foo …]`
 Paths: use `**` instead:  `{ foo.**.bar }`
 
-
-3. Add a very minimal EL to support
+== CW 3. Add a very minimal EL to support
     - is a number
     - is a string
     - coerce to numbr/string/boolean
@@ -1519,7 +1521,7 @@ Paths: use `**` instead:  `{ foo.**.bar }`
         - Numerical comparison, support e.g. ` [ $x where ($x<3) ] `
         - simple invertible arithmetic, support e.g. `{ foo[1+$x]:bar }`
 
-4. Categorization in object syntax.
+== CW 4. Categorization in object syntax.
 
 The pattern `K:(V1 else V2 else V3)` is just a special case of `K:V` where `V` is an else-chain. Therefore, the else chain is applied independently to each value, routing that property to the first Vi that matches its value, forming a partition of the domain (no overlap).
 
@@ -1550,9 +1552,9 @@ for example,
 
 \[Note: This right arrow syntax is idiosyncratic and a bit inconsistent with the rest of the document. It is meant to emphasize that the k:v slices (not V slices) are being collected across multiple keys rather than simply enclosing part of the V pattern with parentheses. ]
 
-5. Defaults for nomatching bindings?
+== CW 5. Defaults for nomatching bindings?
 
-6. Recursive descent
+== CW 6. Recursive descent
 
 A breadcrumb path is really just an array of instructions for navigating somewhere else in the structure.
 
@@ -1570,4 +1572,6 @@ Then a cyclic graph is `[... $start..(↳($a,$b where $b=($a[1])):$start) ...]`
 (You don't need to point out that this particular example would be very inefficient, and that we'd need a 'visited' flag and a depth limit, and that this is a complication to the language that is prima facie unjustified. )
     ``
 
+== CW 7. **Training wheels**:
+Add a **boundedness mode** that distinguishes **O(1), syntactically finite branching** from **data-dependent enumeration**: small alternations like `red|rouge` are always safe, while constructs whose match count depends on input size (regex or wildcard keys in object position, array spreads/splits, variable-length quantifiers, wildcard indices, unbound `_:$x`) are rejected unless explicitly marked. Provide two opt-ins: `enum(P)` to acknowledge intentional enumeration, and `one(P)` / `atMostOne(P)` to assert uniqueness and fail otherwise. Implement this via a simple syntactic classification of branching sites (finite vs size-dependent) with clear compile-time errors explaining which construct causes unbounded branching and how to fix it; this teaches users to avoid accidental Cartesian products without limiting legitimate finite alternation.
 

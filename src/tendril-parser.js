@@ -475,7 +475,6 @@ function parseObj(p) {
 function parseORemnant(p) {
   // O_REMNANT := '@' IDENT '=' '(' '%' ')' O_REM_QUANT?
   //            | '%' O_REM_QUANT?
-  //            | '$'                                      // shortcut for %#{0}
   //            | '(!' '%' ')'                             // closed-object assertion
 
   // Helper to check if current token is remainder marker (%)
@@ -485,20 +484,6 @@ function parseORemnant(p) {
     if (p.peek('%')) return p.eat('%');
     return null;
   };
-
-  // Try $ (closed object shortcut = %#{0})
-  const closedObj = p.backtrack(() => {
-    if (!p.peek('$')) return null;
-    // Make sure this isn't a variable binding like $x
-    // Check if next token after $ is an identifier (which would make it $varname)
-    const next = p.toks[p.i + 1];
-    if (next && next.k === 'id') return null; // It's $varname, not standalone $
-    p.eat('$');
-    p.maybe(',');
-    // $ is equivalent to %#{0} (empty remainder required)
-    return Spread({min: 0, max: 0});
-  });
-  if (closedObj) return closedObj;
 
   // Try @x=(%) or @x=(%?) with optional quantifier
   // Syntax: @x=(%) - variable, equals, then parens around %

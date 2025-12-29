@@ -167,26 +167,17 @@ test('@rest=(%) - bind %', () => {
   assert.deepEqual(result.rest, {b: 2, c: 3});
 });
 
-// ==================== $ (closed object shortcut) ====================
+// ==================== %#{0} (closed object) ====================
 
-test('$ - closed object (short for %#{0})', () => {
-  assert.ok(matches('{a:1 $}', {a: 1}));
-  assert.ok(!matches('{a:1 $}', {a: 1, b: 2}));
-  assert.ok(!matches('{a:1 $}', {})); // Still need a:1
+test('%#{0} - closed object (no remainder allowed)', () => {
+  assert.ok(matches('{a:1 %#{0}}', {a: 1}));
+  assert.ok(!matches('{a:1 %#{0}}', {a: 1, b: 2}));
+  assert.ok(!matches('{a:1 %#{0}}', {})); // Still need a:1
 });
 
-test('$ vs %#{0} - equivalent behavior', () => {
-  const data1 = {a: 1};
-  const data2 = {a: 1, b: 2};
-
-  // These should behave identically
-  assert.equal(matches('{a:1 $}', data1), matches('{a:1 %#{0}}', data1));
-  assert.equal(matches('{a:1 $}', data2), matches('{a:1 %#{0}}', data2));
-});
-
-test('$ alone - empty object', () => {
-  assert.ok(matches('{$}', {}));
-  assert.ok(!matches('{$}', {a: 1}));
+test('%#{0} alone - empty object', () => {
+  assert.ok(matches('{%#{0}}', {}));
+  assert.ok(!matches('{%#{0}}', {a: 1}));
 });
 
 // ==================== Remainder is coverage-based ====================
