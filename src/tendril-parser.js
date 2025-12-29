@@ -69,6 +69,9 @@ const OTerm = (key, breadcrumbs, op, val, quant, optional = false) => ({
 
 const Spread = (quant) => ({type: 'Spread', quant});  // .. with optional #{...}
 
+// Slice patterns at root level: @{ O_GROUP } or @[ A_BODY ]
+const SlicePattern = (kind, content) => ({type: 'SlicePattern', kind, content});
+
 const Breadcrumb = (kind, key, quant) => ({
   type: 'Breadcrumb',
   kind,   // 'dot' or 'bracket'
@@ -90,7 +93,47 @@ function eatVarName(p) {
 // ---------- ROOT_PATTERN ----------
 
 function parseRootPattern(p) {
+  // Check for slice patterns: @{ O_GROUP } or @[ A_BODY ]
+  if (p.peek('@')) {
+    const next = p.toks[p.i + 1];
+    if (next && next.k === '{') {
+      return parseObjectSlicePattern(p);
+    }
+    if (next && next.k === '[') {
+      return parseArraySlicePattern(p);
+    }
+  }
   return parseItem(p);
+}
+
+function parseObjectSlicePattern(p) {
+  // @{ O_GROUP+ }
+  p.eat('@');
+  p.eat('{');
+  const groups = [];
+  while (!p.peek('}')) {
+    groups.push(parseOGroup(p));
+    p.maybe(',');
+  }
+  if (groups.length === 0) {
+    p.fail('empty object slice pattern @{ } is not allowed');
+  }
+  p.eat('}');
+  return SlicePattern('object', {type: 'OGroup', groups});
+}
+
+function parseArraySlicePattern(p) {
+  // @[ A_BODY ]
+  p.eat('@');
+  p.eat('[');
+  const items = parseABody(p, ']');
+  if (items.length === 0) {
+    p.fail('empty array slice pattern @[ ] is not allowed');
+  }
+  p.eat(']');
+  // Wrap in Seq if multiple items, otherwise just the single item
+  const content = items.length === 1 ? items[0] : {type: 'Seq', items};
+  return SlicePattern('array', content);
 }
 
 // ---------- ITEM ----------

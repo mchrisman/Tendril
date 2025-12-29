@@ -724,6 +724,29 @@ const result2 = Tendril("{ password:$p }").find(data1).editAll({p: "REDACTED"});
 // Tendril("{ ..password:$p }").find(data) // DON'T DO THIS
 ```
 
+## Slice Patterns
+
+Slice patterns (`@{ }` and `@[ ]`) let you search for and replace *parts* of objects or arrays without affecting the rest:
+
+```javascript
+// Object slice: replace just the matched key-value pairs
+const data = {foo: 1, bar: 2, baz: 3};
+Tendril("@{ foo:1 bar:2 }").find(data).replaceAll({replaced: true})
+// → {replaced: true, baz: 3}
+
+// Array slice: replace just the matched subsequence
+const arr = [1, 2, 3, 4, 5];
+Tendril("@[ 2 3 ]").find(arr).replaceAll([20, 30, 31])
+// → [1, 20, 30, 31, 4, 5]
+
+// Works with bindings
+Tendril("@{ name:$n }").find([{name: "Alice"}, {name: "Bob"}])
+  .solutions().toArray()
+// → [{n: "Alice"}, {n: "Bob"}]
+```
+
+**Important:** Slice patterns only work with `find()` and `first()`. Using them with `match()` is an error—there's no surrounding container at the root level.
+
 ---
 
 # When to Use Tendril
@@ -821,7 +844,9 @@ LITERAL       := NUMBER | BOOLEAN | NULL | QUOTED_STRING | REGEX | CI_STRING | B
 # Core productions
 # --------------------------------------------------------------------
 
-ROOT_PATTERN := ITEM 
+ROOT_PATTERN := ITEM
+             |  '@{' O_GROUP+ '}'              # object slice pattern (find/first only)
+             |  '@[' A_BODY ']'                # array slice pattern (find/first only)
 
 S_ITEM  := '$' IDENT
 S_GROUP := '@' IDENT
@@ -1458,52 +1483,55 @@ Save the label/input example for a "Real-World Examples" section or one of the s
 I am thinking of making some changes to the syntax to address some unpleasantness before publishing a beta. 
 
 
-== CW 1. **Find slices** 
+== CW 1. **Find slices**
 
 **Proposal:**
 
-In the find() and first() API, which currently take patterns of the form 
+In the `find()` and `first()` API, which currently take patterns of the form
 ```
 ROOT_PATTERN := ITEM
 ```
-Add support for searching for object and array slices triggered by the special syntax "@( )":
+Add support for searching for object and array slices using `@{ }` and `@[ ]` syntax:
 ```
-ROOT_PATTERN := ITEM       // Search for single item. 
-             |  '@(' O_GROUP ')'  // Search for object slice  -- new
-             |  '@(' A_BODY ')'   // Search for array slice   -- new
-```
-This enables usages like
-```
-Tendril("@( foo:bar )").find(data).replaceAll({ baz:"fuz"}).  // (Currently replaceAll would replace the whole object.)
+ROOT_PATTERN := ITEM              // Search for single item
+             |  '@{' O_GROUP '}'  // Search for object slice
+             |  '@[' A_BODY ']'   // Search for array slice
 ```
 
-Remember, the **existing** replaceAll is syntactic sugar on editAll's slice-replace function. It works by adding a $0 binding to the pattern. This is not visible to the user. The $0 becomes the anchor for 'what should be replaced'.
-```
-Tendril("{K:V}")  .find(data).replaceAll({foo:bar}) 
-    // may be defined as: 
-    Tendril("$0=(K:V)").find(data) .editAll({"0":$=>{foo:bar}})
-    
-Tendril("[ A B ]").find(data).replaceAll(["c","d","e"]) 
-    // may be defined as: 
-    Tendril("$0=[A B]") .find(data).editAll({"0":$=>["c","d","e"]})
+This enables usages like:
+```javascript
+// Find objects containing foo:bar, replace just that slice (not the whole object)
+Tendril("@{ foo:bar }").find(data).replaceAll({baz:"fuz"})
+
+// Find arrays containing [A B] subsequence, replace just that slice
+Tendril("@[ A B ]").find(data).replaceAll(["C","D","E"])
 ```
 
-With respect to the new functionality, note that we're not adding anything unprecedented here. The new find/match inputs, like the old ones, are syntactic sugar on the same slice-replacement mechanism in order to define @0. 
+**Why `@{ }` / `@[ ]` instead of `@( )`?**
+
+A slice is content without container — the interior of something, not the thing itself. While `@( )` would be conceptually pure (parentheses as neutral delimiters), `@{ }` and `@[ ]` provide:
+- **Error detection**: `@{ foo }` (missing `:`) is a parse error, not a silent misinterpretation
+- **Visual weight**: Braces/brackets signal "this is meaningful syntax", not just grouping
+- **Self-documentation**: The container type is explicit, aiding readability
+
+**Desugaring:**
+
+The new syntax is pure sugar over existing slice-replacement mechanisms:
+```javascript
+Tendril("@{ K:V }").find(data).replaceAll({foo:bar})
+    // desugars to:
+    Tendril("{ @0=(K:V) }").find(data).editAll({"0": () => ({foo:bar})})
+
+Tendril("@[ A B ]").find(data).replaceAll(["c","d","e"])
+    // desugars to:
+    Tendril("[.. @0=(A B) ..]").find(data).editAll({"0": () => ["c","d","e"]})
 ```
-Tendril("@(K:V)") .find(data).replaceAll({foo:bar}) 
-    // is new sugar for 
-    Tendril("{ @0=(K:V) }") ..find(data)editAll({"0":$=>{foo:bar}})
-    
-Tendril("@(A B)") .find(data).replaceAll(["c","d","e"]) 
-    // is new sugar for 
-    Tendril("[... @0=(A B) ...]") .find(data).editAll({"0":$=>["c","d","e"]})
-```
 
-- The special variable @0 will be an array, not a scalar, when searching for a slice.
+**Constraints:**
 
-- It is a warning if the slice pattern could have been parsed as an ITEM.
-
-- We need to extend the representation of "an occurrance" to include specific positions within arrays.
+- **`find()` and `first()` only**: Slice patterns are invalid with `match()`, which is anchored at root with no surrounding container. Using a slice pattern with `match()` is an error.
+- **Non-empty content required**: `@{ }` and `@[ ]` (empty slices) are parse errors.
+- The special variable `@0` captures the slice (group semantics, not scalar).
 
 --- 
 

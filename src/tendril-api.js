@@ -33,9 +33,38 @@ function compile(pattern) {
     return hit;
   }
   let ast = parsePattern(String(pattern));
+  let isSlicePattern = false;
 
-  // Wrap AST with $0 binding to capture entire match region
-  ast = {type: 'SBind', name: '0', pat: ast};
+  // Check for slice patterns and desugar them
+  if (ast.type === 'SlicePattern') {
+    isSlicePattern = true;
+    if (ast.kind === 'object') {
+      // @{ K:V } → { @0=(K:V) }
+      ast = {
+        type: 'Obj',
+        terms: [{type: 'GroupBind', name: '0', pat: ast.content}],
+        spread: null
+      };
+    } else if (ast.kind === 'array') {
+      // @[ A B ] → [.. @0=(A B) ..]
+      ast = {
+        type: 'Arr',
+        items: [
+          {type: 'Spread', quant: null},
+          {type: 'GroupBind', name: '0', pat: ast.content},
+          {type: 'Spread', quant: null}
+        ]
+      };
+    }
+  } else {
+    // Wrap AST with $0 binding to capture entire match region
+    ast = {type: 'SBind', name: '0', pat: ast};
+  }
+
+  // Mark slice patterns for match() rejection
+  if (isSlicePattern) {
+    ast._isSlicePattern = true;
+  }
 
   _cache.set(pattern, ast);
   if (_cache.size > CACHE_MAX) {
@@ -751,7 +780,9 @@ class OccurrenceSet {
     for (const occ of this._occurrences) {
       if (!occ._zeroSite) continue;
       const firstSol = occ._solutions[0] || null;
-      const to = (typeof replOrFn === 'function') ? replOrFn(firstSol) : replOrFn;
+      const rawTo = (typeof replOrFn === 'function') ? replOrFn(firstSol) : replOrFn;
+      // Convert value based on site kind (scalar $0 vs group @0)
+      const to = convertValueForSite(occ._zeroSite, rawTo);
       edits.push({site: occ._zeroSite, to});
     }
 
@@ -949,6 +980,9 @@ class PatternImpl {
    */
   match(input) {
     const ast = this._getAst();
+    if (ast._isSlicePattern) {
+      throw new Error('Slice patterns (@{ } and @[ ]) require find() or first(), not match()');
+    }
     const rawSolutions = engineMatch(ast, input, this._buildOpts());
     const groups = groupByZeroPath(rawSolutions);
     return new OccurrenceSet(input, groups);
@@ -982,6 +1016,9 @@ class PatternImpl {
 
   hasMatch(input) {
     const ast = this._getAst();
+    if (ast._isSlicePattern) {
+      throw new Error('Slice patterns (@{ } and @[ ]) require find() or first(), not match()/hasMatch()');
+    }
     return engineMatchExists(ast, input, this._buildOpts());
   }
 
