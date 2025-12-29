@@ -5,6 +5,8 @@ import {
   bindScalar, bindGroup, cloneEnv, isBound,
 } from './microparser.js';
 import {Group} from './tendril-api.js';
+import {sameValueZero} from './tendril-util.js';
+import {evaluateExpr, getExprVariables} from './tendril-el.js';
 
 // ------------- StopSearch sentinel for early termination -------------
 // Used by short-circuit helpers (matchExists, scanFirst, etc.) to stop
@@ -24,7 +26,7 @@ class StopSearch extends Error {
 //  - group (object): {kind: 'group', path: [], keys: ['a', ...], valueRefs: {a: obj1, ...}}
 
 function newSolution() {
-  return {env: new Map(), sites: new Map()};
+  return {env: new Map(), sites: new Map(), guards: []};
 }
 
 function cloneSolution(sol) {
@@ -32,7 +34,60 @@ function cloneSolution(sol) {
   for (const [k, v] of sol.sites) {
     sites.set(k, [...v]); // shallow copy of site array
   }
-  return {env: cloneEnv(sol.env), sites};
+  return {
+    env: cloneEnv(sol.env),
+    sites,
+    guards: sol.guards ? [...sol.guards] : []
+  };
+}
+
+// Add a guard to the solution's pending guards list
+function addGuard(sol, guard, varName) {
+  if (!guard) return;
+  const requiredVars = getExprVariables(guard);
+  sol.guards.push({guard, varName, requiredVars});
+}
+
+// Check if all pending guards evaluate to true
+// Returns true if all guards pass, false if any guard fails
+function checkGuards(sol) {
+  for (const {guard, varName, requiredVars} of sol.guards) {
+    // Check if all required variables are bound
+    let allBound = true;
+    for (const v of requiredVars) {
+      if (!isBound(sol.env, v)) {
+        allBound = false;
+        break;
+      }
+    }
+
+    if (!allBound) {
+      // Guard not yet closed - this is an error at the end of matching
+      // For now, we'll check this at emit time
+      continue;
+    }
+
+    // Evaluate the guard
+    try {
+      const result = evaluateExpr(guard, sol.env);
+      if (!result) {
+        return false; // Guard failed
+      }
+    } catch (e) {
+      return false; // Guard errored - treat as failure
+    }
+  }
+  return true;
+}
+
+// Check if all guards are closed (all required variables are bound)
+function allGuardsClosed(sol) {
+  for (const {requiredVars} of sol.guards) {
+    for (const v of requiredVars) {
+      if (!isBound(sol.env, v)) return false;
+    }
+  }
+  return true;
 }
 
 function recordScalarSite(sol, varName, path, valueRef) {
@@ -112,13 +167,16 @@ export function match(ast, input, opts = {}) {
 
   matchItem(ast, input, [], newSolution(), (sol) => solutions.push(sol), ctx);
 
-  // Convert to public API format
-  return solutions.map(sol => {
-    const bindings = Object.fromEntries(
-      Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
-    );
-    return {bindings, sites: sol.sites};
-  });
+  // Filter and convert to public API format
+  // Only include solutions where all guards are closed and pass
+  return solutions
+    .filter(sol => allGuardsClosed(sol) && checkGuards(sol))
+    .map(sol => {
+      const bindings = Object.fromEntries(
+        Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
+      );
+      return {bindings, sites: sol.sites};
+    });
 }
 
 // Scan mode: find all occurrences at any depth
@@ -149,13 +207,16 @@ export function scan(ast, input, opts = {}) {
 
   scanValue(input, []);
 
-  // Convert to public API format
-  return solutions.map(sol => {
-    const bindings = Object.fromEntries(
-      Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
-    );
-    return {bindings, sites: sol.sites};
-  });
+  // Filter and convert to public API format
+  // Only include solutions where all guards are closed and pass
+  return solutions
+    .filter(sol => allGuardsClosed(sol) && checkGuards(sol))
+    .map(sol => {
+      const bindings = Object.fromEntries(
+        Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
+      );
+      return {bindings, sites: sol.sites};
+    });
 }
 
 // ------------- Short-circuit helpers -------------
@@ -170,8 +231,11 @@ export function matchExists(ast, input, opts = {}) {
   const debug = opts.debug;
   const ctx = {steps: 0, maxSteps, debug};
   try {
-    matchItem(ast, input, [], newSolution(), () => {
-      throw new StopSearch(true);
+    matchItem(ast, input, [], newSolution(), (sol) => {
+      // Only count as match if all guards are closed and pass
+      if (allGuardsClosed(sol) && checkGuards(sol)) {
+        throw new StopSearch(true);
+      }
     }, ctx);
     return false;
   } catch (e) {
@@ -190,7 +254,10 @@ export function matchFirst(ast, input, opts = {}) {
   const ctx = {steps: 0, maxSteps, debug};
   try {
     matchItem(ast, input, [], newSolution(), (sol) => {
-      throw new StopSearch(sol);
+      // Only accept if all guards are closed and pass
+      if (allGuardsClosed(sol) && checkGuards(sol)) {
+        throw new StopSearch(sol);
+      }
     }, ctx);
     return null;
   } catch (e) {
@@ -219,8 +286,11 @@ export function scanExists(ast, input, opts = {}) {
     guard(ctx);
 
     // Try matching pattern at this position - throws StopSearch on success
-    matchItem(ast, value, path, newSolution(), () => {
-      throw new StopSearch(true);
+    matchItem(ast, value, path, newSolution(), (sol) => {
+      // Only count as match if all guards are closed and pass
+      if (allGuardsClosed(sol) && checkGuards(sol)) {
+        throw new StopSearch(true);
+      }
     }, ctx);
 
     // Recursively descend into structure
@@ -258,7 +328,10 @@ export function scanFirst(ast, input, opts = {}) {
 
     // Try matching pattern at this position - throws StopSearch on success
     matchItem(ast, value, path, newSolution(), (sol) => {
-      throw new StopSearch(sol);
+      // Only accept if all guards are closed and pass
+      if (allGuardsClosed(sol) && checkGuards(sol)) {
+        throw new StopSearch(sol);
+      }
     }, ctx);
 
     // Recursively descend into structure
@@ -334,9 +407,14 @@ function matchItem(item, node, path, sol, emit, ctx) {
         emit(cloneSolution(sol));
         return;
 
+      case 'TypedAny':
+        // Typed wildcards: _string, _number, _boolean
+        if (typeof node === item.kind) emit(cloneSolution(sol));
+        return;
+
       case 'Lit':
-        // Use === for literals (treats 0 and -0 as equal, per JS semantics)
-        if (node === item.value) emit(cloneSolution(sol));
+        // Use SameValueZero: NaN equals NaN, 0 equals -0
+        if (sameValueZero(node, item.value)) emit(cloneSolution(sol));
         return;
 
       case 'StringPattern':
@@ -345,7 +423,8 @@ function matchItem(item, node, path, sol, emit, ctx) {
         return;
 
       case 'Bool':
-        if (Object.is(node, item.value)) emit(cloneSolution(sol));
+        // Use SameValueZero for consistency (though booleans don't have edge cases)
+        if (sameValueZero(node, item.value)) emit(cloneSolution(sol));
         return;
 
       case 'Null':
@@ -423,6 +502,10 @@ function matchItem(item, node, path, sol, emit, ctx) {
             if (ctx.debug?.onBind) {
               ctx.debug.onBind('scalar', item.name, node);
             }
+            // Add guard expression if present
+            addGuard(s3, item.guard, item.name);
+            // Check guards - prune if any closed guard fails
+            if (!checkGuards(s3)) return;
             emit(s3);
           }
         }, ctx);
@@ -518,6 +601,10 @@ function matchArray(items, arr, path, sol, emit, ctx) {
               if (ctx.debug?.onBind) {
                 ctx.debug.onBind('scalar', it.name, element);
               }
+              // Add guard expression if present
+              addGuard(s3, it.guard, it.name);
+              // Check guards - prune if any closed guard fails
+              if (!checkGuards(s3)) return;
               stepItems(ixItem + 1, ixArr + k, s3);
             }
           }
@@ -1409,6 +1496,9 @@ function keyMatches(pat, key) {
   switch (pat.type) {
     case 'Any':
       return true;
+    case 'TypedAny':
+      // Keys are always strings, so _string matches, _number/_boolean never match
+      return pat.kind === 'string';
     case 'Lit':
       return Object.is(String(key), String(pat.value));
     case 'StringPattern':
@@ -1437,6 +1527,10 @@ function bindKeyVariables(keyPat, key, sol, path) {
         return false;
       }
       recordScalarSite(sol, keyPat.name, path, key);
+      // Add guard expression if present
+      addGuard(sol, keyPat.guard, keyPat.name);
+      // Check guards - prune if any closed guard fails
+      if (!checkGuards(sol)) return false;
       return true;
 
     case 'Alt':

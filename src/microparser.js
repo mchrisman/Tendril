@@ -20,6 +20,12 @@ export function tokenize(src) {
   const reNum = /-?\d+(\.\d+)?/y;
   const reId  = /[A-Za-z_][A-Za-z0-9_]*/y;
 
+  // Track if we might be in a guard context: $x=(PATTERN; EXPR)
+  // When we see ';' after '(' and before ')', capture rest as guard_expr
+  let parenDepth = 0;
+  let guardStartDepth = 0;
+  let inGuardContext = false;
+
   while (i < src.length) {
     // whitespace (incl. newlines)
     reWS.lastIndex = i;
@@ -121,12 +127,19 @@ export function tokenize(src) {
         push('ci', { lower: w.toLowerCase(), desc: src.slice(i, j + 2) }, (j + 2) - i);
         continue;
       }
-      // if (w === 'AND')   { push('kw', 'AND', j - i); continue; }
-      if (w === '_')     { push('any', '_',   j - i); continue; }
-      if (w === 'true')  { push('bool', true, j - i); continue; }
-      if (w === 'false') { push('bool', false, j - i); continue; }
-      if (w === 'null')  { push('null', null, j - i); continue; }
-      if (w === 'else')  { push('else', 'else', j - i); continue; }
+      // Keywords and special tokens
+      if (w === '_')        { push('any', '_', j - i); continue; }
+      if (w === '_string')  { push('any_string', '_string', j - i); continue; }
+      if (w === '_number')  { push('any_number', '_number', j - i); continue; }
+      if (w === '_boolean') { push('any_boolean', '_boolean', j - i); continue; }
+      if (w === 'true')     { push('bool', true, j - i); continue; }
+      if (w === 'false')    { push('bool', false, j - i); continue; }
+      if (w === 'null')     { push('null', null, j - i); continue; }
+      if (w === 'else')     { push('else', 'else', j - i); continue; }
+      // Reject other underscore-prefixed identifiers
+      if (w[0] === '_') {
+        throw syntax(`identifiers cannot start with underscore: ${w}`, src, i);
+      }
       push('id', w, j - i);
       continue;
     }
@@ -145,8 +158,53 @@ export function tokenize(src) {
     if (c2 === '+?')  { push('+?', '+?', 2); continue; }   // lazy plus
     if (c2 === '*?')  { push('*?', '*?', 2); continue; }   // lazy star
 
-    // one-character punctuation/operators
-    const single = '[](){}:,.$@=|*+?!-#%'.includes(c) ? c : null;
+    // Handle semicolon specially: if inside parens, capture guard expression
+    if (c === ';' && parenDepth > 0) {
+      push(';', ';', 1);
+      // Capture everything until the matching ')' as a guard_expr token
+      // Need to handle nested parens, strings properly
+      const exprStart = i;
+      let depth = parenDepth;
+      let j = i;
+      while (j < src.length && depth > 0) {
+        const ch = src[j];
+        // Skip over string literals
+        if (ch === '"' || ch === "'") {
+          const quote = ch;
+          j++;
+          while (j < src.length && src[j] !== quote) {
+            if (src[j] === '\\') j++; // Skip escaped char
+            j++;
+          }
+          if (j < src.length) j++; // Skip closing quote
+          continue;
+        }
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+        if (depth > 0) j++;
+      }
+      if (depth !== 0) throw syntax(`unmatched parenthesis in guard expression`, src, exprStart);
+      const exprText = src.slice(exprStart, j).trim();
+      if (exprText) {
+        push('guard_expr', exprText, j - i);
+      }
+      continue;
+    }
+
+    // Track paren depth for guard expression handling
+    if (c === '(') {
+      parenDepth++;
+      push('(', '(', 1);
+      continue;
+    }
+    if (c === ')') {
+      parenDepth--;
+      push(')', ')', 1);
+      continue;
+    }
+
+    // one-character punctuation/operators (excluding parens, handled above)
+    const single = '[]{}:,.$@=|*+?!-#%<>&/'.includes(c) ? c : null;
     if (single) { push(single, single, 1); continue; }
 
     throw syntax(`unexpected character '${c}'`, src, i);

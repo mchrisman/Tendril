@@ -16,6 +16,7 @@
 //   Breadcrumbs: Breadcrumb (no quantifiers in v5)
 
 import {Parser, makeRegExp} from './microparser.js';
+import {parseExpr} from './tendril-el.js';
 
 // ---------- Public API ----------
 
@@ -30,6 +31,7 @@ export function parsePattern(src) {
 
 // Atoms
 const Any = () => ({type: 'Any'});
+const TypedAny = (kind) => ({type: 'TypedAny', kind}); // _string, _number, _boolean
 const Lit = (v) => ({type: 'Lit', value: v});
 const StringPattern = (kind, desc, matchFn) => ({type: 'StringPattern', kind, desc, matchFn});
 const Bool = (v) => ({type: 'Bool', value: v});
@@ -37,7 +39,7 @@ const Null = () => ({type: 'Null'});
 const RootKey = () => ({type: 'RootKey'}); // Special marker for leading ** in paths
 
 // Bindings
-const SBind = (name, pat) => ({type: 'SBind', name, pat});  // $x=(pat)
+const SBind = (name, pat, guard = null) => ({type: 'SBind', name, pat, guard});  // $x=(pat) or $x=(pat; expr)
 const GroupBind = (name, pat) => ({type: 'GroupBind', name, pat});  // @x=(pat)
 
 // Containers
@@ -88,6 +90,24 @@ function eatVarName(p) {
     return t.v;
   }
   p.fail('expected variable name');
+}
+
+// Parse guard expression: consume guard_expr token and parse as expression
+function parseGuardExpr(p) {
+  // The tokenizer now produces a guard_expr token with raw expression text
+  const tok = p.peek('guard_expr');
+  if (!tok) p.fail('expected guard expression');
+  p.eat('guard_expr');
+
+  const exprSrc = tok.v;
+  if (!exprSrc) p.fail('empty guard expression');
+
+  // Parse the expression using the expression language parser
+  try {
+    return parseExpr(exprSrc);
+  } catch (e) {
+    p.fail(`invalid guard expression: ${e.message}`);
+  }
 }
 
 // ---------- ROOT_PATTERN ----------
@@ -193,15 +213,20 @@ function parseItemTerm(p) {
     return inner;
   }
 
-  // Scalar variable: $x or $x=(pattern)
+  // Scalar variable: $x or $x=(pattern) or $x=(pattern; guard)
   if (p.peek('$')) {
     p.eat('$');
     const name = eatVarName(p);
     if (p.maybe('=')) {
       p.eat('(');
       const pat = parseItem(p);
+      let guard = null;
+      if (p.maybe(';')) {
+        // Parse guard expression: collect source until ')' and parse as expression
+        guard = parseGuardExpr(p);
+      }
       p.eat(')');
-      return SBind(name, pat);
+      return SBind(name, pat, guard);
     }
     return SBind(name, Any());
   }
@@ -222,6 +247,17 @@ function parseItemTerm(p) {
   // Wildcard
   if (p.maybe('any')) {
     return Any();
+  }
+
+  // Typed wildcards
+  if (p.maybe('any_string')) {
+    return TypedAny('string');
+  }
+  if (p.maybe('any_number')) {
+    return TypedAny('number');
+  }
+  if (p.maybe('any_boolean')) {
+    return TypedAny('boolean');
   }
 
   // Literals
@@ -300,9 +336,9 @@ function parseObjectLookahead(p) {
 // ---------- ARRAYS ----------
 
 // A_BODY := (A_GROUP (','? A_GROUP)*)?
-function parseABody(p, stopToken) {
+function parseABody(p, ...stopTokens) {
   const items = [];
-  while (!p.peek(stopToken)) {
+  while (!stopTokens.some(t => p.peek(t))) {
     items.push(parseAGroup(p));
     p.maybe(',');  // Optional comma
   }
@@ -420,16 +456,20 @@ function parseAGroupBase(p) {
     return GroupBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
-  // Scalar variable: $x or $x=(pattern)
+  // Scalar variable: $x or $x=(pattern) or $x=(pattern; guard)
   if (p.peek('$')) {
     p.eat('$');
     const name = eatVarName(p);
     if (p.maybe('=')) {
       p.eat('(');
-      const items = parseABody(p, ')');
+      const items = parseABody(p, ')', ';');
+      let guard = null;
+      if (p.maybe(';')) {
+        guard = parseGuardExpr(p);
+      }
       p.eat(')');
       const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
-      return SBind(name, pat);
+      return SBind(name, pat, guard);
     }
     return SBind(name, Any());
   }

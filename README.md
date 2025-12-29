@@ -1483,13 +1483,67 @@ Save the label/input example for a "Real-World Examples" section or one of the s
 I am thinking of making some changes to the syntax to address some unpleasantness before publishing a beta. 
 
 
-== CW 3. Add a very minimal EL to support
-    - is a number
-    - is a string
-    - coerce to numbr/string/boolean
-    - Future direction:
-        - Numerical comparison, support e.g. ` [ $x where ($x<3) ] `
-        - simple invertible arithmetic, support e.g. `{ foo[1+$x]:bar }`
+== CW 3. Add a very minimal EL which can be used to constrain a variable binding.
+
+=== 3.1 Typed wildcards
+
+New wildcards: `_string`, `_number`, `_boolean` (lowercase, reserved keywords).
+We don't need `_array` or `_object` since we can express those directly with `[...]` and `{...}`.
+
+User-defined identifiers cannot start with underscore. This is a syntax error:
+```
+    $_foo    // Error: identifiers cannot start with _
+```
+
+=== 3.2 Standardize equality
+
+Use SameValueZero for all equality in Tendril (same semantics as Map/Set keys):
+- `NaN === NaN` → true (fixes the NaN problem)
+- `0 === -0` → true (practical default)
+
+Currently we use `===` in some places and `Object.is()` in others; this unifies them.
+
+=== 3.3 Guard expressions
+
+Enhancement to binding syntax. This only works for `$` variables, not `@` variables.
+An expression is associated with the variable binding as a guard.
+```
+    $var=(PATTERN ; EXPR)
+    $x=(_number; $x * $scale > 100)
+```
+
+Evaluation semantics:
+- Guard evaluation is **deferred** until all variables it references are bound.
+- If the guard evaluates to false, the current match branch fails.
+- If the guard errors (e.g., division by zero, arithmetic on string), the match branch fails.
+- If the guard never becomes closed (references unbound variables), the match fails.
+- `$0` cannot be referenced in guards.
+
+=== 3.4 Expression language
+
+The expression is evaluated by Tendril, not compiled to JS. No automatic type coercion.
+
+**Operators:** `< > <= >= == != && || ! + - * / %`
+- Standard precedence
+- Short-circuiting for `&&` and `||`
+- `string + string` → concatenation
+- Other type combinations (e.g., `array + array`, `string * number`) → error (match failure)
+
+**Coercion functions:** `number($x)`, `string($x)`, `boolean($x)`
+
+**Utility functions:**
+- `size($x)` — applicable to strings (length), arrays (length), objects (own enumerable string key count)
+
+For objects, `size()` counts the same keys that `%` considers, ensuring consistency:
+```
+    $x=({}; size($x) > 0)         // never matches (empty object has size 0)
+    $x=({_:_}; size($x) == 0)     // never matches (has at least one key)
+```
+
+=== 3.5 Implementation
+
+The sub-parser and the expression evaluator code will live in a separate `tendril-el.js` file.
+
 
 == CW 4. Categorization in object syntax.
 
