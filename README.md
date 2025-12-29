@@ -155,9 +155,14 @@ false          // matches Boolean false only
 null           // matches null only
 
 _              // wildcard matches any single value
+_string        // typed wildcard: matches any string
+_number        // typed wildcard: matches any number (including NaN, Infinity)
+_boolean       // typed wildcard: matches true or false
 ```
 
-Strings can be written as barewords (alphanumeric identifiers) or quoted. The `/i` suffix on literals matches case-insensitively but requires exact match (unlike regex which matches substrings). 
+Strings can be written as barewords (alphanumeric identifiers) or quoted. The `/i` suffix on literals matches case-insensitively but requires exact match (unlike regex which matches substrings).
+
+**Typed wildcards** (`_string`, `_number`, `_boolean`) match values of the corresponding JavaScript type. These are reserved—variable names cannot start with underscore.
 
 Regex patterns use JavaScript regex syntax and match against string values only. Don't forget that JavaScript regexes match on substrings.
 
@@ -454,6 +459,62 @@ Scalar variables are constrained to match only single items, not groups. This ef
 [$x=(1? 2?)]       // matches only [1] or [2]
                    // solutionSet = [ {x:1}, {x:2} ]
 ```
+
+### Guard Expressions
+
+Guard expressions constrain variable bindings with boolean conditions. The syntax extends the binding form with a semicolon-separated expression:
+
+```javascript
+$var=(PATTERN; EXPRESSION)
+```
+
+The pattern must match, AND the expression must evaluate to true:
+
+```javascript
+$x=(_number; $x > 100)           // matches numbers greater than 100
+$x=(_string; size($x) >= 3)      // matches strings of length 3+
+$n=(_number; $n % 2 == 0)        // matches even numbers
+```
+
+**Operators:** `< > <= >= == != && || ! + - * / %`
+
+Standard precedence applies. `&&` and `||` short-circuit. String concatenation uses `+`:
+
+```javascript
+$x=(_string; $x + "!" == "hello!")  // matches "hello"
+```
+
+**Functions:**
+- `size($x)` — string length, array length, or object key count
+- `number($x)`, `string($x)`, `boolean($x)` — type coercion (JS semantics; `number()` fails on non-numeric strings)
+
+**Multi-variable guards:**
+
+Guards can reference other variables. Evaluation is **deferred** until all referenced variables are bound:
+
+```javascript
+// Match objects where min < max
+{ min: $a=(_number; $a < $b), max: $b=(_number) }
+
+// The guard "$a < $b" waits until both $a and $b are bound
+{min: 1, max: 10}   // matches: 1 < 10
+{min: 10, max: 1}   // fails: 10 < 1 is false
+```
+
+**Error handling:**
+
+If an expression errors, the match branch fails silently—no exception is thrown.
+
+```javascript
+$x=(_string; $x * 2 > 10)  // never matches (can't multiply string)
+$x=(_number; $x / 0 > 0)   // never matches (division by zero)
+```
+
+**Arithmetic strictness:** Unlike JavaScript, the expression language treats division by zero (`x/0`) and modulo by zero (`x%0`) as errors that cause match failure, rather than silently producing `Infinity` or `NaN`.
+
+**Restrictions:**
+- Guards only work with scalar bindings (`$x`), not group bindings (`@x`)
+- All variables referenced in a guard must eventually be bound, or the match fails
 
 ## Paths (breadcrumb notation)
 
@@ -829,13 +890,14 @@ INTEGER       := /[0-9]+/                 # non-negative integer (for quantifier
 BOOLEAN       := 'true' | 'false'
 NULL          := 'null'
 WILDCARD      := '_'                      # tokenized as kind 'any'
-IDENT         := /[A-Za-z_][A-Za-z0-9_]*/
+TYPED_WILD    := '_string' | '_number' | '_boolean'  # typed wildcards
+IDENT         := /[A-Za-z][A-Za-z0-9_]*/  # user identifiers cannot start with _
 
 QUOTED_STRING := "..." | '...'            # supports \n \r \t \" \' \\ \uXXXX \u{...}
 REGEX         := /pattern/flags           # JS RegExp; 'g' and 'y' flags not allowed
 CI_STRING     := IDENT/i | QUOTED_STRING/i  # case-insensitive literal (no space before /i)
 
-BAREWORD      := IDENT, except '_' 'true' 'false' 'null' 'else' are special-cased
+BAREWORD      := IDENT, except 'true' 'false' 'null' 'else' are special-cased
 LITERAL       := NUMBER | BOOLEAN | NULL | QUOTED_STRING | REGEX | CI_STRING | BAREWORD
 
 # Whitespace and // line comments allowed between tokens everywhere.
@@ -858,14 +920,18 @@ ITEM :=
 ITEM_TERM :=
       '(' ITEM ')'
     | LOOK_AHEAD
-    | S_ITEM '=' '(' ITEM ')'                      # binding with pattern
+    | S_ITEM '=' '(' ITEM (';' GUARD_EXPR)? ')'    # binding with pattern and optional guard
     | S_ITEM                                       # bare $x ≡ $x=(_)
     | S_GROUP '=' '(' A_GROUP ')'                  # binding with pattern
     | S_GROUP                                      # bare @x ≡ @x=(_*)
+    | TYPED_WILD                                   # _string, _number, _boolean
     | '_'
     | LITERAL
     | OBJ
     | ARR
+
+GUARD_EXPR := <expression with operators: < > <= >= == != && || ! + - * / %>
+            # References $variables, literals, and functions: size(), number(), string(), boolean()
 
 LOOK_AHEAD :=
       '(?' A_GROUP ')'
@@ -891,7 +957,7 @@ A_GROUP_BASE :=
     | '(' A_BODY ')'                           # if >1 element => Seq node
     | S_GROUP '=' '(' A_BODY ')'               # group binding with pattern
     | S_GROUP                                  # bare @x ≡ @x=(_*)
-    | S_ITEM '=' '(' A_BODY ')'                # scalar binding with pattern
+    | S_ITEM '=' '(' A_BODY (';' GUARD_EXPR)? ')'  # scalar binding with pattern and optional guard
     | S_ITEM                                   # bare $x ≡ $x=(_)
     | ITEM_TERM                                # including nested ARR/OBJ
 
@@ -975,9 +1041,18 @@ BREADCRUMB :=
 
 ## Semantics
 
+### Equality
+
+Tendril uses **SameValueZero** semantics for all equality comparisons (the same algorithm JavaScript uses for Map/Set keys):
+- `NaN` equals `NaN` (unlike JavaScript's `===` operator)
+- `0` equals `-0`
+- All other values compare as with strict equality
+
+This applies to literal matching, variable unification, and the `==`/`!=` operators in guard expressions.
+
 ### Matching Rules
 
-- **Numbers:** strict equality for finite numbers; NaN and Infinity do not match numeric patterns
+- **Numbers:** SameValueZero equality; NaN matches NaN, 0 matches -0
 - **Booleans:** strict equality
 - **Strings:** strict equality for literals; regex patterns match substrings unless anchored
 - **null:** matches only `null` or `_`
@@ -1104,7 +1179,7 @@ The data model is JSON-like: objects, arrays, strings, numbers, booleans, null. 
 
 - **Bare identifiers as strings** is convenient, but creates ambiguity with future keywords and makes error messages harder ("did you mean a string or a variable?"). Already special-cased `_ true false null else` etc; this tends to grow.
 
-- **`find()` + `..` redundancy**: The admonition ("don't combine") is good, but users will do it anyway. Could make it harmless by having the engine detect redundant `..` in root-object terms during scan.
+- **`find()` + `**` redundancy**: The admonition ("don't combine") is good, but users will do it anyway. Could make it harmless by having the engine detect redundant `**` in root-object terms during scan.
 
 - **Edits with overlapping solutions**: The v2 API uses deterministic "first solution per occurrence" semantics. `editAll` iterates over occurrences (locations) and applies edits from the first solution at each location. This avoids cross-solution conflicts while still editing all locations. For fine-grained control, use `occurrence.edit()` or `solution.edit()`.
 
@@ -1317,7 +1392,7 @@ const closed = `{ id:_ /^x_/:/^\d+$/ (!%) }`;
 
 ## Golden 5: JSON “join” across paths (your planets/aka example)
 
-**Purpose:** root match + key binding + lookahead + array `..` + producing many solutions.
+**Purpose:** root match + key binding + lookahead + array `...` + producing many solutions.
 
 Use your README example almost verbatim (it’s excellent).
 
@@ -1330,7 +1405,7 @@ Use your README example almost verbatim (it’s excellent).
 
 ## Golden 6: Redaction at any depth, two equivalent styles
 
-**Purpose:** find() recursion vs `..` path recursion, and editAll correctness.
+**Purpose:** find() recursion vs `...` path recursion, and editAll correctness.
 
 **Fixture:**
 
@@ -1344,7 +1419,7 @@ const data = {
 **Patterns:**
 
 1. `Tendril("{ password:$p }").find(data).editAll({p:"REDACTED"})`
-2. `Tendril("{ ..password:$p }").match(data).editAll({p:"REDACTED"})`
+2. `Tendril("{ **.password:$p }").match(data).editAll({p:"REDACTED"})`
 
 **Expected:**
 
@@ -1478,72 +1553,9 @@ For the README, I'd still lean toward the If/Else merge—simpler pattern, clear
 Save the label/input example for a "Real-World Examples" section or one of the specialized guides?
 
 
-= Current work (CW)
+= Current work proposals (CW)
 
-I am thinking of making some changes to the syntax to address some unpleasantness before publishing a beta. 
-
-
-== CW 3. Add a very minimal EL which can be used to constrain a variable binding.
-
-=== 3.1 Typed wildcards
-
-New wildcards: `_string`, `_number`, `_boolean` (lowercase, reserved keywords).
-We don't need `_array` or `_object` since we can express those directly with `[...]` and `{...}`.
-
-User-defined identifiers cannot start with underscore. This is a syntax error:
-```
-    $_foo    // Error: identifiers cannot start with _
-```
-
-=== 3.2 Standardize equality
-
-Use SameValueZero for all equality in Tendril (same semantics as Map/Set keys):
-- `NaN === NaN` → true (fixes the NaN problem)
-- `0 === -0` → true (practical default)
-
-Currently we use `===` in some places and `Object.is()` in others; this unifies them.
-
-=== 3.3 Guard expressions
-
-Enhancement to binding syntax. This only works for `$` variables, not `@` variables.
-An expression is associated with the variable binding as a guard.
-```
-    $var=(PATTERN ; EXPR)
-    $x=(_number; $x * $scale > 100)
-```
-
-Evaluation semantics:
-- Guard evaluation is **deferred** until all variables it references are bound.
-- If the guard evaluates to false, the current match branch fails.
-- If the guard errors (e.g., division by zero, arithmetic on string), the match branch fails.
-- If the guard never becomes closed (references unbound variables), the match fails.
-- `$0` cannot be referenced in guards.
-
-=== 3.4 Expression language
-
-The expression is evaluated by Tendril, not compiled to JS. No automatic type coercion.
-
-**Operators:** `< > <= >= == != && || ! + - * / %`
-- Standard precedence
-- Short-circuiting for `&&` and `||`
-- `string + string` → concatenation
-- Other type combinations (e.g., `array + array`, `string * number`) → error (match failure)
-
-**Coercion functions:** `number($x)`, `string($x)`, `boolean($x)`
-
-**Utility functions:**
-- `size($x)` — applicable to strings (length), arrays (length), objects (own enumerable string key count)
-
-For objects, `size()` counts the same keys that `%` considers, ensuring consistency:
-```
-    $x=({}; size($x) > 0)         // never matches (empty object has size 0)
-    $x=({_:_}; size($x) == 0)     // never matches (has at least one key)
-```
-
-=== 3.5 Implementation
-
-The sub-parser and the expression evaluator code will live in a separate `tendril-el.js` file.
-
+These are things that are under consideration.
 
 == CW 4. Categorization in object syntax.
 
@@ -1588,10 +1600,10 @@ We already have p.**.q indicating remote ancestry. This works only for the simpl
 
 For example, what if you wanted to find a cycle in a directed graph like `[ [$from,$to]* ]`?
 
-Introduce a descent rule syntax `..↳($from, $to where PATTERN )` Which for this directed graph example would be 
+Introduce a descent rule syntax `**↳($from, $to where PATTERN )` Which for this directed graph example would be 
     `↳($a,$b where $b=($a[1]))`
 
-Then a cyclic graph is `[... $start..(↳($a,$b where $b=($a[1])):$start) ...]`
+Then a cyclic graph is `[... $start.**↳($a,$b where $b=($a[1])):$start) ...]`
 
 (You don't need to point out that this particular example would be very inefficient, and that we'd need a 'visited' flag and a depth limit, and that this is a complication to the language that is prima facie unjustified. )
     ``
@@ -1599,3 +1611,39 @@ Then a cyclic graph is `[... $start..(↳($a,$b where $b=($a[1])):$start) ...]`
 == CW 7. **Training wheels**:
 Add a **boundedness mode** that distinguishes **O(1), syntactically finite branching** from **data-dependent enumeration**: small alternations like `red|rouge` are always safe, while constructs whose match count depends on input size (regex or wildcard keys in object position, array spreads/splits, variable-length quantifiers, wildcard indices, unbound `_:$x`) are rejected unless explicitly marked. Provide two opt-ins: `enum(P)` to acknowledge intentional enumeration, and `one(P)` / `atMostOne(P)` to assert uniqueness and fail otherwise. Implement this via a simple syntactic classification of branching sites (finite vs size-dependent) with clear compile-time errors explaining which construct causes unbounded branching and how to fix it; this teaches users to avoid accidental Cartesian products without limiting legitimate finite alternation.
 
+== CW 8. EL assertions applied to structural pieces other than bindings.
+
+Support something like
+```
+"{
+    securityLevel:$securityLevel;
+    "some_huge_record": {
+         // deeply inside here...
+             { 
+                 hasClearance:(true ; $securityLevel>10) | false
+             }
+    }
+}"
+
+or perhaps leverage lookaheads
+"{
+    securityLevel:$securityLevel;
+    "some_huge_record": {
+         // deeply inside here...
+             { 
+                 hasClearance:(?;$securityLevel>10)true | false
+             }
+    }
+}"
+```
+
+== CW 9. Open EL assertions should not necessarily fail as long as the bindings actually used are satisfied? 
+
+`{
+    size: $a=(_; $a==$n || $a==size($s))
+    ( 
+      number: $n
+      | 
+      string: $s
+    )
+}`

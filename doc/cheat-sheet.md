@@ -298,6 +298,10 @@ Tendril("123").match(123).hasMatch()
 Tendril("true").match(true).hasMatch()
 // => true
 
+// Typed wildcards match by JavaScript type
+Tendril("[_string _number _boolean]").match(["hi", 42, true]).hasMatch()
+// => true (_number also matches NaN, Infinity)
+
 // Regex matches substrings
 Tendril("/^[A-Z]+$/").match("NASA").hasMatch()
 // => true
@@ -311,4 +315,32 @@ Tendril("foo/i").match("Foo").hasMatch()
 
 Tendril("foo/i").match("foobar").hasMatch()
 // => false (not exact)
+```
+
+### Guard Expressions
+
+```javascript
+// Constrain bindings with boolean conditions
+Tendril("$x=(_number; $x > 100)").match(150).solutions().first()
+// => {x: 150}
+
+Tendril("$x=(_number; $x > 100)").match(50).hasMatch()
+// => false (50 > 100 is false)
+
+// Guards can reference multiple variables (deferred evaluation)
+Tendril("{ min: $a=(_number; $a < $b), max: $b=(_number) }")
+  .match({min: 1, max: 10}).hasMatch()
+// => true (guard waits for $b, then checks 1 < 10)
+
+// Available operators: < > <= >= == != && || ! + - * / %
+Tendril("$x=(_number; $x % 2 == 0)").match(4).hasMatch()
+// => true (even number)
+
+// Functions: size(), number(), string(), boolean()
+Tendril("$x=(_string; size($x) >= 3)").match("hello").hasMatch()
+// => true (length 5 >= 3)
+
+// Errors cause match failure (no exceptions)
+Tendril("$x=(_string; $x * 2 > 10)").match("hello").hasMatch()
+// => false (can't multiply string)
 ```
