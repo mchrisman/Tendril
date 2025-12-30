@@ -56,3 +56,78 @@ const result = Tendril(`@(
 `)
 ```
 
+After some discussion with ChatGPT, I think we have a viable strategy that would be able to produce results like the following. 
+
+=== input
+```
+const pod = {
+  metadata: { name: "api-7d9c9b8c6f-abcde", namespace: "prod" },
+  spec: { containers: [
+    { name: "api",  image: "ghcr.io/acme/api:1.42.0", env: [{name:"A",value:"1"}] },
+    { name: "side", image: "ghcr.io/acme/sidecar:3.1.0" }
+  ]},
+  status: { containerStatuses: [
+    { name: "api",  ready: true,  restartCount: 0, state: {running:{}} },
+    { name: "side", ready: false, restartCount: 7, state: {waiting:{reason:"CrashLoopBackOff"}} }
+  ]},
+  // lots of other fields you don’t want to enumerate…
+  other: { huge: { blob: 1 } }
+};
+
+Tendril(`{
+  metadata:{ name:$pod namespace:$ns }
+  spec.containers[_]:          { name:$c image:$img env:@env? }
+  status.containerStatuses[_]: { name:$c ready:$ready restartCount:$restarts state:$state }
+  @extra=(%?)   // optionally capture untouched top-level stuff
+}`)
+.match(pod)
+.transformTo(`{
+  pod: $ns "/" $pod
+  containers: {
+    $c: {
+      image: $img
+      ready: $ready
+      restarts: $restarts
+      // keep env if present; otherwise omit
+      env: @env?
+      // classify state without an if-statement: try one shape, else another
+      status:
+        { running: _ }   // satisfiable only if state has running
+      else
+        { waiting: { reason: $reason } }  // binds reason if waiting
+      else
+        { other: $state } // fallback: preserve raw state
+    }
+  }
+  extra: @extra?  // preserve everything not mentioned, if you want
+}`);
+
+
+```
+=== output shape
+```
+{
+  pod: "prod/api-7d9c9b8c6f-abcde",
+  containers: {
+    api: {
+      image: "ghcr.io/acme/api:1.42.0",
+      ready: true,
+      restarts: 0,
+      env: [{name:"A",value:"1"}],
+      status: { running: "_" }
+    },
+    side: {
+      image: "ghcr.io/acme/sidecar:3.1.0",
+      ready: false,
+      restarts: 7,
+      status: { waiting: { reason: "CrashLoopBackOff" } }
+    }
+  },
+  extra: { other: { huge: { blob: 1 } } }
+}
+
+```
+
+== Transparency and safety. 
+
+We wouldn't do this as a black box magic thing, although it would support that usage. We would do it as a code generation tool that transpiles your output template into JavaScript. If you wanted the black box magic, you could just do that at runtime, but most people would generate the JavaScript, review it, and test it. 

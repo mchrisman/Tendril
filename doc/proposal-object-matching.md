@@ -15,12 +15,12 @@ Bound to an object slice, as in `@foo=( K:V)`, the slice comprises all k:v where
 
 It is a domain-wide generator: it iterates all properties k:v, attempting to match (k~K AND v~V), ignoring failures, and may bind fresh variables per property. Variables unbound at entry may be bound independently for each k:v. Variables already bound before the term are effectively constants, and must unify across all keys.
 
-### `K:V !!` - no counterexamples
+### `K:V !` - no bad!
 
 Meaning:
 
 1. It asserts that there is at least one k:v in the object such that (k~K AND v~V).
-2. It asserts that for all k:v in the object, (k~K implies v~V).
+2. It asserts that there is no "bad" exception, where k~K but not v~V.  Mnemonic: "!bad"
 
 Each value is matched independently against V. This does not require that all values are identical, only that each individually satisfies V.
 
@@ -32,18 +32,18 @@ It is a domain-wide generator: it iterates all properties k:v, attempting to mat
 
 This form makes no assertions. It binds like `K:V`. If no (k,v) satisfy the match, the term produces exactly one solution with no new bindings.
 
-### `K:V!!?` - optional, no counterexample
+### `K:V!?` - optional, no bad
 
-The optional form of `K:V!!`. It asserts that for all k:v in the object, (k~K implies v~V), but does not assert the existence of such k:v. It binds like `K:V!!`. If any k:v fails the assertion, the term fails.
+The optional form of `K:V!`.  Behaves like `K:V!`, except that `K:V!?` succeeds if the object has no k matching K.
 
-The combination `!!?` is canonical but `?!!` is equivalent.
+The combination `!?` is canonical but `?!` is equivalent.
 
 | Short form | Meaning                                                               |
 |------------|-----------------------------------------------------------------------|
 | `K:V`      | At least one matching k, and of those, at least one matching v        |
-| `K:V!!`    | At least one matching k, and for all k~K, v~V (fresh bindings per key) |
+| `K:V!`     | At least one matching k, and for all k~K, v~V (fresh bindings per key) |
 | `K:V?`     | Zero or more matching k (no assertion, used only for binding)         |
-| `K:V!!?`   | Zero or more matching k, and for all k~K, v~V (fresh bindings per key) |
+| `K:V!?`    | Zero or more matching k, and for all k~K, v~V (fresh bindings per key) |
 
 Example:
 
@@ -51,9 +51,9 @@ Example:
     "{ /a/:1 }" ~= {ab:1, ac:1} // => true
     "{ /a/:1 }" ~= {ab:1, ac:1, ad:0} // => true
     "{ /a/:1 }" ~= {ab:1, ac:1, d:0} // => true
-    "{ /a/:1 !! }" ~= {ab:1, ac:1} // => true
-    "{ /a/:1 !! }" ~= {ab:1, ac:1, ad:0} // => false
-    "{ /a/:1 !! }" ~= {ab:1, ac:1, d:0} // => true
+    "{ /a/:1 ! }" ~= {ab:1, ac:1} // => true
+    "{ /a/:1 ! }" ~= {ab:1, ac:1, ad:0} // => false
+    "{ /a/:1 ! }" ~= {ab:1, ac:1, d:0} // => true
 ```
 
 Or as another illustration of the above definition,
@@ -61,8 +61,8 @@ Or as another illustration of the above definition,
 ```
     K:V   ≡ K:V#{1,}
     K:V?  ≡ K:V#{0,}
-    K:V!!  ≡ (! (K:(!V)) ) K:V#{1,} 
-    K:V!!? ≡ (! (K:(!V)) ) K:V#{0,} 
+    K:V!  ≡ (! (K:(!V)) ) K:V#{1,} 
+    K:V!? ≡ (! (K:(!V)) ) K:V#{0,} 
 ```
 
 Unbound variables in K:V create separate solutions per key, as before. Slice variables in objects denote sets of K:V pairs, as before.
@@ -103,18 +103,18 @@ Variables unify between K and V:
 
 ### "Same-values" idiom
 
-❌ "K:V!!" does not mean all values are the same; it merely means all values (individually) match V.
+❌ "K:V!" does not mean all values are the same; it merely means all values (individually) match V.
 
 ```
     // Does not demand that all the colors are the same.
-    "{ $k=(/color/):$c !! }" matches {backgroundColor:"green", color:"white"}
+    "{ $k=(/color/):$c ! }" matches {backgroundColor:"green", color:"white"}
     // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}] 
 ```
 
 ✅ Use this idiom to enforce universal equality over values:
 
 ```
-    "{ $k=(/color/):$c  $k=(/color/):$c!! }"
+    "{ $k=(/color/):$c  $k=(/color/):$c! }"
 ```
 
 It works because variables unify across terms.

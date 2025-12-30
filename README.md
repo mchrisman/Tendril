@@ -1557,6 +1557,8 @@ Save the label/input example for a "Real-World Examples" section or one of the s
 
 These are things that are under consideration.
 
+CW4 is the only one under *serious* consideration.
+
 == CW 4. Categorization in object syntax.
 
 The pattern `K:(V1 else V2 else V3)` is just a special case of `K:V` where `V` is an else-chain. Therefore, the else chain is applied independently to each value, routing that property to the first Vi that matches its value, forming a partition of the domain (no overlap).
@@ -1613,6 +1615,8 @@ Add a **boundedness mode** that distinguishes **O(1), syntactically finite branc
 
 == CW 8. EL assertions applied to structural pieces other than bindings.
 
+ChatGPT recommends against this, or if we do it, make it explicit, such as a zero width `guard(expr)`
+
 Support something like
 ```
 "{
@@ -1637,13 +1641,74 @@ or perhaps leverage lookaheads
 }"
 ```
 
-== CW 9. Open EL assertions should not necessarily fail as long as the bindings actually used are satisfied? 
+== CW 9. Currently If a variable in an EL expression is unbound, the evaluation is deferred. If the variable never gets bound by the time the entire pattern is matched, then it fails.
+
+Proposal. Permit defaults. An expression with a default may be evaluated immediately if the expression is closed. Otherwise, it is deferred, but evaluated as soon as it becomes closed (to allow pruning ASAP).
+If after the entire pattern is matched, it is still open and cannot be evaluated, then we evaluate the expression using the defaults. (If there are still free variables without defaults, then it fails. )
+ This honors our current support for forward reference expressions having deferred evaluation.
 
 `{
-    size: $a=(_; $a==$n || $a==size($s))
+    sum: $sum=(_; $sum==default($n,0)+default($s,0))
     ( 
-      number: $n
-      | 
-      string: $s
+      number: $n ?
+      string: $s ?
     )
 }`
+For now, we only propose to support primitive defaults.
+It is a syntax error to declare a default for a variable that does not appear anywhere else in the pattern. (guard against typos).
+
+To rephrase:
+
+Treat default($x, v) as a three-valued reference at evaluation time:
+
+If $x is bound, it evaluates to that value.
+
+If $x is unbound but might still be bound later, the whole guard is not yet evaluable (defer).
+
+Only if the guard reaches the end of pattern evaluation and $x is still unbound, then default($x, v) evaluates to v.
+
+Operationally: defaults don’t make expressions “closed”; they only change what happens at the final “still-open” check.
+
+Tiny doc-friendly phrasing
+
+Something like:
+
+default($x, v) does not count as binding $x. Guards are still deferred until all referenced variables are bound. Defaults apply only at the end of matching, if some referenced variables remain unbound.
+
+== CW 10. Calc
+
+Proposal: support calculated expressions in the pattern (not just in guards).
+
+This allows some usages to preserve the O(1) behavior and pruning optimizations for key-matching.
+
+Syntax: ==expr
+Semantics: It is equivalent to writing the resulting primitive literal in the pattern, and it never binds variables.
+
+list indices:
+```
+{
+    list[==2*$idx]: $name
+    list[==2*$idx+1]: $number
+}
+```
+Path notation
+```
+{
+    user: {id:$id}
+    data: personal.prefs.=="P"+$id: { some:pref }
+}
+```
+Keys in normal notation
+```
+{
+    user: {id:$id}
+    data: {personal: prefs: { =="P"+$id: { some:pref } } }
+}
+```
+
+It may only be used for list indices and object keys.
+It would **not** support deferred calculation for free variables. It fails with an error, not a silent mismatch, if it contains free variables.
+It must evaluate to a primitive.
+Once evaluated, it must be memoized (AST identity + bindings).
+
+TBD: Clarify precedence and how it might combine with other syntactic structures. 
