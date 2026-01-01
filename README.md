@@ -1331,95 +1331,151 @@ To replace the lost quantifiers (which are infrequently needed), support '#' (or
 
 ## CW 14. '->' operator
 
-Define the observational collection operator -> to be:
-`(S -> @foo)` succeeds iff `S` succeeds at that value, and if it succeeds it records the current kv-pair into bucket `@foo` for the nearest enclosing `K:V` in the AST.
+### Summary
 
-The value of @foo is deemed to be associated with the clause, as if it were @foo=(K:V), i.e. the same @foo binding is used for all the k-branches. If S itself branches, the same k:v is not added to @foo twice.
+The `->` operator collects matching k:v pairs into buckets during object iteration. It is deliberately distinct from `=` binding:
 
-`S` it is not a backtracking point, but it may fail early if there is an 'empty' quantifier on the slice; or it may fail late, when the iteration is finished, if there is a non-empty quantifier on the slice.
+| Syntax | Meaning | On repetition |
+|--------|---------|---------------|
+| `@x=(P)` | bind | unify |
+| `P -> @x` | flow into | accumulate |
 
-Note that for matching K:V,
-- Although K:V asserts only one-or-more witnesses matching both K and V, if this construct is present, any optimization must behave as if it had iterated over all matching witnesses.
+The arrow visually suggests "pour into a bucket." Users won't confuse it with binding because it doesn't look like binding.
 
-Note that when V is an 'else' clause, it behaves like '|' except for backtracking behavior. There is no implicit failover bucket.
+### Semantics
 
-If the same @foo collector appears in multiple arms/places within the same enclosing K:V, they union into the same bucket (and it’s not unification).
+`(S -> @foo)` succeeds iff `S` succeeds at that value. On success, it records the current k:v pair into bucket `@foo` for the nearest enclosing `K:V` in the AST (lexically obvious—travel up the AST, not the data).
 
-This odd operator is primarily to support CW 4. None of the above complexity will appear in the user manual. The manual will focus only on the `K:@bucket1=(V) else @bucket2(W)` formula, which can be explained quite simply.
+The value of @foo is associated with the clause, as if it were @foo=(K:V), i.e. the same @foo binding is used for all the k-branches. If S itself branches, the same k:v is not added to @foo twice.
 
-Basic test case. Note that operator precedence from strongest to least includes
+If the same @foo collector appears in multiple arms/places within the same enclosing K:V, they **union** into the same bucket (not unification—this is accumulation). But not within the same enclosing K:V, they unify as object slices.
+
+### Composition with `else`
+
+The `->` operator composes naturally with `else`. There is no special "categorization mode"—the partitioning behavior emerges from composition:
+
+- `else` provides prioritized alternation (first match wins, no backtracking)
+- `->` does the collecting
+
 ```
-@foo=    //binding, unary
-->       //binary
-else     //binary
+{ K: V1->@bucket1 else V2->@bucket2 else _->@rest }
+```
+
+For each value, try V1 first; if it matches, flow into @bucket1. Otherwise try V2, etc. The `else` ensures mutual exclusivity.
+
+### Strong semantics with `else !`
+
+The pattern `K:V else !` replaces `K:>V`. It triggers **strong semantics**: every k matching K must have a value matching V, or the pattern fails.
 
 ```
-gives `K:V else W` === `K:(V else W)`
+{ K: V }           // weak: at least one k~K with v~V; other k's may have non-matching v's
+{ K: V else ! }    // strong: all k~K must have v~V (replaces K:>V)
+```
+
+This allows retiring the `:>` operator while preserving its semantics in a more compositional form.
+
+### Categorization patterns
+
+| Pattern | Meaning |
+|---------|---------|
+| `K: V1->@a else V2->@b` | Collect matching k:v's into buckets; non-matching k's ignored; require at least one match |
+| `K: V1->@a else V2->@b else !` | Collect matching k:v's; **fail** if any k doesn't match V1 or V2 |
+| `K: V1->@a else V2->@b else _->@rest` | Collect **all** k:v's (complete coverage) |
+| `K: V else _` | At least one match; silently ignore non-matching k's (no collection) |
+
+**Note:** `{ K:V else _->@bad }` collects non-matching values but never fails. Use `else !` if you want validation.
+
+### Unpopulated buckets
+
+If a bucket is never populated (its branch is never taken), it is **undefined**, not empty `{}`. This is consistent with how Tendril treats other variables—they are bound by matching, not declared.
+
+If you need "empty if none," handle it in user code:
+```javascript
+const good = solution.good ?? {};
+```
+
+### Operator precedence
+
+From strongest to weakest:
+```
+@foo=    // binding, unary
+->       // binary
+else     // binary
+```
+
+So `K:V -> @x else W -> @y` parses as `K:((V -> @x) else (W -> @y))`. Parentheses are redundant but recommended for legibility; use multiple lines for complex categorizations.
+
+### Implementation notes
+
+- `S` is not a backtracking point, but may fail early (empty quantifier on slice) or late (non-empty quantifier checked after iteration).
+- Although `K:V` normally asserts only one-or-more witnesses, presence of `->` requires the engine to iterate all matching witnesses (to collect them all). This is inherent to categorization/validation, not a hidden cost.
+
+### Test case
+
 ```
 data = {a:[
     { b1:'d11',b2:'d12',b3:'x' },
-     { z:'d13' },
+    { z:'d13' },
     { b3:'d24', x:'d25' },
     { b4:'d34', x:'d25' },
 ]}
 pattern = {
-    a[$i]:({/b.*/:($x=(/d1.*/) -> @foo) 
+    a[$i]:({/b.*/:($x=(/d1.*/) -> @foo)
                   else (/d3.*/->@bar)}
-          | _)   // show nonmatching $i's rather than failing completely. 
+          | _)   // fallback to show non-matching $i's
 }
-// solutions: { {i:0, x:'d11', foo:{ b1:'d11',b2:'d12' } }
-//               ,{i:0, x:'d12', foo:{ b1:'d11',b2:'d12' } }
-//               ,{i:1}
-//               ,{i:2}
-//               ,{i:3,  bar:{ b4:'d34'} }
-               
+// solutions:
+//   {i:0, x:'d11', foo:{ b1:'d11',b2:'d12' } }
+//   {i:0, x:'d12', foo:{ b1:'d11',b2:'d12' } }
+//   {i:1}
+//   {i:2}
+//   {i:3, bar:{ b4:'d34'} }
 ```
 
 
 
 ## CW 4. Categorization in object syntax.
 
-The pattern `K:(V1 else V2 else V3)` is just a special case of `K:V` where `V` is an else-chain. Therefore, the else chain is applied independently to each value, routing that property to the first Vi that matches its value, forming a partition of the domain (no overlap).
+The pattern `K:(V1 else V2 else V3)` is just a special case of `K:V` where `V` is an else-chain. The else chain is applied independently to each value, routing that property to the first Vi that matches, forming a partition (no overlap).
 
-So the idiom for categorization into buckets, including a fallback bucket is
-
-    `K:A else B` // rules of precedence make this `K:(A else B)`
-    `K:A else _` // fallback bucket
-
-The syntax is for capturing these buckets as object slices is idiosynchratic:
-
-    `{
-         K: partition V1->@S1 
-            else      V2 ->@S2
-            else      V3 ->@S3 // etc.
-     }`
-
-The 'partition' keyword is for readability, but is optional; the real semantic weight lies in this formulatic idiomatic use of 'else' and '->'.
+### Basic idiom
 
 ```
-    { _: (OK|perfect) -> @goodStatus 
-         else _       -> @others } 
-    // matches { proc1:"OK", proc2:"perfect", proc3:"bad"}
-    // with solution = 
-    // {
-    //    goodStatus: { proc1:"OK", proc2:"perfect"}
-    //    others:     { proc3:"bad"}
-    // }
+K:A else B      // precedence makes this K:(A else B)
+K:A else _      // fallback for non-matching values
 ```
-Some annotations:
-```
-!@bucket   // bucket is empty
-@bucket!   // bucket is nonempty
 
-!          // pronounced 'fail', as standalone item, sugar for (!_)_ , fails
+### Capturing into buckets
 
-// Equivalents to previous notation. 
-@s=($k:>$v=(V)) === @s=($k:$v=V else !)
+Use `->` to collect matching k:v pairs into named buckets:
 
 ```
-Note that the '!' in 'else !' would typically be pronounced 'fail', but could also be seen as mnemonic for either of the two equivalent de-sugarings:
-`else _-> !@UNNAMED_FALLBACK` // asserts that the fallback bucket is empty.
-`else (!_)_` // Impossible to satisfy.
+{ _: (OK|perfect) -> @goodStatus
+     else _       -> @others }
+
+// matches { proc1:"OK", proc2:"perfect", proc3:"bad"}
+// solution = {
+//    goodStatus: { proc1:"OK", proc2:"perfect"}
+//    others:     { proc3:"bad"}
+// }
+```
+
+### Validation (closed categorization)
+
+Use `else !` to fail if any value doesn't match the expected patterns:
+
+```
+{ _: (OK|perfect) -> @goodStatus else ! }
+
+// matches { proc1:"OK", proc2:"perfect" }
+// fails on { proc1:"OK", proc2:"bad" }
+```
+
+The `else !` triggers strong semantics—every key must have a matching value, or the pattern fails. This replaces the `:>` operator:
+
+```
+K:>V  ===  K: V else !
+```
 
 # Future ideas
 
