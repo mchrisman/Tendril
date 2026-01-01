@@ -1,0 +1,306 @@
+
+# Testing todos
+
+
+Todo: highlight the following set of 'golden tests', set them up as smoke tests.
+
+N.B. These tests are good in concept but have not been proofread yet for correctness.
+
+Awesome — golden tests are the best ROI because they exercise “the whole stack” (parser → engine → API → edit/replace/site tracking) in a way that unit tests often don’t.
+
+Below is a **small-but-potent golden suite** (8 tests) that together hits most of Tendril’s surface area. Each test has:
+
+* a realistic data fixture
+* one or more patterns
+* an expected output (bindings / transformed structure)
+
+You can drop these into `test/golden/*.test.js` (or split by topic). I’ll write them as “specs” you can translate into your harness.
+
+---
+
+## Golden 1: OpenAI Chat Completions response → stitch all text
+
+**Purpose:** deep paths + array scanning + binding enumeration + solution aggregation + stable ordering sanity.
+
+**Fixture (representative):**
+
+```js
+const resp = {
+  id: "chatcmpl_x",
+  object: "chat.completion",
+  choices: [
+    { index: 0, message: { role: "assistant", content: [
+      { type: "output_text", text: "Hello" },
+      { type: "output_text", text: ", world" },
+      { type: "refusal", text: "nope" }
+    ]}},
+    { index: 1, message: { role: "assistant", content: [
+      { type: "output_text", text: "!" }
+    ]}}
+  ]
+};
+```
+
+**Pattern:**
+
+* Find all text fragments of type `output_text` anywhere:
+
+```js
+const pat = `{ **:{type:output_text text:$t} }`;
+```
+
+**Expected:**
+
+* `solutions().toArray().map($.t).join("") === "Hello, world!"`
+* Also assert count is 3, and no “refusal” text appears.
+
+---
+
+## Golden 2: OpenAI streaming-ish “delta” chunks → only final assembled text
+
+**Purpose:** alternation + optional keys + find() vs match() + field clauses.
+
+**Fixture:**
+
+```js
+const chunks = [
+  { choices: [{ delta: { content: "Hel" } }] },
+  { choices: [{ delta: { content: "lo" } }] },
+  { choices: [{ delta: { refusal: "no" } }] },
+  { choices: [{ delta: { content: "!" }, finish_reason: "stop" }] }
+];
+```
+
+**Pattern:**
+
+```js
+const pat = `{ **content:$t }`;
+```
+
+**Expected:**
+
+* Extract `["Hel","lo","!"]` and join to `"Hello!"`
+* Ensure refusal is ignored.
+
+(You can also add a second pattern verifying the finish reason exists somewhere, e.g. `{ **finish_reason:stop }` hasMatch.)
+
+---
+
+## Golden 3: HTML/VDOM macro expansion: `<FormattedAddress .../>` → `<div>...</div>`
+
+**Purpose:** array group binding + object matching + editAll group replacement + path correctness.
+
+**Fixture (simple VDOM):**
+
+```js
+const vdom = [
+  { tag: "p", children: ["Ship to:"] },
+  { tag: "FormattedAddress", props: { type: "oneLine", model: "uAddress" }, children: [] },
+  { tag: "p", children: ["Thanks!"] }
+];
+```
+
+**Pattern (match the node):**
+
+```js
+const pat = `[
+  ...
+  $node=({ tag:FormattedAddress props:{ type:oneLine model:$m } })
+  ...
+]`;
+```
+
+**Edit:**
+
+* Replace the matched node (`$node`) with a div template. Since `$node` is scalar, easiest is replace whole match `$0` only if you match the node itself; but in this pattern you’re matching an *array*, so prefer **group-edit**:
+
+Better pattern for in-place replacement:
+
+```js
+const pat2 = `[
+  ...
+  @x=({ tag:FormattedAddress props:{ type:oneLine model:$m } })
+  ...
+]`;
+```
+
+Then:
+
+```js
+.editAll($ => ({
+  x: [{ tag: "div", children: [`{${$.m}.name}, {${$.m}.street}`] }]
+}))
+```
+
+**Expected:**
+
+* vdom now contains `{tag:"div", ...}` where `FormattedAddress` was.
+* Surrounding nodes unchanged.
+
+---
+
+## Golden 4: Config validation with universal object semantics + closed object
+
+**Purpose:** universal `K:V`, optional `?:`, `(!%)`.
+
+**Fixture:**
+
+```js
+const cfgOK = { x_port: 8080, x_host: "localhost", id: "abc" };
+const cfgBad = { x_port: "8080", x_host: "localhost", id: "abc" };
+```
+
+**Pattern:**
+
+```js
+// all x_* must be number OR string? pick one and test.
+// Here: x_* must be number
+const pat = `{ /^(x_)/: $v=(123|0|1|2|3|4|5|6|7|8|9|/^\d+$/) }`;
+```
+
+That’s messy if you don’t have “number predicate”. Better golden test using existing primitives:
+
+```js
+const pat = `{ /^x_/: $n=(/^\d+$/) }`;  // if x_* are strings of digits
+```
+
+And add a closed object case:
+
+```js
+const closed = `{ id:_ /^x_/:/^\d+$/ (!%) }`;
+```
+
+**Expected:**
+
+* `closed` matches `{id:"abc", x_port:"8080", x_host:"123"}` only if *every* key is `id` or `x_*` and values satisfy.
+* A stray key should fail due to `(!%)`.
+
+(If you prefer to validate “numbers are numbers”, use literal numeric fixtures and match with `_` and key coverage; the point is universal + remainder.)
+
+---
+
+## Golden 5: JSON “join” across paths (your planets/aka example)
+
+**Purpose:** root match + key binding + lookahead + array `...` + producing many solutions.
+
+Use your README example almost verbatim (it’s excellent).
+
+**Expected:**
+
+* exactly the 7 “Hello, …” strings
+* and verify it still works if you reorder `aka` rows or add unrelated keys (resilience)
+
+---
+
+## Golden 6: Redaction at any depth, two equivalent styles
+
+**Purpose:** find() recursion vs `...` path recursion, and editAll correctness.
+
+**Fixture:**
+
+```js
+const data = {
+  user: { password: "secret", profile: { password: "also" } },
+  password: "top"
+};
+```
+
+**Patterns:**
+
+1. `Tendril("{ password:$p }").find(data).editAll({p:"REDACTED"})`
+2. `Tendril("{ **.password:$p }").match(data).editAll({p:"REDACTED"})`
+
+**Expected:**
+
+* both yield the same transformed structure
+* all password fields redacted
+* other fields unchanged
+
+---
+
+## Golden 7: Non-trivial array slicing + splice offset correctness
+
+**Purpose:** group splices on same array; ensures your `offset` logic in `applyEdits` is correct.
+
+**Fixture:**
+
+```js
+const arr = [1, 2, 3, 4, 5, 6];
+```
+
+**Pattern:**
+
+```js
+const pat = `[ ... @mid=(3 4) ... ]`;
+```
+
+**Edit:**
+Replace `@mid` with 3 elements:
+
+```js
+.editAll({ mid: [30, 40, 50] })
+```
+
+**Expected:**
+`[1,2,30,40,50,5,6]`
+
+Then a second edit in same run that splices earlier and later groups (two group sites) is even better:
+
+```js
+const pat2 = `[ @a=(1 2) ... @b=(5 6) ]`;
+editAll({ a:[10], b:[60,70,80] })
+```
+
+Expected:
+`[10,3,4,60,70,80]`
+
+---
+
+## Golden 8: Object group capture + replace with new props
+
+**Purpose:** object `@x=(...)` capture, replacement semantics (delete captured keys then insert).
+
+**Fixture:**
+
+```js
+const obj = { Big:1, Cute:2, Alice:3, c:99 };
+```
+
+**Pattern:**
+
+```js
+const pat = `{ @x=(/a/:_, /b/:_) /c/:_ }`;
+```
+
+**Edit:**
+
+```js
+.editAll({ x: { foo: "bar" } })
+```
+
+**Expected:**
+
+* keys matched by `/a/` or `/b/` removed (`Big`, `Alice`)
+* replaced with `{foo:"bar"}`
+* keys `Cute` and `c` remain
+  Result:
+
+```js
+{ foo:"bar", Cute:2, c:99 }
+```
+
+---
+
+# Minimal MVP golden suite layout
+
+If you want a small file count:
+
+* `test/golden/openai-text-assembly.test.js` (Golden 1 + 2)
+* `test/golden/vdom-macro-expansion.test.js` (Golden 3)
+* `test/golden/joins-and-lookahead.test.js` (Golden 5)
+* `test/golden/redaction.test.js` (Golden 6)
+* `test/golden/remainder-and-universal.test.js` (Golden 4 + 8)
+* `test/golden/splice-offsets.test.js` (Golden 7)
+
+# END "Golden Tests"
+

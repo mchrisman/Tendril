@@ -131,3 +131,15 @@ Tendril(`{
 == Transparency and safety. 
 
 We wouldn't do this as a black box magic thing, although it would support that usage. We would do it as a code generation tool that transpiles your output template into JavaScript. If you wanted the black box magic, you could just do that at runtime, but most people would generate the JavaScript, review it, and test it. 
+
+With regard to transform two templates looking very close to patterns, the goal is that they should look exactly like patterns because the selling point is that you only have to learn one and you also have a pattern that can be used for parsing the output. A lot of your comments are around determinism. And as an engineer, I completely appreciate that. But let me point out that there are multiple levels of indeterminism. Here 'output' refers to the transformed data:
+
+0. The output is not deterministic.
+   A. The output is underspecified, With major structural differences from what the user intended.
+   B. The output is underspecified with differences that are acceptable to the user, for example, reorderings; the visible shape of the pattern determines what is specified and what isn't.
+   C. The output is completely specified by the visible shape of the pattern; all 'hints' are meaningful pattern-matching assertions.
+   D. The output is completely specified, formally and stably, by the visual shape of the pattern, plus additional hints that are not part of ordinary tendril patterns.
+
+- Nobody is suggesting (0).
+- Your position is that (C) is impossible in general (in theory) and therefore (D) is necessary and should be mandatory.
+- My position is that (C) is often possible (in practice, If the metric is what's in the user's head rather than a formal specification), and that (B), (C), (D) all have their place in a spectrum of tradeoffs between simplicity, LOE, and predictability; and that (A) Should be generally prevented by the structure of the language. 

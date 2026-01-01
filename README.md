@@ -1265,19 +1265,69 @@ Tendril("a:b").find(data).replaceAll("X:X") // Replace only that key, not the wh
 7. Retire quantifiers for object remainders. Retain only '%','!%','%?'.
 
 
-## CW 14A. Object slice quantifiers
+## CW 2B. Better binding syntax.
+
+Current style
+
+```
+    $foo=(0|1|2|3|4)
+    $foo=(0|1|2|3|4 where $foo>1)
+    $foo=([$x $y] where $x>$y)
+    
+    (_ where _>1)
+    ([$x $y] where $x>$y)
+    
+    [ a b @foo=(c d) e f]
+    { @foo=( K:V K2:V2) }
+```
+
+Proposed style
+```
+    // style 2
+    (0|1|2|3|4 as $foo)
+    (0|1|2|3|4 as $foo where $foo>1)
+    ([$x $y] as $foo where $x>$y)
+    
+    (_ where _>1)
+    ([$x $y] where $x>$y)
+    
+    [ a b (c d as @foo) e f]
+    { (K:V K2:V2 as @foo) }
+```
+
+## CW 2A. Object slice quantifiers
 
 Retire O_KV_QUANT and O_REM_QUANT. 
-Retire "?" as a modifier to K:V.
 Replace with the following:
 
 Bare K:V clauses:
 ```
-     K:V      // (no change) asserts #{1,Infinity}
-     K:V ?    // (no change, asserts #{0,Infinity}
-                
-     
+     K:V      // (no change to existing) asserts #{1,Infinity}
+     K:V ?    // (no change to existing, asserts #{0,Infinity}; 
+              // Note this acts like a quantifier, not a branching alternation. 
+              
 ```
+Slice variables bound to K:V clauses (Previously not supported at all.)
+```
+    // assuming CW 2b
+    (K:V as @foo)    // @foo is nonempty (contract of K:V) 
+    (K:V? as @foo)   // @foo may be empty (contract of K:V?)
+    
+    // assuming CW 14
+    (K:     V ->@foo 
+       else V2 ->@bar! // @bar is nonempty
+       else V3 ->!@baz // @baz is empty )
+    
+```
+
+To replace the lost quantifiers (which are infrequently needed), support '#' (or 'size()' if you prefer) in EL:
+```
+    [ ... (@slice where #@slice>5) ...]
+    { (K:V as @S where #@S>5) }
+    { K: (V -> @bucket1 where #@bucket1>5)   // Evaluation deferred until the iteration is finished and the count is available. 
+         else (V2 -> @bucket2 where #@bucket2>5)}
+```
+
 
 ## CW 14. '->' operator
 
