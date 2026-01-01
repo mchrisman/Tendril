@@ -462,18 +462,18 @@ Scalar variables are constrained to match only single items, not groups. This ef
 
 ### Guard Expressions
 
-Guard expressions constrain variable bindings with boolean conditions. The syntax extends the binding form with a semicolon-separated expression:
+Guard expressions constrain variable bindings with boolean conditions. The syntax extends the binding form with the `where` keyword:
 
 ```javascript
-$var=(PATTERN; EXPRESSION)
+$var=(PATTERN where EXPRESSION)
 ```
 
 The pattern must match, AND the expression must evaluate to true:
 
 ```javascript
-$x=(_number; $x > 100)           // matches numbers greater than 100
-$x=(_string; size($x) >= 3)      // matches strings of length 3+
-$n=(_number; $n % 2 == 0)        // matches even numbers
+$x=(_number where $x > 100)           // matches numbers greater than 100
+$x=(_string where size($x) >= 3)      // matches strings of length 3+
+$n=(_number where $n % 2 == 0)        // matches even numbers
 ```
 
 **Operators:** `< > <= >= == != && || ! + - * / %`
@@ -481,7 +481,7 @@ $n=(_number; $n % 2 == 0)        // matches even numbers
 Standard precedence applies. `&&` and `||` short-circuit. String concatenation uses `+`:
 
 ```javascript
-$x=(_string; $x + "!" == "hello!")  // matches "hello"
+$x=(_string where $x + "!" == "hello!")  // matches "hello"
 ```
 
 **Functions:**
@@ -494,7 +494,7 @@ Guards can reference other variables. Evaluation is **deferred** until all refer
 
 ```javascript
 // Match objects where min < max
-{ min: $a=(_number; $a < $b), max: $b=(_number) }
+{ min: $a=(_number where $a < $b), max: $b=(_number) }
 
 // The guard "$a < $b" waits until both $a and $b are bound
 {min: 1, max: 10}   // matches: 1 < 10
@@ -506,8 +506,8 @@ Guards can reference other variables. Evaluation is **deferred** until all refer
 If an expression errors, the match branch fails silently—no exception is thrown.
 
 ```javascript
-$x=(_string; $x * 2 > 10)  // never matches (can't multiply string)
-$x=(_number; $x / 0 > 0)   // never matches (division by zero)
+$x=(_string where $x * 2 > 10)  // never matches (can't multiply string)
+$x=(_number where $x / 0 > 0)   // never matches (division by zero)
 ```
 
 **Arithmetic strictness:** Unlike JavaScript, the expression language treats division by zero (`x/0`) and modulo by zero (`x%0`) as errors that cause match failure, rather than silently producing `Infinity` or `NaN`.
@@ -920,7 +920,7 @@ ITEM :=
 ITEM_TERM :=
       '(' ITEM ')'
     | LOOK_AHEAD
-    | S_ITEM '=' '(' ITEM (';' GUARD_EXPR)? ')'    # binding with pattern and optional guard
+    | S_ITEM '=' '(' ITEM ('where' GUARD_EXPR)? ')'    # binding with pattern and optional guard
     | S_ITEM                                       # bare $x ≡ $x=(_)
     | S_GROUP '=' '(' A_GROUP ')'                  # binding with pattern
     | S_GROUP                                      # bare @x ≡ @x=(_*)
@@ -957,7 +957,7 @@ A_GROUP_BASE :=
     | '(' A_BODY ')'                           # if >1 element => Seq node
     | S_GROUP '=' '(' A_BODY ')'               # group binding with pattern
     | S_GROUP                                  # bare @x ≡ @x=(_*)
-    | S_ITEM '=' '(' A_BODY (';' GUARD_EXPR)? ')'  # scalar binding with pattern and optional guard
+    | S_ITEM '=' '(' A_BODY ('where' GUARD_EXPR)? ')'  # scalar binding with pattern and optional guard
     | S_ITEM                                   # bare $x ≡ $x=(_)
     | ITEM_TERM                                # including nested ARR/OBJ
 
@@ -1210,312 +1210,6 @@ This would make iteration over occurrences and solutions truly streaming rather 
 
 ---
 
-# Testing todos
-
-
-Todo: highlight the following set of 'golden tests', set them up as smoke tests.
-
-N.B. These tests are good in concept but have not been proofread yet for correctness.
-
-Awesome — golden tests are the best ROI because they exercise “the whole stack” (parser → engine → API → edit/replace/site tracking) in a way that unit tests often don’t.
-
-Below is a **small-but-potent golden suite** (8 tests) that together hits most of Tendril’s surface area. Each test has:
-
-* a realistic data fixture
-* one or more patterns
-* an expected output (bindings / transformed structure)
-
-You can drop these into `test/golden/*.test.js` (or split by topic). I’ll write them as “specs” you can translate into your harness.
-
----
-
-## Golden 1: OpenAI Chat Completions response → stitch all text
-
-**Purpose:** deep paths + array scanning + binding enumeration + solution aggregation + stable ordering sanity.
-
-**Fixture (representative):**
-
-```js
-const resp = {
-  id: "chatcmpl_x",
-  object: "chat.completion",
-  choices: [
-    { index: 0, message: { role: "assistant", content: [
-      { type: "output_text", text: "Hello" },
-      { type: "output_text", text: ", world" },
-      { type: "refusal", text: "nope" }
-    ]}},
-    { index: 1, message: { role: "assistant", content: [
-      { type: "output_text", text: "!" }
-    ]}}
-  ]
-};
-```
-
-**Pattern:**
-
-* Find all text fragments of type `output_text` anywhere:
-
-```js
-const pat = `{ **:{type:output_text text:$t} }`;
-```
-
-**Expected:**
-
-* `solutions().toArray().map($.t).join("") === "Hello, world!"`
-* Also assert count is 3, and no “refusal” text appears.
-
----
-
-## Golden 2: OpenAI streaming-ish “delta” chunks → only final assembled text
-
-**Purpose:** alternation + optional keys + find() vs match() + field clauses.
-
-**Fixture:**
-
-```js
-const chunks = [
-  { choices: [{ delta: { content: "Hel" } }] },
-  { choices: [{ delta: { content: "lo" } }] },
-  { choices: [{ delta: { refusal: "no" } }] },
-  { choices: [{ delta: { content: "!" }, finish_reason: "stop" }] }
-];
-```
-
-**Pattern:**
-
-```js
-const pat = `{ **content:$t }`;
-```
-
-**Expected:**
-
-* Extract `["Hel","lo","!"]` and join to `"Hello!"`
-* Ensure refusal is ignored.
-
-(You can also add a second pattern verifying the finish reason exists somewhere, e.g. `{ **finish_reason:stop }` hasMatch.)
-
----
-
-## Golden 3: HTML/VDOM macro expansion: `<FormattedAddress .../>` → `<div>...</div>`
-
-**Purpose:** array group binding + object matching + editAll group replacement + path correctness.
-
-**Fixture (simple VDOM):**
-
-```js
-const vdom = [
-  { tag: "p", children: ["Ship to:"] },
-  { tag: "FormattedAddress", props: { type: "oneLine", model: "uAddress" }, children: [] },
-  { tag: "p", children: ["Thanks!"] }
-];
-```
-
-**Pattern (match the node):**
-
-```js
-const pat = `[
-  ...
-  $node=({ tag:FormattedAddress props:{ type:oneLine model:$m } })
-  ...
-]`;
-```
-
-**Edit:**
-
-* Replace the matched node (`$node`) with a div template. Since `$node` is scalar, easiest is replace whole match `$0` only if you match the node itself; but in this pattern you’re matching an *array*, so prefer **group-edit**:
-
-Better pattern for in-place replacement:
-
-```js
-const pat2 = `[
-  ...
-  @x=({ tag:FormattedAddress props:{ type:oneLine model:$m } })
-  ...
-]`;
-```
-
-Then:
-
-```js
-.editAll($ => ({
-  x: [{ tag: "div", children: [`{${$.m}.name}, {${$.m}.street}`] }]
-}))
-```
-
-**Expected:**
-
-* vdom now contains `{tag:"div", ...}` where `FormattedAddress` was.
-* Surrounding nodes unchanged.
-
----
-
-## Golden 4: Config validation with universal object semantics + closed object
-
-**Purpose:** universal `K:V`, optional `?:`, `(!%)`.
-
-**Fixture:**
-
-```js
-const cfgOK = { x_port: 8080, x_host: "localhost", id: "abc" };
-const cfgBad = { x_port: "8080", x_host: "localhost", id: "abc" };
-```
-
-**Pattern:**
-
-```js
-// all x_* must be number OR string? pick one and test.
-// Here: x_* must be number
-const pat = `{ /^(x_)/: $v=(123|0|1|2|3|4|5|6|7|8|9|/^\d+$/) }`;
-```
-
-That’s messy if you don’t have “number predicate”. Better golden test using existing primitives:
-
-```js
-const pat = `{ /^x_/: $n=(/^\d+$/) }`;  // if x_* are strings of digits
-```
-
-And add a closed object case:
-
-```js
-const closed = `{ id:_ /^x_/:/^\d+$/ (!%) }`;
-```
-
-**Expected:**
-
-* `closed` matches `{id:"abc", x_port:"8080", x_host:"123"}` only if *every* key is `id` or `x_*` and values satisfy.
-* A stray key should fail due to `(!%)`.
-
-(If you prefer to validate “numbers are numbers”, use literal numeric fixtures and match with `_` and key coverage; the point is universal + remainder.)
-
----
-
-## Golden 5: JSON “join” across paths (your planets/aka example)
-
-**Purpose:** root match + key binding + lookahead + array `...` + producing many solutions.
-
-Use your README example almost verbatim (it’s excellent).
-
-**Expected:**
-
-* exactly the 7 “Hello, …” strings
-* and verify it still works if you reorder `aka` rows or add unrelated keys (resilience)
-
----
-
-## Golden 6: Redaction at any depth, two equivalent styles
-
-**Purpose:** find() recursion vs `...` path recursion, and editAll correctness.
-
-**Fixture:**
-
-```js
-const data = {
-  user: { password: "secret", profile: { password: "also" } },
-  password: "top"
-};
-```
-
-**Patterns:**
-
-1. `Tendril("{ password:$p }").find(data).editAll({p:"REDACTED"})`
-2. `Tendril("{ **.password:$p }").match(data).editAll({p:"REDACTED"})`
-
-**Expected:**
-
-* both yield the same transformed structure
-* all password fields redacted
-* other fields unchanged
-
----
-
-## Golden 7: Non-trivial array slicing + splice offset correctness
-
-**Purpose:** group splices on same array; ensures your `offset` logic in `applyEdits` is correct.
-
-**Fixture:**
-
-```js
-const arr = [1, 2, 3, 4, 5, 6];
-```
-
-**Pattern:**
-
-```js
-const pat = `[ ... @mid=(3 4) ... ]`;
-```
-
-**Edit:**
-Replace `@mid` with 3 elements:
-
-```js
-.editAll({ mid: [30, 40, 50] })
-```
-
-**Expected:**
-`[1,2,30,40,50,5,6]`
-
-Then a second edit in same run that splices earlier and later groups (two group sites) is even better:
-
-```js
-const pat2 = `[ @a=(1 2) ... @b=(5 6) ]`;
-editAll({ a:[10], b:[60,70,80] })
-```
-
-Expected:
-`[10,3,4,60,70,80]`
-
----
-
-## Golden 8: Object group capture + replace with new props
-
-**Purpose:** object `@x=(...)` capture, replacement semantics (delete captured keys then insert).
-
-**Fixture:**
-
-```js
-const obj = { Big:1, Cute:2, Alice:3, c:99 };
-```
-
-**Pattern:**
-
-```js
-const pat = `{ @x=(/a/:_, /b/:_) /c/:_ }`;
-```
-
-**Edit:**
-
-```js
-.editAll({ x: { foo: "bar" } })
-```
-
-**Expected:**
-
-* keys matched by `/a/` or `/b/` removed (`Big`, `Alice`)
-* replaced with `{foo:"bar"}`
-* keys `Cute` and `c` remain
-  Result:
-
-```js
-{ foo:"bar", Cute:2, c:99 }
-```
-
----
-
-# Minimal MVP golden suite layout
-
-If you want a small file count:
-
-* `test/golden/openai-text-assembly.test.js` (Golden 1 + 2)
-* `test/golden/vdom-macro-expansion.test.js` (Golden 3)
-* `test/golden/joins-and-lookahead.test.js` (Golden 5)
-* `test/golden/redaction.test.js` (Golden 6)
-* `test/golden/remainder-and-universal.test.js` (Golden 4 + 8)
-* `test/golden/splice-offsets.test.js` (Golden 7)
-
-# END "Golden Tests"
-
-
 # Real-world examples 
 
 This is more sophisticated than the If/Else example, but it's genuinely useful and demonstrates real power. A few syntax corrections:
@@ -1552,14 +1246,88 @@ For the README, I'd still lean toward the If/Else merge—simpler pattern, clear
 
 Save the label/input example for a "Real-World Examples" section or one of the specialized guides?
 
+# Current work (CW)
 
-= Current work proposals (CW)
+## CW 2. Language pruning
 
-These are things that are under consideration.
+The language has got too complex and messy, and we need to prune or streamline some features. A large part of this will be solved in documentation by relegating more complex features to the reference section or a separate "advanced" section. But there are some specific language changes:
+1. 
+2. Retire ':>', made redundant by CW 4.
+2. Retire positive and negative look-aheads for object field clauses.Replace with simple boolean expressions with better defined semantics for the remainder.
+3. Retire quantifiers for object field clauses. Replace them with CW 4, which includes a simplified quantifier scheme for buckets.
+4. Retire item repetition numeric quantifiers a{m,n}. Keep the notation for greedy, lazy, possessive quantifiers, but relegate it to a footnote. Possessive is an 'advanced' escape hatch.
+5. Allow anonymous guards on wildcards: `(_ where _ % 2 == 0)` short for `$tmp=(_ where $tmp % 2 == 0)`
+6. Allow the top level pattern to be a slice, for find/edit/replace:
+```
+Tendril("{ a:b }").find(data).replaceAll("X") // Cross out any object that contains key 'a'. 
+Tendril("a:b").find(data).replaceAll("X:X") // Replace only that key, not the whole object. 
+```
+7. Retire quantifiers for object remainders. Retain only '%','!%','%?'.
 
-CW4 is the only one under *serious* consideration.
 
-== CW 4. Categorization in object syntax.
+## CW 14A. Object slice quantifiers
+
+Retire O_KV_QUANT and O_REM_QUANT. 
+Retire "?" as a modifier to K:V.
+Replace with the following:
+
+Bare K:V clauses:
+```
+     K:V      // (no change) asserts #{1,Infinity}
+     K:V ?    // (no change, asserts #{0,Infinity}
+                
+     
+```
+
+## CW 14. '->' operator
+
+Define the observational collection operator -> to be:
+`(S -> @foo)` succeeds iff `S` succeeds at that value, and if it succeeds it records the current kv-pair into bucket `@foo` for the nearest enclosing `K:V` in the AST.
+
+The value of @foo is deemed to be associated with the clause, as if it were @foo=(K:V), i.e. the same @foo binding is used for all the k-branches. If S itself branches, the same k:v is not added to @foo twice.
+
+`S` it is not a backtracking point, but it may fail early if there is an 'empty' quantifier on the slice; or it may fail late, when the iteration is finished, if there is a non-empty quantifier on the slice.
+
+Note that for matching K:V,
+- Although K:V asserts only one-or-more witnesses matching both K and V, if this construct is present, any optimization must behave as if it had iterated over all matching witnesses.
+
+Note that when V is an 'else' clause, it behaves like '|' except for backtracking behavior. There is no implicit failover bucket.
+
+If the same @foo collector appears in multiple arms/places within the same enclosing K:V, they union into the same bucket (and it’s not unification).
+
+This odd operator is primarily to support CW 4. None of the above complexity will appear in the user manual. The manual will focus only on the `K:@bucket1=(V) else @bucket2(W)` formula, which can be explained quite simply.
+
+Basic test case. Note that operator precedence from strongest to least includes
+```
+@foo=    //binding, unary
+->       //binary
+else     //binary
+
+```
+gives `K:V else W` === `K:(V else W)`
+```
+data = {a:[
+    { b1:'d11',b2:'d12',b3:'x' },
+     { z:'d13' },
+    { b3:'d24', x:'d25' },
+    { b4:'d34', x:'d25' },
+]}
+pattern = {
+    a[$i]:({/b.*/:($x=(/d1.*/) -> @foo) 
+                  else (/d3.*/->@bar)}
+          | _)   // show nonmatching $i's rather than failing completely. 
+}
+// solutions: { {i:0, x:'d11', foo:{ b1:'d11',b2:'d12' } }
+//               ,{i:0, x:'d12', foo:{ b1:'d11',b2:'d12' } }
+//               ,{i:1}
+//               ,{i:2}
+//               ,{i:3,  bar:{ b4:'d34'} }
+               
+```
+
+
+
+## CW 4. Categorization in object syntax.
 
 The pattern `K:(V1 else V2 else V3)` is just a special case of `K:V` where `V` is an else-chain. Therefore, the else chain is applied independently to each value, routing that property to the first Vi that matches its value, forming a partition of the domain (no overlap).
 
@@ -1568,18 +1336,19 @@ So the idiom for categorization into buckets, including a fallback bucket is
     `K:A else B` // rules of precedence make this `K:(A else B)`
     `K:A else _` // fallback bucket
 
-This idiosyncratic syntax is for capturing these buckets as object slices is:
+The syntax is for capturing these buckets as object slices is idiosynchratic:
 
     `{
-         K: V1      ->@S1 
-            else V2 ->@S2
-            else V3 ->@S3 // etc.
+         K: partition V1->@S1 
+            else      V2 ->@S2
+            else      V3 ->@S3 // etc.
      }`
 
-for example,
+The 'partition' keyword is for readability, but is optional; the real semantic weight lies in this formulatic idiomatic use of 'else' and '->'.
 
 ```
-    { _:: (OK|perfect)->@goodStatus else _->@others } 
+    { _: (OK|perfect) -> @goodStatus 
+         else _       -> @others } 
     // matches { proc1:"OK", proc2:"perfect", proc3:"bad"}
     // with solution = 
     // {
@@ -1587,12 +1356,28 @@ for example,
     //    others:     { proc3:"bad"}
     // }
 ```
+Some annotations:
+```
+!@bucket   // bucket is empty
+@bucket!   // bucket is nonempty
 
-\[Note: This right arrow syntax is idiosyncratic and a bit inconsistent with the rest of the document. It is meant to emphasize that the k:v slices (not V slices) are being collected across multiple keys rather than simply enclosing part of the V pattern with parentheses. ]
+!          // pronounced 'fail', as standalone item, sugar for (!_)_ , fails
 
-== CW 5. Defaults for nomatching bindings?
+// Equivalents to previous notation. 
+@s=($k:>$v=(V)) === @s=($k:$v=V else !)
 
-== CW 6. Recursive descent
+```
+Note that the '!' in 'else !' would typically be pronounced 'fail', but could also be seen as mnemonic for either of the two equivalent de-sugarings:
+`else _-> !@UNNAMED_FALLBACK` // asserts that the fallback bucket is empty.
+`else (!_)_` // Impossible to satisfy.
+
+# Future ideas
+
+These ideas have not been thoroughly thought out and are not on the roadmap. Treat this as just brainstorming.
+
+## CW 5. Defaults for nomatching bindings?
+
+## CW 6. Recursive descent
 
 A breadcrumb path is really just an array of instructions for navigating somewhere else in the structure.
 
@@ -1610,10 +1395,10 @@ Then a cyclic graph is `[... $start.**↳($a,$b where $b=($a[1])):$start) ...]`
 (You don't need to point out that this particular example would be very inefficient, and that we'd need a 'visited' flag and a depth limit, and that this is a complication to the language that is prima facie unjustified. )
     ``
 
-== CW 7. **Training wheels**:
+## CW 7. **Training wheels**:
 Add a **boundedness mode** that distinguishes **O(1), syntactically finite branching** from **data-dependent enumeration**: small alternations like `red|rouge` are always safe, while constructs whose match count depends on input size (regex or wildcard keys in object position, array spreads/splits, variable-length quantifiers, wildcard indices, unbound `_:$x`) are rejected unless explicitly marked. Provide two opt-ins: `enum(P)` to acknowledge intentional enumeration, and `one(P)` / `atMostOne(P)` to assert uniqueness and fail otherwise. Implement this via a simple syntactic classification of branching sites (finite vs size-dependent) with clear compile-time errors explaining which construct causes unbounded branching and how to fix it; this teaches users to avoid accidental Cartesian products without limiting legitimate finite alternation.
 
-== CW 8. EL assertions applied to structural pieces other than bindings.
+## CW 8. EL assertions applied to structural pieces other than bindings.
 
 ChatGPT recommends against this, or if we do it, make it explicit, such as a zero width `guard(expr)`
 
@@ -1641,14 +1426,14 @@ or perhaps leverage lookaheads
 }"
 ```
 
-== CW 9. Currently If a variable in an EL expression is unbound, the evaluation is deferred. If the variable never gets bound by the time the entire pattern is matched, then it fails.
+#### CW 9. Currently If a variable in an EL expression is unbound, the evaluation is deferred. If the variable never gets bound by the time the entire pattern is matched, then it fails.
 
 Proposal. Permit defaults. An expression with a default may be evaluated immediately if the expression is closed. Otherwise, it is deferred, but evaluated as soon as it becomes closed (to allow pruning ASAP).
 If after the entire pattern is matched, it is still open and cannot be evaluated, then we evaluate the expression using the defaults. (If there are still free variables without defaults, then it fails. )
  This honors our current support for forward reference expressions having deferred evaluation.
 
 `{
-    sum: $sum=(_; $sum==default($n,0)+default($s,0))
+    sum: $sum=(_ where $sum==default($n,0)+default($s,0))
     ( 
       number: $n ?
       string: $s ?
@@ -1675,7 +1460,7 @@ Something like:
 
 default($x, v) does not count as binding $x. Guards are still deferred until all referenced variables are bound. Defaults apply only at the end of matching, if some referenced variables remain unbound.
 
-== CW 10. Calc
+## CW 10. Calc
 
 Proposal: support calculated expressions in the pattern (not just in guards).
 
@@ -1711,4 +1496,296 @@ It would **not** support deferred calculation for free variables. It fails with 
 It must evaluate to a primitive.
 Once evaluated, it must be memoized (AST identity + bindings).
 
-TBD: Clarify precedence and how it might combine with other syntactic structures. 
+TBD: Clarify precedence and how it might combine with other syntactic structures.
+
+## CW 11. Optimized primitives for common cases
+
+In practice people need: “key absent,” “no keys matching regex,” “no values matching predicate,” “closed object,” and “only keys from this set.” If you don’t make those primitives obvious and idiomatic, users will recreate them with enumeration-heavy patterns (wildcard keys + negative constraints) and you’re back in explosion land. So I’d put on the cut line a small set of object-level constraints that are syntactically distinct from matching clauses. Concretely, something like absent(K) / forbid(K:V) / closed (your !%) / allowExtras (default) / captureExtras (%? plus binding). Whether it’s spelled as guards, a where block, or a dedicated !{...} constraint form doesn’t matter as much as: it must not enumerate, and it must read like a constraint, not like a pattern that backtracks.
+
+## CW 12. Simplify and integrate regex.
+
+1. Make /foo/ anchored.
+2. In RE group syntax: /.*[.](?<$ext>\w+)/ -- Named groups that start with the $ sigil are lifted into Tendril land and participate in binding logic.. By default, this will not cause branching in Tendril (at most one regex solution per Tendril branch, as is usual for regexes). nitpicky details are mostly answered by the following equivalence:
+   `[ /(?<$x>[ab])|[bc]/ ]`
+   acts *exactly* like
+   [ $x=(/[ab]/) else /[bc]/ ]
+   (where 'else' is the non-backtracking form of '|' as desscribed earlier), with regard to backtracking, binding, and so on.
+3. Provide consistent ergonomic quoting options:
+
+ '...' "..." «...» --- literals
+ /.../, r'...' r"..." r«...» --- Tendril regex (like JS regex, but with (1)+(2))
+ jr/.../ - JavaScript compatible regex (disables (1) and (2))
+
+ ~ LITERAL_OR_REGEX --- Substring match (unanchored)
+
+This is brainstorming, not a polished proposal. Any suggestions? (Ignore missing details with obvious resolutions.)
+
+Below is how I would rewrite **CW 12** as a *user-guide* section.
+It assumes no prior knowledge of the old rules, avoids grammar talk, and focuses on “what you type” and “what it means,” with motivation first and corner cases last.
+
+---
+        Below is how I would rewrite **CW12** in *user-guide style*, with:
+
+1. a **short, high-level summary** about the size/density of your original CW12, and
+2. the **longer explanatory section** (the one you liked earlier), revised so that **Plan B is the default** and explained using your “bind-if-unknown, assert-if-known” framing rather than “constrain the search.”
+
+---
+            
+            ## Regex in Tendril — Summary
+            
+            Tendril integrates regex as a **single, predictable matching step**, not as a second pattern language.
+            
+            Key rules:
+            
+            1. **Regexes are anchored by default.**
+               `/foo/` matches `"foo"`, not `"seafood"`.
+            
+            2. **Named capture groups bind Tendril variables.**
+               A group named `(?<$x>…)` binds `$x` if it is unbound, or asserts its value if it is already bound.
+            
+            3. **Regexes do not enumerate solutions.**
+               Each regex produces at most one result per Tendril branch.
+            
+            4. **Substring matching is explicit.**
+               Use `~ /foo/` or `~ "foo"` when you want “contains” behavior.
+            
+            5. **Regex binding follows Tendril’s normal unification rules.**
+               A bound variable is tested, not re-chosen.
+            
+            6. **JavaScript-compatible regex is available as an escape hatch.**
+               `jr/.../` disables Tendril-specific behavior.
+            
+            This makes regex behave like other Tendril matchers:
+            *bind if unknown, assert if known, never silently multiply solutions.*
+            
+            ---
+            
+            ## Regex in Tendril (Predictable and Integrated)
+            
+            Regexes are useful in Tendril, but they should not introduce hidden search behavior or surprise interactions with unification. Tendril therefore treats regex as a **single matching operation with optional extraction**, fully integrated into the existing binding model.
+            
+            This section explains how regex behaves in Tendril and how it differs from JavaScript regex.
+            
+            ---
+            
+            ### 1. Regexes match the entire value
+            
+            In Tendril, a regex literal like:
+            
+            ```
+            /foo/
+            ```
+            
+            matches the **entire string**, not a substring.
+            
+            ```
+            /foo/     // matches "foo"
+                      // does NOT match "seafood"
+            ```
+            
+            This aligns regex with all other Tendril patterns: a value either matches or it doesn’t.
+            
+            If you want substring matching, see **Substring matching** below.
+            
+            ---
+            
+            ### 2. Regex alternation does not create Tendril branches
+            
+            Regex alternation (`|`) is handled entirely inside the regex engine.
+            
+            Even if a regex has multiple internal matches, Tendril treats it as **one atomic test** and never enumerates alternatives as separate solutions.
+            
+            ```
+            /foo|bar/
+            ```
+            
+            either matches or fails; it does not produce two Tendril branches.
+            
+            This prevents accidental solution explosion.
+            
+            ---
+            
+            ### 3. Named capture groups bind Tendril variables
+            
+            Regex groups whose names start with `$` participate directly in Tendril binding.
+            
+            ```
+            /(?<$ext>\w+)/
+            ```
+            
+            Example:
+            
+            ```js
+            Tendril("{ file: /.*\\.(?<$ext>\\w+)/ }")
+              .match({ file: "report.pdf" })
+              .solutions().first()
+            // → { ext: "pdf" }
+            ```
+            
+            ---
+            
+            ### 4. Bound variables turn captures into assertions
+            
+            A `$`-named capture group behaves differently depending on whether the variable is already bound.
+            
+            #### If the variable is unbound
+            
+            The group captures a value and binds it, like a normal regex capture.
+            
+            #### If the variable is already bound
+            
+            The group **does not choose a new value**.
+            Instead, it **asserts** that the bound value appears at that position and satisfies the group’s pattern.
+            
+            In effect:
+            
+            > A `$`-named regex group means “bind if unknown; assert if known.”
+            
+            This mirrors Tendril’s behavior everywhere else.
+            
+            ---
+            
+            ### 5. Example: why this matters
+            
+            Consider this regex:
+            
+            ```
+            /(?<$x>a)b | a(?<$x>b)/
+            ```
+            
+            On the string `"ab"`, both alternatives are valid.
+            
+            Now suppose `$x` is already bound to `"b"` elsewhere in the pattern.
+            
+            Under Tendril semantics:
+            
+            * The first alternative is rejected (it would require `$x = "a"`).
+            * The second alternative succeeds.
+            
+            So `"ab"` **does match**, and `$x` remains `"b"`.
+            
+            This is equivalent to the Tendril pattern:
+            
+            ```
+            [ $x=(a) b | a $x=(b) ]
+            ```
+            
+            Once `$x` is known, each occurrence simply tests it.
+            
+            ---
+            
+            ### 6. How to think about it
+            
+            You do **not** need to think about regex backtracking.
+            
+            The mental model is:
+            
+            > Regex runs once.
+            > `$`-named groups bind variables if they are unknown,
+            > and assert those variables if they are already known.
+            
+            This avoids the “regex picked the wrong witness” surprise and keeps regex commutative with other Tendril matchers in the same way that repeated variables are.
+            
+            ---
+            
+            ### 7. Substring matching is explicit
+            
+            Because regexes are anchored, substring matching must be explicit.
+            
+            Use the substring operator:
+            
+            ```
+            ~ /foo/
+            ~ "foo"
+            ```
+            
+            Examples:
+            
+            ```
+            ~ /foo/    // matches "seafood"
+            ~ "foo"    // matches "seafood"
+            ```
+            
+            Substring matching applies only to strings; other types do not coerce silently.
+            
+            ---
+            
+            ### 8. Regex vs literals
+            
+            Often you don’t need regex at all.
+            
+            ```
+            foo/i
+            ```
+            
+            is usually clearer and safer than:
+            
+            ```
+            /foo/i
+            ```
+            
+            Use regex when you need structure or extraction:
+            
+            ```
+            /\d{4}-\d{2}-\d{2}/
+            /(?<$user>[a-z]+)@/
+            ```
+            
+            ---
+            
+            ### 9. Regex flavors
+            
+            #### Tendril regex (default)
+            
+            ```
+            /.../flags
+            ```
+            
+            * Anchored
+            * Supports `$`-named capture groups
+            * Participates in unification
+            * Disallows stateful flags (`g`, `y`)
+            * Allowed flags: `i m s u`
+            
+            This is the regex you usually want.
+            
+            #### JavaScript regex (escape hatch)
+            
+            ```
+            jr/.../flags
+            ```
+            
+            * JavaScript behavior
+            * Substring matching
+            * No Tendril bindings
+            * No anchoring changes
+            
+            Use this only when you need exact JS compatibility.
+            
+            ---
+            
+            ### 10. What regex does *not* do in Tendril
+            
+            Regex does not:
+            
+            * enumerate alternatives
+            * create multiple Tendril solutions
+            * override unification rules
+            * silently coerce non-strings
+            * introduce hidden backtracking across the pattern
+            
+            If you want enumeration, use Tendril alternation.
+            If you want validation, use guards.
+            If you want search, use `~`.
+            
+            ---
+            
+            ### One-sentence takeaway
+            
+            > In Tendril, regex is a **single match with optional binding**:
+            > it binds unknown variables and asserts known ones, just like the rest of the language.
+            
+            If you want, next we can:
+            
+            * tighten this further for README length, or
+            * add a migration note showing how existing `/foo/` patterns change under anchoring.

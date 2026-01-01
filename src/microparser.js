@@ -136,6 +136,39 @@ export function tokenize(src) {
       if (w === 'false')    { push('bool', false, j - i); continue; }
       if (w === 'null')     { push('null', null, j - i); continue; }
       if (w === 'else')     { push('else', 'else', j - i); continue; }
+      if (w === 'where' && parenDepth > 0) {
+        push('where', 'where', j - i);
+        // Capture everything until the matching ')' as a guard_expr token
+        // Need to handle nested parens, strings properly
+        const exprStart = i;
+        let depth = parenDepth;
+        let k = i;
+        while (k < src.length && depth > 0) {
+          const ch = src[k];
+          // Skip over string literals
+          if (ch === '"' || ch === "'") {
+            const quote = ch;
+            k++;
+            while (k < src.length && src[k] !== quote) {
+              if (src[k] === '\\') k++; // Skip escaped char
+              k++;
+            }
+            if (k < src.length) k++; // Skip closing quote
+            continue;
+          }
+          if (ch === '(') depth++;
+          else if (ch === ')') depth--;
+          if (depth > 0) k++;
+        }
+        if (depth !== 0) throw syntax(`unmatched parenthesis in guard expression`, src, exprStart);
+        const exprText = src.slice(exprStart, k).trim();
+        if (exprText) {
+          push('guard_expr', exprText, k - i);
+        }
+        continue;
+      }
+      // 'where' outside parens is just an identifier (variable name, etc.)
+      if (w === 'where')    { push('id', w, j - i); continue; }
       // Reject other underscore-prefixed identifiers
       if (w[0] === '_') {
         throw syntax(`identifiers cannot start with underscore: ${w}`, src, i);
@@ -158,38 +191,6 @@ export function tokenize(src) {
     if (c2 === '+?')  { push('+?', '+?', 2); continue; }   // lazy plus
     if (c2 === '*?')  { push('*?', '*?', 2); continue; }   // lazy star
 
-    // Handle semicolon specially: if inside parens, capture guard expression
-    if (c === ';' && parenDepth > 0) {
-      push(';', ';', 1);
-      // Capture everything until the matching ')' as a guard_expr token
-      // Need to handle nested parens, strings properly
-      const exprStart = i;
-      let depth = parenDepth;
-      let j = i;
-      while (j < src.length && depth > 0) {
-        const ch = src[j];
-        // Skip over string literals
-        if (ch === '"' || ch === "'") {
-          const quote = ch;
-          j++;
-          while (j < src.length && src[j] !== quote) {
-            if (src[j] === '\\') j++; // Skip escaped char
-            j++;
-          }
-          if (j < src.length) j++; // Skip closing quote
-          continue;
-        }
-        if (ch === '(') depth++;
-        else if (ch === ')') depth--;
-        if (depth > 0) j++;
-      }
-      if (depth !== 0) throw syntax(`unmatched parenthesis in guard expression`, src, exprStart);
-      const exprText = src.slice(exprStart, j).trim();
-      if (exprText) {
-        push('guard_expr', exprText, j - i);
-      }
-      continue;
-    }
 
     // Track paren depth for guard expression handling
     if (c === '(') {

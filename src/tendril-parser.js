@@ -39,7 +39,7 @@ const Null = () => ({type: 'Null'});
 const RootKey = () => ({type: 'RootKey'}); // Special marker for leading ** in paths
 
 // Bindings
-const SBind = (name, pat, guard = null) => ({type: 'SBind', name, pat, guard});  // $x=(pat) or $x=(pat; expr)
+const SBind = (name, pat, guard = null) => ({type: 'SBind', name, pat, guard});  // $x=(pat) or $x=(pat where expr)
 const GroupBind = (name, pat) => ({type: 'GroupBind', name, pat});  // @x=(pat)
 
 // Containers
@@ -213,7 +213,7 @@ function parseItemTerm(p) {
     return inner;
   }
 
-  // Scalar variable: $x or $x=(pattern) or $x=(pattern; guard)
+  // Scalar variable: $x or $x=(pattern) or $x=(pattern where guard)
   if (p.peek('$')) {
     p.eat('$');
     const name = eatVarName(p);
@@ -221,7 +221,7 @@ function parseItemTerm(p) {
       p.eat('(');
       const pat = parseItem(p);
       let guard = null;
-      if (p.maybe(';')) {
+      if (p.maybe('where')) {
         // Parse guard expression: collect source until ')' and parse as expression
         guard = parseGuardExpr(p);
       }
@@ -456,15 +456,15 @@ function parseAGroupBase(p) {
     return GroupBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
-  // Scalar variable: $x or $x=(pattern) or $x=(pattern; guard)
+  // Scalar variable: $x or $x=(pattern) or $x=(pattern where guard)
   if (p.peek('$')) {
     p.eat('$');
     const name = eatVarName(p);
     if (p.maybe('=')) {
       p.eat('(');
-      const items = parseABody(p, ')', ';');
+      const items = parseABody(p, ')', 'where');
       let guard = null;
-      if (p.maybe(';')) {
+      if (p.maybe('where')) {
         guard = parseGuardExpr(p);
       }
       p.eat(')');
