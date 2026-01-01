@@ -1434,48 +1434,39 @@ pattern = {
 
 
 
-## CW 4. Categorization in object syntax.
+## CW 4. Validation and categorization idioms.
 
-The pattern `K:(V1 else V2 else V3)` is just a special case of `K:V` where `V` is an else-chain. The else chain is applied independently to each value, routing that property to the first Vi that matches, forming a partition (no overlap).
+Given CW 14, this item reduces to:
 
-### Basic idiom
+### 1. Spelling change
 
-```
-K:A else B      // precedence makes this K:(A else B)
-K:A else _      // fallback for non-matching values
-```
-
-### Capturing into buckets
-
-Use `->` to collect matching k:v pairs into named buckets:
+Replace `:>` with `else !`:
 
 ```
-{ _: (OK|perfect) -> @goodStatus
-     else _       -> @others }
-
-// matches { proc1:"OK", proc2:"perfect", proc3:"bad"}
-// solution = {
-//    goodStatus: { proc1:"OK", proc2:"perfect"}
-//    others:     { proc3:"bad"}
-// }
+K:>V   →   K:V else !
+K:>V?  →   K:V else !?
 ```
 
-### Validation (closed categorization)
+The `else !` triggers strong semantics—every k matching K must have v matching V, or the pattern fails.
 
-Use `else !` to fail if any value doesn't match the expected patterns:
+### 2. Interaction with `?`
 
-```
-{ _: (OK|perfect) -> @goodStatus else ! }
-
-// matches { proc1:"OK", proc2:"perfect" }
-// fails on { proc1:"OK", proc2:"bad" }
-```
-
-The `else !` triggers strong semantics—every key must have a matching value, or the pattern fails. This replaces the `:>` operator:
+The `?` (optional slice) composes as expected:
 
 ```
-K:>V  ===  K: V else !
+K:V           // weak, at least one witness required
+K:V?          // weak, no existence requirement
+K:V else !    // strong, at least one witness required
+K:V else !?   // strong, no existence requirement
 ```
+
+### 3. Documentation
+
+Document the categorization and validation idioms enabled by CW 14's `->` operator. See CW 14 for examples.
+
+### Note on composition
+
+The pattern `K:V else V2 else !` is not an additional special case. It is the normal interpretation of `K:(V else V2) else !`, i.e., `K:W else !` where W = `(V else V2)`. The strong semantics apply to W as a whole.
 
 # Future ideas
 
