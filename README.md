@@ -917,14 +917,20 @@ ITEM :=
       ITEM_TERM ('|' ITEM_TERM)*              # alternation: enumerate all matches
     | ITEM_TERM ('else' ITEM_TERM)*           # prioritized: first match wins
 
+# The '->' suffix flows matching k:v pairs into a bucket during object iteration.
+# Precedence: 'as' (tightest) > '->' > 'else' (loosest)
+# So: K:V -> @x else W -> @y  parses as  K:((V -> @x) else (W -> @y))
 ITEM_TERM :=
+      ITEM_TERM_CORE ('->' S_GROUP)?          # optional flow-into-bucket suffix
+
+ITEM_TERM_CORE :=
       '(' ITEM ')'
     | '(' ITEM 'as' S_ITEM ('where' GUARD_EXPR)? ')'   # binding with pattern and optional guard
     | '(' ITEM 'as' S_GROUP ')'               # group binding with pattern
     | LOOK_AHEAD
     | S_ITEM                                  # bare $x ≡ (_ as $x)
     | S_GROUP                                 # bare @x ≡ (_* as @x)
-    | TYPED_WILD                                   # _string, _number, _boolean
+    | TYPED_WILD                              # _string, _number, _boolean
     | '_'
     | LITERAL
     | OBJ
@@ -998,26 +1004,30 @@ O_GROUP :=
       O_LOOKAHEAD
     | '(' O_GROUP* ')'                         # OGroup node
     | '(' O_GROUP* 'as' S_GROUP ')'            # group binding in object context
-    | O_TERM
+    | STRONG_O_TERM O_KV_OPT?                  # try strong first (with 'else !')
+    | O_TERM O_KV_OPT?                         # then weak
 
 O_LOOKAHEAD :=
       '(?' O_GROUP ')'
     | '(!' O_GROUP ')'
 
+# Strong O_TERM: triggers strong semantics (no bad entries allowed)
+# The 'else !' suffix replaces the deprecated ':>' operator.
+STRONG_O_TERM := O_TERM 'else' '!'
+
 # Breadcrumb paths
 O_TERM :=
-      KEY BREADCRUMB* OBJ_ASSERT_OP VALUE O_KV_QUANT? O_KV_OPT?
-    | '**' BREADCRUMB* OBJ_ASSERT_OP VALUE O_KV_QUANT? O_KV_OPT?   # leading ** allowed (glob-style)
+      KEY BREADCRUMB* ':' VALUE O_KV_QUANT?
+    | '**' BREADCRUMB* ':' VALUE O_KV_QUANT?   # leading ** allowed (glob-style)
 
 KEY   := ITEM
 VALUE := ITEM
 
-# Object assert operators:
-# ':'   = slice definition (allows bad entries unless constrained)
-# ':>'  = implication / validate-only (forces bad#{0})
-OBJ_ASSERT_OP :=
-      ':'
-    | ':>'
+# Object field semantics:
+# K:V         = weak: at least one k~K with v~V; bad entries (k~K, NOT v~V) allowed
+# K:V else !  = strong: at least one k~K with v~V; bad entries forbidden
+# K:V?        = weak + optional: no existence requirement
+# K:V else !? = strong + optional: no existence requirement, but bad entries forbidden
 
 # KV quantifier counts the slice (not the bad set). Defaults are semantic, not syntactic.
 O_KV_QUANT :=
@@ -1026,7 +1036,6 @@ O_KV_QUANT :=
     | '#' '?'                                  # shorthand for "0..∞" (same as #{0,})
 
 # KV suffix: disables existence assertion for the slice.
-# This is NOT a general object-group quantifier; it attaches only to a KV term.
 O_KV_OPT :=
       '?'                                      # meaning: slice defaults to #{0,} instead of #{1,}
 
@@ -1256,7 +1265,7 @@ The language has got too complex and messy, and we need to prune or streamline s
 2. Retire positive and negative look-aheads for object field clauses.Replace with simple boolean expressions with better defined semantics for the remainder.
 3. Retire quantifiers for object field clauses. Replace them with CW 4, which includes a simplified quantifier scheme for buckets.
 4. Retire item repetition numeric quantifiers a{m,n}. Keep the notation for greedy, lazy, possessive quantifiers, but relegate it to a footnote. Possessive is an 'advanced' escape hatch.
-5. Allow anonymous guards on wildcards: `(_ where _ % 2 == 0)` short for `$tmp=(_ where $tmp % 2 == 0)`
+5. Allow anonymous guards on wildcards: `(_ where _ % 2 == 0)` short for `(_ as $tmp where $tmp % 2 == 0)`
 6. Allow the top level pattern to be a slice, for find/edit/replace:
 ```
 Tendril("{ a:b }").find(data).replaceAll("X") // Cross out any object that contains key 'a'. 
@@ -1265,9 +1274,9 @@ Tendril("a:b").find(data).replaceAll("X:X") // Replace only that key, not the wh
 7. Retire quantifiers for object remainders. Retain only '%','!%','%?'.
 
 
-## CW 2B. Better binding syntax.
+## CW 2B. Better binding syntax. **DONE**
 
-**DONE** - Binding syntax changed from `$foo=(PATTERN)` to `(PATTERN as $foo)`.
+ - Binding syntax changed from `$foo=(PATTERN)` to `(PATTERN as $foo)`.
 
 ```
     (0|1|2|3|4 as $foo)            // Regardless whether $foo was previously bound.
@@ -1328,18 +1337,18 @@ The `->` operator collects matching k:v pairs into buckets during object iterati
 
 | Syntax | Meaning | On repetition |
 |--------|---------|---------------|
-| `@x=(P)` | bind | unify |
+| `(P as @x)` | bind | unify |
 | `P -> @x` | flow into | accumulate |
 
 The arrow visually suggests "pour into a bucket." Users won't confuse it with binding because it doesn't look like binding.
 
 ### Semantics
 
-`(S -> @foo)` succeeds iff `S` succeeds at that value. On success, it records the current k:v pair into bucket `@foo` for the nearest enclosing `K:V` in the AST (lexically obvious—travel up the AST, not the data).
+`(S -> @foo)` succeeds iff `S` succeeds at that value. On success, it records the current K:S pair into bucket `@foo` for the nearest enclosing `K:V` in the AST (lexically obvious—travel up the AST, not the data).
 
-The value of @foo is associated with the clause, as if it were @foo=(K:V), i.e. the same @foo binding is used for all the k-branches. If S itself branches, the same k:v is not added to @foo twice.
+The value of @foo is associated with the clause, as if it were @foo=(K:V), i.e. the same @foo binding is used for all the k-branches. If S itself branches, the same k:S is not added to @foo twice.
 
-If the same @foo collector appears in multiple arms/places within the same enclosing K:V, they **union** into the same bucket (not unification—this is accumulation). But not within the same enclosing K:V, they unify as object slices.
+If the same @foo collector appears in multiple arms/places within the same enclosing K:V, they **union** into the same bucket (not unification—this is accumulation). (But when not within the same enclosing K:V, they either unify as object slices or are disallowed, TBD.)
 
 ### Composition with `else`
 
@@ -1401,7 +1410,7 @@ So `K:V -> @x else W -> @y` parses as `K:((V -> @x) else (W -> @y))`. Parenthese
 - `S` is not a backtracking point, but may fail early (empty quantifier on slice) or late (non-empty quantifier checked after iteration).
 - Although `K:V` normally asserts only one-or-more witnesses, presence of `->` requires the engine to iterate all matching witnesses (to collect them all). This is inherent to categorization/validation, not a hidden cost.
 
-### Test case
+### Test case 1
 
 ```
 data = {a:[
@@ -1411,7 +1420,7 @@ data = {a:[
     { b4:'d34', x:'d25' },
 ]}
 pattern = {
-    a[$i]:({/b.*/:($x=(/d1.*/) -> @foo)
+    a[$i]:({/b.*/:((/d1.*/ as $x) -> @foo)
                   else (/d3.*/->@bar)}
           | _)   // fallback to show non-matching $i's
 }
@@ -1422,8 +1431,16 @@ pattern = {
 //   {i:2}
 //   {i:3, bar:{ b4:'d34'} }
 ```
-
-
+### Test Case 2
+```
+pattern = { $k: {/a/:_->@a }->@y else {/b/:_->@b}->@z }
+data = { foo: {a1:1, a2:2, b1:3}, bar: {a3:4, a4:5} }
+// The 'y' branch is always taken because both of the outer values contain an object with at least
+// one /a/ key. The 'z' branch is never taken. Therefore @b is never populated
+// Solutions:
+{k:'foo', a:{a1:1, a2:2}, y:{ foo: {a1:1, a2:2, b1:3}, bar: {a3:4, a4:5} }}
+{k:'bar', a:{a3:4, a4:5}, y:{ foo: {a1:1, a2:2, b1:3}, bar: {a3:4, a4:5} }}
+```
 
 ## CW 4. Validation and categorization idioms.
 
