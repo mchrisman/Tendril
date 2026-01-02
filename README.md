@@ -238,11 +238,11 @@ Each field clause `K:V` defines a **slice**: the set of the object's properties 
 | Short form | Meaning |
 |------------|---------|
 | `K:V`      | At least one matching k:v pair exists |
-| `K:>V`     | At least one matching k:v pair exists, AND no bad entries (implication: all keys matching K must have values matching V) |
+| `K:V else !` | At least one matching k:v pair exists, AND no bad entries (all keys matching K must have values matching V) |
 | `K:V?`     | No existence requirement (use for optional binding) |
-| `K:>V?`    | No bad entries allowed (but key doesn't need to exist) |
+| `K:V else !?` | No bad entries allowed (but key doesn't need to exist) |
 
-The `:>` operator, visually reminiscent of an arrow, adds an implication constraint: if a key matches K, its value MUST match V.
+The `else !` suffix triggers **strong semantics**: if a key matches K, its value MUST match V, or the pattern fails.
 
 ```javascript
 { a: 1 }            // matches {"a":1} and {"a":1, "b":2}
@@ -251,16 +251,16 @@ The `:>` operator, visually reminiscent of an arrow, adds an implication constra
 { /a.*/: 1 }        // matches {"ab":1, "ac":2}
                    // At least one /a.*/ key with value 1 (bad entries allowed)
 
-{ /a.*/:> 1 }       // does NOT match {"ab":1, "ac":2}
+{ /a.*/: 1 else ! } // does NOT match {"ab":1, "ac":2}
                    // "ac":2 is a bad entry (key matches /a.*/, value doesn't match 1)
 
-{ /a.*/:> 1 }       // matches {"ab":1, "xyz":99}
+{ /a.*/: 1 else ! } // matches {"ab":1, "xyz":99}
                    // "xyz" doesn't match /a.*/, so it's not a bad entry
 
 { a: 1 ? }           // matches {} and {"a":1} and {"a":2}
                    // No existence requirement - just for binding
 
-{ a:> 1}            // matches {"a":1} and {"a":1,"b":2}, but NOT {"a":2}
+{ a: 1 else ! }     // matches {"a":1} and {"a":1,"b":2}, but NOT {"a":2}
                    // 'a' must exist with value 1; 'b' is uncovered, irrelevant.
 ```
 
@@ -317,7 +317,7 @@ Negation uses lookahead syntax:
 
 ```
 { (! a:1) }           // key 'a' must not have value 1
-{ (! a:>1?) }         // if 'a' exists, its value must not be 1.
+{ (! a: 1 else !?) }  // if 'a' exists, its value must not be 1.
 { (! a:1 b:2) }       // can't have BOTH a:1 and b:2 (one is OK)
 { (! a:1) (! b:2) }  // can't have a:1 AND can't have b:2
 ```
@@ -516,6 +516,45 @@ If an expression errors, the match branch fails silently—no exception is throw
 - Guards only work with scalar bindings (`$x`), not group bindings (`@x`)
 - All variables referenced in a guard must eventually be bound, or the match fails
 
+### Flow Operator (`->`)
+
+The `->` operator collects matching key-value pairs into **buckets** during object iteration. This enables categorization and partitioning of object properties.
+
+```javascript
+{ $k: 1 -> @ones }              // collect all k:v where value is 1 into @ones
+{ $k: 1 -> @ones else 2 -> @twos }  // partition by value: 1s and 2s into separate buckets
+{ $k: 1 -> @ones else _ -> @rest }  // collect 1s; everything else goes to @rest
+```
+
+**Key semantics:**
+- The bucket receives `{key: value}` pairs, where the key comes from the enclosing K:V pattern
+- The value captured is from the **match point** of the `->`, not necessarily the full K:V value
+- Buckets accumulate entries (unlike regular binding which unifies)
+- Unpopulated buckets are `undefined`, not empty `{}`
+
+**Flow captures match-point value:**
+
+```javascript
+// The -> captures the FIRST element (match point), not the whole array
+{ $k: [/a/ -> @captured, b] }
+// On {x: ['apple', 'b'], y: ['avocado', 'b']}
+// @captured = {x: 'apple', y: 'avocado'}
+
+// To capture the full value, place -> at outer level
+{ $k: ([/a/, b] -> @captured) }
+// @captured = {x: ['apple', 'b'], y: ['avocado', 'b']}
+```
+
+**Strong semantics with `else !`:**
+
+```javascript
+{ $k: 1 -> @ones else 2 -> @twos else ! }  // FAIL if any value is neither 1 nor 2
+```
+
+The `else !` triggers **strong semantics**: every key must match one of the preceding branches, or the pattern fails.
+
+**Backtracking safety:** If a branch fails after the `->` has been reached, the bucket entry is rolled back. Only successful complete matches contribute to buckets.
+
 ## Paths (breadcrumb notation)
 
 Field clauses can navigate through nested structures using breadcrumb notation:
@@ -616,18 +655,18 @@ Lookaheads test conditions without consuming data:
 
 ### "Same-values" idiom
 
-❌ "K:>V" does not mean all values are the same; it merely means all values (individually) match V.
+❌ `K:V else !` does not mean all values are the same; it merely means all values (individually) match V.
 
 ```
     // Does not demand that all the colors are the same.
-    "{ (/color/ as $k):>$c }" matches {backgroundColor:"green", color:"white"}
+    "{ (/color/ as $k): $c else ! }" matches {backgroundColor:"green", color:"white"}
     // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}]
 ```
 
 ✅ Use this idiom to enforce universal equality over values:
 
 ```
-    "{ (/color/ as $k):$c  (/color/ as $k):>$c }"
+    "{ (/color/ as $k):$c  (/color/ as $k): $c else ! }"
 ```
 
 It works because variables unify across terms.
@@ -646,8 +685,8 @@ A negative look ahead cannot have bindings.
 In objects, a positive lookahead is redundant. But you can have negative lookaheads:
 
 ```
-{ (! secret:_) }      // assert no key named 'secret' exists
-{ (! secret:>yes) }   // assert no key named 'secret' exists, or some secret key does not have value "yes"
+{ (! secret:_) }              // assert no key named 'secret' exists
+{ (! secret: yes else !) }    // assert no key named 'secret' exists, or some secret key does not have value "yes"
 
 ```
 
@@ -660,7 +699,8 @@ In objects, a positive lookahead is redundant. But you can have negative lookahe
 3. Breadcrumb operators `.`, `**`, `[]`
 4. Adjacency/commas (in arrays and objects)
 5. Alternation `|`, prioritized choice `else`
-6. Key-value separator `:`, `:>`
+6. Flow operator `->`
+7. Key-value separator `:`
 
 Parentheses override precedence. Lookaheads always require parentheses.
 
@@ -1024,10 +1064,11 @@ KEY   := ITEM
 VALUE := ITEM
 
 # Object field semantics:
-# K:V         = weak: at least one k~K with v~V; bad entries (k~K, NOT v~V) allowed
-# K:V else !  = strong: at least one k~K with v~V; bad entries forbidden
-# K:V?        = weak + optional: no existence requirement
-# K:V else !? = strong + optional: no existence requirement, but bad entries forbidden
+# K:V          = weak: at least one k~K with v~V; bad entries (k~K, NOT v~V) allowed
+# K:V else !   = strong: at least one k~K with v~V; bad entries forbidden
+# K:V?         = weak + optional: no existence requirement
+# K:V else !?  = strong + optional: no existence requirement, but bad entries forbidden
+# V -> @bucket = flow matching k:v pairs into bucket (accumulates, does not unify)
 
 # KV quantifier counts the slice (not the bad set). Defaults are semantic, not syntactic.
 O_KV_QUANT :=
@@ -1041,7 +1082,7 @@ O_KV_OPT :=
 
 BREADCRUMB :=
       '**' KEY                                 # skip any depth (glob-style), then match KEY
-    | '**'                                     # if immediately followed by ':', ':>', or '?' then KEY := '_'
+    | '**'                                     # if immediately followed by ':' or '?' then KEY := '_'
     | '.' KEY
     | '[' KEY ']'
 
@@ -1085,16 +1126,16 @@ Bare variables are shorthand: `$x` ≡ `(_ as $x)`, `@x` ≡ `(_* as @x)`.
 
 Each field clause defines both a **slice** (the set of object fields that satisfy both k~K and v~V) and a set denoted by **bad** (k~K AND NOT(v~V)).
 
-In the following short forms, `>` signifies "no bad values" (i.e. k~K => v~V), and `?` signifies that the key is optional:
+In the following short forms, `else !` signifies "no bad values" (strong semantics: k~K => v~V), and `?` signifies that the key is optional:
 
 | Short form | Equivalent long form | Meaning |
 |------------|----------------------|---------|
 | `K:V`      | `K:V  #{1,} bad#{0,}`  | At least one matching k,v |
-| `K:>V`     | `K:V  #{1,} bad#{0}`   | At least one matching k,v, and no bad values |
+| `K:V else !` | `K:V  #{1,} bad#{0}` | At least one matching k,v, and no bad values |
 | `K:V?`     | `K:V  #{0,} bad#{0,}`  | No existence requirement (use for binding) |
-| `K:>V?`    | `K:V  #{0,} bad#{0}`   | No bad values |
+| `K:V else !?` | `K:V  #{0,} bad#{0}` | No bad values |
 
-> Note: The "Equivalent long form" column uses `bad#{...}` as notation to describe semantics, not actual syntax. (TODO: notation for nonmatching slice)
+> Note: The "Equivalent long form" column uses `bad#{...}` as notation to describe semantics, not actual syntax.
 
 Binding keys or values:
 ```
@@ -1133,27 +1174,27 @@ Each field clause selects a **witness** — one key-value pair where both K and 
 // Two solutions: {x:1} and {x:2} — one witness each
 ```
 
-**`:>` with unbound variables:**
+**`else !` with unbound variables:**
 
-When V contains an unbound variable like `$x`, matching V against a value *binds* `$x`. This means the value is in the slice, not the bad set. Therefore `:>` is not a "universal equality" operator — it means "no bad entries exist," where bad means "fails to match the field clause's value pattern":
+When V contains an unbound variable like `$x`, matching V against a value *binds* `$x`. This means the value is in the slice, not the bad set. Therefore `else !` is not a "universal equality" operator — it means "no bad entries exist," where bad means "fails to match the field clause's value pattern":
 
 ```javascript
-{ /a.*/:>$x }  matching {a1:1, a2:2}
+{ /a.*/: $x else ! }  matching {a1:1, a2:2}
 // Succeeds with two solutions: {x:1} and {x:2}
 // Each value matches $x (by binding), so no bad entries
 
-{ /a.*/:>1 }   matching {a1:1, a2:2}
+{ /a.*/: 1 else ! }   matching {a1:1, a2:2}
 // Fails — a2:2 is a bad entry (2 doesn't match 1)
 ```
 
-**Universal equality idiom:** To enforce that all matching keys have the same value, bind first, then use `:>` with the bound variable:
+**Universal equality idiom:** To enforce that all matching keys have the same value, bind first, then use `else !` with the bound variable:
 
 ```javascript
-{ /a.*/:$x  /a.*/:>$x }  matching {a1:1, a2:2}
+{ /a.*/:$x  /a.*/: $x else ! }  matching {a1:1, a2:2}
 // Fails — first clause binds x, second requires ALL /a.*/
 // values to match that x. With x=1, a2:2 is a bad entry.
 
-{ /a.*/:$x  /a.*/:>$x }  matching {a1:1, a2:1}
+{ /a.*/:$x  /a.*/: $x else ! }  matching {a1:1, a2:1}
 // Succeeds with x=1 — all values match
 ```
 
@@ -1344,11 +1385,29 @@ The arrow visually suggests "pour into a bucket." Users won't confuse it with bi
 
 ### Semantics
 
-`(S -> @foo)` succeeds iff `S` succeeds at that value. On success, it records the current K:S pair into bucket `@foo` for the nearest enclosing `K:V` in the AST (lexically obvious—travel up the AST, not the data).
+`(S -> @foo)` succeeds iff `S` succeeds at that value. On success, it records the current key:value pair into bucket `@foo`.
 
-The value of @foo is associated with the clause, as if it were @foo=(K:V), i.e. the same @foo binding is used for all the k-branches. If S itself branches, the same k:S is not added to @foo twice.
+**Aggregation target:**
+- Default: nearest enclosing OBJ or ARR in the AST (lexically obvious)
+- With label: `->@foo/^L` targets the scope labeled `§L`
+- See CW 16 for the full label design
 
-If the same @foo collector appears in multiple arms/places within the same enclosing K:V, they **union** into the same bucket (not unification—this is accumulation). (But when not within the same enclosing K:V, they either unify as object slices or are disallowed, TBD.)
+**Bucket keys:**
+- Object context: key is the concrete data key from K:V iteration
+- Array context: key is the array index
+- Buckets are always object slices: `{key: value, ...}`
+
+**Collision handling:**
+- If the same key is flowed twice to the same bucket, the pattern **fails**
+- Failure scope: the containing object/array pattern (backtracking can try alternatives)
+- This prevents silent data loss from overwrites
+
+**Branch isolation:**
+- Buckets are cloned on branch (like bindings)
+- Failed branches do not contribute to buckets
+- Only successful branches accumulate into the final bucket
+
+If the same @foo collector appears in multiple arms/places within the same enclosing scope, they accumulate into the same bucket (subject to collision rules).
 
 ### Composition with `else`
 
@@ -1475,6 +1534,133 @@ Document the categorization and validation idioms enabled by CW 14's `->` operat
 ### Note on composition
 
 The pattern `K:V else V2 else !` is not an additional special case. It is the normal interpretation of `K:(V else V2) else !`, i.e., `K:W else !` where W = `(V else V2)`. The strong semantics apply to W as a whole.
+
+## CW 15. Seq nodes inside array alternation branches
+
+**Bug:** When a parenthesized sequence like `({kind:"A"} {kind:"B"})` appears as a branch in an array alternation, the parser correctly creates a `Seq` node, but the engine's `matchItem` function does not know how to handle `Seq` nodes (it throws "Unknown item type: Seq").
+
+**Example pattern that fails:**
+```
+[ ({kind:"A"} {kind:"B"}) | ({kind:"C"}) ]
+```
+
+**Current AST:**
+```json
+{
+  "type": "Alt",
+  "alts": [
+    {"type": "Seq", "items": [/* {kind:"A"}, {kind:"B"} */]},
+    {"type": "Obj", /* {kind:"C"} */}
+  ]
+}
+```
+
+**Expected behavior:** The engine should recognize that when matching an `Alt` in array context, each branch could be a `Seq` and should be matched as a sub-sequence, not as a single item.
+
+**Workaround:** Use patterns that don't require sequences within alternation branches. For bucket rollback testing, use value-level alternation in object context instead.
+
+**Test case (preserved in test/cw4-cw14-conformance.test.js):**
+```js
+// Currently fails with "Unknown item type: Seq"
+const pat = `{ box: [ ({kind:"A"}->@picked {kind:"B"}) | ({kind:"B"}->@picked) ] }`;
+```
+
+## CW 16. Labels and Aggregation Scope
+
+### Problem
+
+The original `->` design attached buckets to the "nearest enclosing K:V." This is ambiguous for:
+- **Nested objects**: `{ $outer: { $inner: ($v->@b) } }` — which scope owns @b?
+- **Arrays inside objects**: `{ $k: [X->@b] }` — array elements share the same outer key, causing collisions
+
+### Solution: Labeled Scopes
+
+Labels allow explicit control over aggregation scope.
+
+**Syntax:**
+- `§label` — declare a label (attaches to OBJ or ARR node)
+- `^label` — reference a label (in flow operator)
+- `->@bucket/^L` — flow to @bucket, keyed by iteration at scope §L
+
+**Example:**
+```
+§L { $key: { name: ($n -> @names/^L) } }
+// data: {a: {name: "alice"}, b: {name: "bob"}}
+// result: @names = {a: "alice", b: "bob"}
+```
+
+Without the label, @names would be keyed by `name` (inner scope), giving `{name: "alice"}` then `{name: "bob"}` — overwriting.
+
+### Semantics
+
+**Target resolution:**
+- `->@bucket/^L` — aggregation target is the OBJ or ARR node labeled §L
+- `->@bucket` (no label) — aggregation target is nearest ancestor OBJ or ARR
+- The target must be an ancestor of the flow operator (compile-time check)
+
+**Bucket keys:**
+- **Object target**: key is the concrete data key from K:V iteration
+- **Array target**: key is the array index
+
+**Buckets are always object slices:**
+- Object: `{k1: v1, k2: v2, ...}`
+- Array: `{0: v0, 1: v1, 2: v2, ...}` (indices as keys)
+
+This is consistent — no special cases for "array buckets vs object buckets."
+
+**Collision handling:**
+- If the same key is flowed twice, the pattern fails
+- Failure scope: the containing object/array pattern (not the whole match)
+- Backtracking can try alternatives
+- Future work: configurable collision policies (overwrite, merge, etc.)
+
+### Label rules
+
+- Labels attach to AST nodes (annotations), not separate node types
+- Labels are global and must be unique within a pattern
+- For now, labels may only appear on OBJ or ARR nodes
+- Future work: labels anywhere in AST, local/scoped labels
+
+### Flow in arrays
+
+Flow is now allowed inside arrays:
+```
+§L { $k: [ (X->@items/^L)* ] }
+// data: {a: [1,2,3], b: [4,5]}
+// result: @items = {a: {0:1, 1:2, 2:3}, b: {0:4, 1:5}}
+```
+
+Without a label, Flow uses the nearest scope. If that's an array, indices become keys.
+
+### Categorization in arrays
+
+```
+[ ({type:cat}->@cats else {type:dog}->@dogs else _->@other)* ]
+// data: [{type:cat, name:"fluffy"}, {type:dog, name:"spot"}, {type:fish}]
+// result: @cats = {0: {...fluffy}}, @dogs = {1: {...spot}}, @other = {2: {...fish}}
+```
+
+### Grammar additions
+
+```
+LABEL_DECL := '§' IDENT
+LABEL_REF  := '^' IDENT
+
+// Labels attach to OBJ or ARR:
+OBJ := LABEL_DECL? '{' O_BODY '}'
+ARR := LABEL_DECL? '[' A_BODY ']'
+
+// Flow operator with optional label reference:
+FLOW := ITEM_TERM '->' S_GROUP ('/' LABEL_REF)?
+```
+
+### Implementation notes
+
+- Parser: `§ident` attaches `label` property to AST node
+- Parser: `^ident` in flow stores `labelRef` in Flow node
+- Engine: track `currentKey` for each labeled scope during descent
+- Engine: Flow looks up label → gets currentKey → uses as bucket key
+- Engine: collision detection in `addToBucket` — fail if key exists
 
 # Future ideas
 

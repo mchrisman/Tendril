@@ -184,7 +184,7 @@ export function tokenize(src) {
     if (c3 === '...') { push('...', '...', 3); continue; }  // array spread (three dots)
     if (c === '…')    { push('...', '...', 1); continue; }  // Unicode ellipsis → array spread
     if (c2 === '**')  { push('**', '**', 2); continue; }    // path skip (glob-style)
-    if (c2 === ':>')  { push(':>', ':>', 2); continue; }   // implication operator (K implies V)
+    if (c2 === '->')  { push('->', '->', 2); continue; }   // flow operator (collect into bucket)
     if (c2 === '??')  { push('??', '??', 2); continue; }   // lazy optional
     if (c2 === '?+')  { push('?+', '?+', 2); continue; }   // possessive optional
     if (c2 === '++')  { push('++', '++', 2); continue; }   // possessive plus

@@ -36,11 +36,13 @@ const Lit = (v) => ({type: 'Lit', value: v});
 const StringPattern = (kind, desc, matchFn) => ({type: 'StringPattern', kind, desc, matchFn});
 const Bool = (v) => ({type: 'Bool', value: v});
 const Null = () => ({type: 'Null'});
+const Fail = () => ({type: 'Fail'}); // Always fails - used for 'else !' strong semantics
 const RootKey = () => ({type: 'RootKey'}); // Special marker for leading ** in paths
 
 // Bindings
 const SBind = (name, pat, guard = null) => ({type: 'SBind', name, pat, guard});  // $x=(pat) or $x=(pat where expr)
 const GroupBind = (name, pat) => ({type: 'GroupBind', name, pat});  // @x=(pat)
+const Flow = (pat, bucket) => ({type: 'Flow', pat, bucket});  // pat -> @bucket (collect k:v into bucket)
 
 // Containers
 const Arr = (items) => ({type: 'Arr', items});
@@ -59,14 +61,14 @@ const Quant = (sub, op, min = null, max = null) => ({
 });
 
 // Object terms
-const OTerm = (key, breadcrumbs, op, val, quant, optional = false) => ({
+const OTerm = (key, breadcrumbs, val, quant, optional = false, strong = false) => ({
   type: 'OTerm',
   key,           // ITEM
   breadcrumbs,   // Breadcrumb[]
-  op,            // ':' or ':>' (implication)
   val,           // ITEM
   quant,         // null or {min, max}
-  optional       // true if '?' suffix (K:V? or K:>V?)
+  optional,      // true if '?' suffix (K:V?)
+  strong         // true if 'else !' suffix - triggers strong semantics (no bad entries)
 });
 
 const Spread = (quant) => ({type: 'Spread', quant});  // ... with optional #{...}
@@ -166,39 +168,82 @@ function parseItem(p) {
 
   if (p.peek('|')) {
     // Parse alternation chain: A | B | C → Alt([A,B,C], false)
+    // Use backtracking so that if parseItemTerm fails after '|', we stop cleanly
     const alts = [left];
-    while (p.maybe('|')) {
-      alts.push(parseItemTerm(p));
+    while (true) {
+      const next = p.backtrack(() => {
+        p.eat('|');
+        return parseItemTerm(p);
+      });
+      if (next === null) break;
+      alts.push(next);
     }
-    if (p.peek('else')) {
-      p.fail("cannot mix '|' and 'else' without parentheses");
+    if (alts.length > 1) {
+      if (p.peek('else')) {
+        p.fail("cannot mix '|' and 'else' without parentheses");
+      }
+      return Alt(alts, false);
     }
-    return Alt(alts, false);
   }
 
   if (p.peek('else')) {
     // Parse else chain: A else B else C → Alt([A,B,C], true)
+    // Use backtracking so that 'else !' doesn't get consumed (! is not a valid ITEM_TERM)
     const alts = [left];
-    while (p.maybe('else')) {
-      alts.push(parseItemTerm(p));
+    while (true) {
+      const next = p.backtrack(() => {
+        p.eat('else');
+        return parseItemTerm(p);
+      });
+      if (next === null) break;
+      // Check for mixing OUTSIDE backtracking so error propagates
       if (p.peek('|')) {
         p.fail("cannot mix '|' and 'else' without parentheses");
       }
+      alts.push(next);
     }
-    return Alt(alts, true);
+    if (alts.length > 1) {
+      return Alt(alts, true);
+    }
   }
 
   return left;
 }
 
 function parseItemTerm(p) {
-  // ITEM := '(' ITEM ')'
-  //       | S_ITEM
-  //       | S_ITEM '=' '(' ITEM ')'
-  //       | '_'
-  //       | LITERAL
-  //       | OBJ
-  //       | ARR
+  // ITEM_TERM := ITEM_TERM_CORE ('->' S_GROUP)?
+  //
+  // The '->' suffix flows matching k:v pairs into a bucket during object iteration.
+  // Parses the core term, then optionally wraps it in a Flow node.
+
+  const core = parseItemTermCore(p);
+
+  // Check for '->' suffix (flow into bucket)
+  const flowResult = p.backtrack(() => {
+    p.eat('->');
+    p.eat('@');
+    const bucket = eatVarName(p);
+    return bucket;
+  });
+  if (flowResult !== null) {
+    return Flow(core, flowResult);
+  }
+
+  return core;
+}
+
+function parseItemTermCore(p) {
+  // ITEM_TERM_CORE := '(' ITEM ')'
+  //                 | '(' ITEM 'as' S_ITEM ('where' GUARD_EXPR)? ')'
+  //                 | '(' ITEM 'as' S_GROUP ')'
+  //                 | LOOK_AHEAD
+  //                 | S_ITEM
+  //                 | S_GROUP
+  //                 | TYPED_WILD
+  //                 | '_'
+  //                 | LITERAL
+  //                 | OBJ
+  //                 | ARR
 
   // Lookahead: (? or (!
   if (p.peek('(?') || p.peek('(!')) {
@@ -714,15 +759,34 @@ function parseOGroup(p) {
   });
   if (groupResult) return groupResult;
 
-  // Otherwise parse O_TERM
-  // O_TERM will parse KEY (including $x=(ITEM) patterns) normally via parseItem
-  // Leading ** is allowed in OTerm for paths like {**.password:$x}
-  return parseOTerm(p);
+  // Try STRONG_O_TERM first: O_TERM followed by 'else !'
+  // If that fails, fall back to plain O_TERM
+  // Then parse O_KV_OPT (?) at the end for both paths
+  const strongTerm = p.backtrack(() => {
+    const term = parseOTerm(p);
+    p.eat('else');
+    p.eat('!');
+    return {term, strong: true};
+  });
+
+  let baseTerm, strong;
+  if (strongTerm) {
+    baseTerm = strongTerm.term;
+    strong = true;
+  } else {
+    baseTerm = parseOTerm(p);
+    strong = false;
+  }
+
+  // O_KV_OPT? - the '?' suffix for optional existence
+  const optional = !!p.maybe('?');
+
+  return OTerm(baseTerm.key, baseTerm.breadcrumbs, baseTerm.val, baseTerm.quant, optional, strong);
 }
 
 function parseOTerm(p) {
-  // O_TERM := KEY BREADCRUMB* (':' | ':>') VALUE O_KV_QUANT? '?'?
-  //         | '**' BREADCRUMB* (':' | ':>') VALUE O_KV_QUANT? '?'?
+  // O_TERM := KEY BREADCRUMB* ':' VALUE O_KV_QUANT?
+  // Note: 'else !' suffix and '?' suffix are handled by parseOGroup
 
   // Check for leading ** (e.g., {**.password:$x})
   let key;
@@ -734,7 +798,7 @@ function parseOTerm(p) {
     key = RootKey();
     // Don't consume the '**' yet - it will be parsed as first breadcrumb
   } else {
-    // KEY BREADCRUMB* op VALUE
+    // KEY BREADCRUMB* : VALUE
     key = parseItem(p);
   }
 
@@ -745,14 +809,9 @@ function parseOTerm(p) {
     else break;
   }
 
-  // ':' or ':>' operator
-  let op = null;
-  if (p.maybe(':>')) {
-    op = ':>';
-  } else if (p.maybe(':')) {
-    op = ':';
-  } else {
-    p.fail('expected : or :> in object term');
+  // ':' operator
+  if (!p.maybe(':')) {
+    p.fail('expected : in object term');
   }
 
   // VALUE
@@ -761,23 +820,21 @@ function parseOTerm(p) {
   // O_KV_QUANT? (e.g., #{2,3})
   const quant = parseOQuant(p);
 
-  // '?' suffix for optional existence (K:V? or K:>V?)
-  const optional = !!p.maybe('?');
-
-  return OTerm(key, breadcrumbs, op, val, quant, optional);
+  // Note: '?' suffix (O_KV_OPT) is parsed at O_GROUP level, not here
+  return OTerm(key, breadcrumbs, val, quant, false, false);
 }
 
 function parseBreadcrumb(p) {
   // BREADCRUMB := '**' KEY          // skip levels (glob-style)
-  //             | '**' ':' or ':>'  // skip to any key (use _ as key)
-  //             | '.' KEY            // single level
-  //             | '[' KEY ']'        // array index
+  //             | '**' ':'          // skip to any key (use _ as key)
+  //             | '.' KEY           // single level
+  //             | '[' KEY ']'       // array index
 
   // Skip levels: ** or **.KEY (glob-style)
   if (p.peek('**')) {
     p.eat('**');
-    // Special case: '**' immediately followed by ':' or ':>' means "any key at any depth"
-    if (p.peek(':') || p.peek(':>')) {
+    // Special case: '**' immediately followed by ':' means "any key at any depth"
+    if (p.peek(':')) {
       return Breadcrumb('skip', Any(), null);
     }
     // Consume optional separator dot (supports both **.foo and **foo syntax)
@@ -793,7 +850,7 @@ function parseBreadcrumb(p) {
     // Check if this is actually .** (skip via dot-star-star)
     if (p.peek('**')) {
       p.eat('**');
-      if (p.peek(':') || p.peek(':>')) {
+      if (p.peek(':')) {
         return Breadcrumb('skip', Any(), null);
       }
       p.maybe('.');
@@ -869,7 +926,7 @@ Parser.prototype.peekAt = function(offset, kind) {
 
 export const AST = {
   // Atoms
-  Any, Lit, StringPattern, Bool, Null, RootKey,
+  Any, Lit, StringPattern, Bool, Null, Fail, RootKey,
   // Bindings
   SBind, GroupBind,
   // Containers

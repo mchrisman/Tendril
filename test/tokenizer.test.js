@@ -105,11 +105,11 @@ test('comment should be ignored', () => {
 });
 
 test('multi-character operators', () => {
-  const tokens = tokenize('... ** :>  (? (!');
+  const tokens = tokenize('... ** ->  (? (!');
   assert.equal(tokens.length, 5);
   assert.equal(tokens[0].k, '...');
   assert.equal(tokens[1].k, '**');
-  assert.equal(tokens[2].k, ':>');
+  assert.equal(tokens[2].k, '->');  // flow operator
   assert.equal(tokens[3].k, '(?');
   assert.equal(tokens[4].k, '(!');
 });

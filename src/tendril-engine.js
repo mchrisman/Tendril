@@ -26,7 +26,7 @@ class StopSearch extends Error {
 //  - group (object): {kind: 'group', path: [], keys: ['a', ...], valueRefs: {a: obj1, ...}}
 
 function newSolution() {
-  return {env: new Map(), sites: new Map(), guards: []};
+  return {env: new Map(), sites: new Map(), guards: [], bucketStack: []};
 }
 
 function cloneSolution(sol) {
@@ -34,11 +34,72 @@ function cloneSolution(sol) {
   for (const [k, v] of sol.sites) {
     sites.set(k, [...v]); // shallow copy of site array
   }
+  // Deep clone bucketStack: array of Maps, each Map has bucket entries
+  const bucketStack = sol.bucketStack.map(level => {
+    const clonedLevel = new Map();
+    for (const [name, entries] of level) {
+      clonedLevel.set(name, {...entries}); // shallow clone of entries object
+    }
+    return clonedLevel;
+  });
   return {
     env: cloneEnv(sol.env),
     sites,
-    guards: sol.guards ? [...sol.guards] : []
+    guards: sol.guards ? [...sol.guards] : [],
+    bucketStack
   };
+}
+
+// ---------- Bucket helpers for Flow operator ----------
+
+// Push a new bucket level onto a solution's stack
+function pushBucketLevel(sol) {
+  sol.bucketStack.push(new Map());
+}
+
+// Add an entry to the current (top) bucket level
+function addToBucket(sol, bucketName, key, value) {
+  if (sol.bucketStack.length === 0) {
+    throw new Error(`Flow ->@${bucketName} used outside of K:V context`);
+  }
+  const top = sol.bucketStack[sol.bucketStack.length - 1];
+  if (!top.has(bucketName)) {
+    top.set(bucketName, {});
+  }
+  top.get(bucketName)[key] = value;
+}
+
+// Collect and merge bucket entries from top level of all solutions,
+// then pop that level and bind merged buckets to all solutions
+function finalizeBucketLevel(solutions) {
+  if (solutions.length === 0) return;
+
+  // Collect and merge from top level of all solutions
+  const merged = new Map(); // bucketName -> {key: value, ...}
+  for (const state of solutions) {
+    const sol = state.sol || state;
+    if (sol.bucketStack.length === 0) continue;
+    const top = sol.bucketStack[sol.bucketStack.length - 1];
+    for (const [name, entries] of top) {
+      if (!merged.has(name)) {
+        merged.set(name, {});
+      }
+      Object.assign(merged.get(name), entries);
+    }
+  }
+
+  // Pop and bind to all solutions
+  for (const state of solutions) {
+    const sol = state.sol || state;
+    if (sol.bucketStack.length > 0) {
+      sol.bucketStack.pop();
+    }
+    // Bind each merged bucket as a group variable
+    for (const [name, entries] of merged) {
+      const groupValue = Group.object(entries);
+      bindGroup(sol.env, name, groupValue);
+    }
+  }
 }
 
 // Add a guard to the solution's pending guards list
@@ -431,6 +492,34 @@ function matchItem(item, node, path, sol, emit, ctx) {
         if (node === null) emit(cloneSolution(sol));
         return;
 
+      case 'Fail':
+        // Fail pattern: always fails, never emits solutions
+        // Used for 'else !' strong semantics
+        return;
+
+      case 'Flow': {
+        // Flow operator: P -> @bucket
+        // Match the inner pattern; if successful, record {flowKey: matchedValue} in bucket
+        // ctx.flowKey must be set by the enclosing K:V iteration
+
+        // Disallow Flow inside arrays that are inside K:V (key collisions)
+        if (ctx.inArrayUnderKV) {
+          throw new Error(
+            `Flow operator ->@${item.bucket} cannot be used inside an array ` +
+            `that is a value in an object pattern. The array iteration would ` +
+            `produce multiple entries with the same key, causing collisions.`
+          );
+        }
+
+        matchItem(item.pat, node, path, sol, (s2) => {
+          if (ctx.flowKey !== undefined) {
+            addToBucket(s2, item.bucket, ctx.flowKey, node);
+          }
+          emit(s2);
+        }, ctx);
+        return;
+      }
+
       case 'Alt': {
         if (item.prioritized) {
           // Prioritized alternation (else semantics): try each alternative in order,
@@ -520,7 +609,12 @@ function matchItem(item, node, path, sol, emit, ctx) {
 
       case 'Arr': {
         if (!Array.isArray(node)) return;
-        matchArray(item.items, node, path, sol, emit, ctx);
+        // Track if we're entering an array while inside K:V iteration
+        // This is used to disallow Flow inside such arrays (key collision issue)
+        const arrayCtx = ctx.flowKey !== undefined && !ctx.inArrayUnderKV
+          ? {...ctx, inArrayUnderKV: true}
+          : ctx;
+        matchArray(item.items, node, path, sol, emit, arrayCtx);
         return;
       }
 
@@ -997,18 +1091,23 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       throw new Error(`Expected OTerm, GroupBind, OLook, or OGroup, got ${term.type}`);
     }
 
-    // New slice-based semantics:
-    // - K:V   = slice exists (#{1,}), bad entries allowed
-    // - K:>V  = slice exists (#{1,}), no bad entries (implication)
-    // - K:V?  = slice may be empty (#{0,}), bad entries allowed
-    // - K:>V? = slice may be empty (#{0,}), no bad entries (implication)
+    // Push bucket level for this K:V term (will be popped after processing)
+    for (const state of solutions) {
+      pushBucketLevel(state.sol);
+    }
+
+    // Slice-based semantics:
+    // - K:V         = slice exists (#{1,}), bad entries allowed
+    // - K:V else !  = slice exists (#{1,}), no bad entries (strong semantics)
+    // - K:V?        = slice may be empty (#{0,}), bad entries allowed
+    // - K:V else !? = slice may be empty (#{0,}), no bad entries
     //
     // Where:
     // - slice = keys where k~K AND v~V
     // - bad = keys where k~K AND NOT(v~V)
     // - covered = all keys where k~K (for remainder calculation)
 
-    const isImplication = term.op === ':>';
+    const isStrong = term.strong === true;
     const isOptional = term.optional === true;
 
     // For each solution, process the term
@@ -1087,10 +1186,10 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       // Apply constraints based on operator, quantifier, and optional flag
       //
       // Semantics (from README):
-      //   K:V   => slice #{1,} bad #{0,}  (at least one matching k,v)
-      //   K:>V  => slice #{1,} bad #{0}   (at least one, no bad entries)
-      //   K:V?  => slice #{0,} bad #{0,}  (optional, no assertion)
-      //   K:>V? => slice #{0,} bad #{0}   (optional, no bad entries)
+      //   K:V         => slice #{1,} bad #{0,}  (at least one matching k,v)
+      //   K:V else !  => slice #{1,} bad #{0}   (at least one, no bad entries)
+      //   K:V?        => slice #{0,} bad #{0,}  (optional, no assertion)
+      //   K:V else !? => slice #{0,} bad #{0}   (optional, no bad entries)
       //
       // Explicit quantifier like #{2,4} overrides the default slice bounds.
 
@@ -1110,9 +1209,9 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
         continue;
       }
 
-      // 2. Implication check (if :>) - bad #{0}
-      if (isImplication && badKeys.length > 0) {
-        if (DEBUG) console.log(`[matchObject] failed: bad entries exist with :> operator`);
+      // 2. Strong semantics check (else !) - bad #{0}
+      if (isStrong && badKeys.length > 0) {
+        if (DEBUG) console.log(`[matchObject] failed: bad entries exist with strong semantics (else !)`);
         continue; // Skip this solution - bad entries forbidden
       }
 
@@ -1130,6 +1229,9 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
           }
 
           // Navigate breadcrumbs and match value to get bindings
+          // Set flowKey for Flow operator (bucket collection)
+          const savedFlowKey = ctx.flowKey;
+          ctx.flowKey = k;
           navigateBreadcrumbs(
             term.breadcrumbs,
             obj[k],
@@ -1142,6 +1244,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
             },
             ctx
           );
+          ctx.flowKey = savedFlowKey;
         }
       } else {
         // No slice entries, but constraints passed (must be optional)
@@ -1151,6 +1254,12 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     }
 
     solutions = next;
+
+    // Finalize bucket level: collect from all solutions, merge, pop, bind
+    if (solutions.length > 0) {
+      finalizeBucketLevel(solutions);
+    }
+
     if (!solutions.length) break;
   }
 
