@@ -65,25 +65,25 @@ test('_boolean does not match non-booleans', () => {
 // ==================== Typed wildcards with bindings ====================
 
 test('typed wildcard with binding captures value', () => {
-  const sol = Tendril('{n:$x=(_number)}').match({n: 42}).solutions().first();
+  const sol = Tendril('{n:(_number as $x)}').match({n: 42}).solutions().first();
   assert.ok(sol);
   assert.equal(sol.x, 42);
 });
 
 test('typed wildcard with binding fails on type mismatch', () => {
-  const sol = Tendril('{n:$x=(_number)}').match({n: 'hello'}).solutions().first();
+  const sol = Tendril('{n:(_number as $x)}').match({n: 'hello'}).solutions().first();
   assert.equal(sol, null);
 });
 
 test('typed wildcard in array with spread', () => {
-  const sols = Tendril('[... $x=(_number) ...]').match([1, 'a', 2, 'b', 3]).solutions().toArray();
+  const sols = Tendril('[... (_number as $x) ...]').match([1, 'a', 2, 'b', 3]).solutions().toArray();
   assert.equal(sols.length, 3);
   assert.deepEqual(sols.map(s => s.x), [1, 2, 3]);
 });
 
 test('typed wildcard filters in find', () => {
   const data = {a: 1, b: 'hello', c: 2, d: true};
-  const matches = Tendril('{_:$x=(_number)}').match(data).solutions().toArray();
+  const matches = Tendril('{_:(_number as $x)}').match(data).solutions().toArray();
   assert.equal(matches.length, 2);
   const values = matches.map(m => m.x).sort();
   assert.deepEqual(values, [1, 2]);

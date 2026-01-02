@@ -205,42 +205,53 @@ function parseItemTerm(p) {
     return parseLookahead(p);
   }
 
-  // Parenthesized grouping
+  // Parenthesized grouping, possibly with 'as $x' or 'as @x' binding
   if (p.peek('(')) {
     p.eat('(');
     const inner = parseItem(p);
+
+    // Check for 'as $x' or 'as @x' binding suffix
+    if (p.maybe('as')) {
+      if (p.peek('$')) {
+        p.eat('$');
+        const name = eatVarName(p);
+        let guard = null;
+        if (p.maybe('where')) {
+          guard = parseGuardExpr(p);
+        }
+        p.eat(')');
+        return SBind(name, inner, guard);
+      }
+      if (p.peek('@')) {
+        p.eat('@');
+        const name = eatVarName(p);
+        // Guards on group bindings are not supported
+        if (p.peek('where')) {
+          p.fail('guard expressions are not supported on group bindings (@var)');
+        }
+        p.eat(')');
+        return GroupBind(name, inner);
+      }
+      p.fail('expected $var or @var after "as"');
+    }
+
     p.eat(')');
     return inner;
   }
 
-  // Scalar variable: $x or $x=(pattern) or $x=(pattern where guard)
+  // Scalar variable: bare $x (shorthand for (_ as $x))
+  // For binding with pattern, use (PATTERN as $x) syntax
   if (p.peek('$')) {
     p.eat('$');
     const name = eatVarName(p);
-    if (p.maybe('=')) {
-      p.eat('(');
-      const pat = parseItem(p);
-      let guard = null;
-      if (p.maybe('where')) {
-        // Parse guard expression: collect source until ')' and parse as expression
-        guard = parseGuardExpr(p);
-      }
-      p.eat(')');
-      return SBind(name, pat, guard);
-    }
     return SBind(name, Any());
   }
 
-  // Group variable: @x or @x=(pattern)
+  // Group variable: bare @x (shorthand for (_* as @x))
+  // For binding with pattern, use (PATTERN as @x) syntax
   if (p.peek('@')) {
     p.eat('@');
     const name = eatVarName(p);
-    if (p.maybe('=')) {
-      p.eat('(');
-      const pat = parseAGroup(p);
-      p.eat(')');
-      return GroupBind(name, pat);
-    }
     return GroupBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
@@ -433,44 +444,54 @@ function parseAGroupBase(p) {
     return parseLookahead(p);
   }
 
-  // Parenthesized A_BODY (grouping)
+  // Parenthesized A_BODY (grouping), possibly with 'as $x' or 'as @x' binding
   if (p.peek('(')) {
     p.eat('(');
-    const items = parseABody(p, ')');
+    const items = parseABody(p, ')', 'as');
+    const inner = items.length === 1 ? items[0] : {type: 'Seq', items};
+
+    // Check for 'as $x' or 'as @x' binding suffix
+    if (p.maybe('as')) {
+      if (p.peek('$')) {
+        p.eat('$');
+        const name = eatVarName(p);
+        let guard = null;
+        if (p.maybe('where')) {
+          guard = parseGuardExpr(p);
+        }
+        p.eat(')');
+        return SBind(name, inner, guard);
+      }
+      if (p.peek('@')) {
+        p.eat('@');
+        const name = eatVarName(p);
+        // Guards on group bindings are not supported
+        if (p.peek('where')) {
+          p.fail('guard expressions are not supported on group bindings (@var)');
+        }
+        p.eat(')');
+        return GroupBind(name, inner);
+      }
+      p.fail('expected $var or @var after "as"');
+    }
+
     p.eat(')');
-    if (items.length === 1) return items[0];
-    return {type: 'Seq', items};
+    return inner;
   }
 
-  // Group variable: @x or @x=(pattern)
+  // Group variable: bare @x (shorthand for (_* as @x))
+  // For binding with pattern, use (PATTERN as @x) syntax
   if (p.peek('@')) {
     p.eat('@');
     const name = eatVarName(p);
-    if (p.maybe('=')) {
-      p.eat('(');
-      const items = parseABody(p, ')');
-      p.eat(')');
-      const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
-      return GroupBind(name, pat);
-    }
     return GroupBind(name, Quant(Any(), '*', 0, Infinity));
   }
 
-  // Scalar variable: $x or $x=(pattern) or $x=(pattern where guard)
+  // Scalar variable: bare $x (shorthand for (_ as $x))
+  // For binding with pattern, use (PATTERN as $x) syntax
   if (p.peek('$')) {
     p.eat('$');
     const name = eatVarName(p);
-    if (p.maybe('=')) {
-      p.eat('(');
-      const items = parseABody(p, ')', 'where');
-      let guard = null;
-      if (p.maybe('where')) {
-        guard = parseGuardExpr(p);
-      }
-      p.eat(')');
-      const pat = items.length === 1 ? items[0] : {type: 'Seq', items};
-      return SBind(name, pat, guard);
-    }
     return SBind(name, Any());
   }
 
@@ -568,13 +589,9 @@ function parseORemnant(p) {
     return null;
   };
 
-  // Try @x=(%) or @x=(%?) with optional quantifier
-  // Syntax: @x=(%) - variable, equals, then parens around %
+  // Try (% as @x) or (%? as @x) with optional quantifier
+  // New syntax: (% as @x) - parens around %, 'as' keyword, then variable
   const bindRemnant = p.backtrack(() => {
-    if (!p.peek('@')) return null;
-    p.eat('@');
-    const name = eatVarName(p);
-    if (!p.maybe('=')) return null;
     if (!p.maybe('(')) return null;
     if (!isRemainderMarker()) return null;
     eatRemainderMarker();
@@ -583,10 +600,15 @@ function parseORemnant(p) {
     if (p.maybe('?')) {
       quant = {min: 0, max: null}; // %? means 0..∞ (can be empty)
     }
-    // Also check for quantifier before closing paren
+    // Also check for quantifier before 'as'
     if (!quant) {
       quant = parseRemainderQuant(p);
     }
+    // Now expect 'as @name'
+    if (!p.maybe('as')) return null;
+    if (!p.peek('@')) return null;
+    p.eat('@');
+    const name = eatVarName(p);
     p.eat(')');
     p.maybe(',');
     return GroupBind(name, Spread(quant));
@@ -670,33 +692,22 @@ function parseOGroup(p) {
     return parseObjectLookahead(p);
   }
 
-  // Group variable binding: @x=(...)
-  if (p.peek('@')) {
-    const bindingResult = p.backtrack(() => {
-      p.eat('@');
-      const name = eatVarName(p);
-      p.eat('=');  // throws if not '=', triggering backtrack
-      p.eat('(');
-      const groups = [];
-      while (!p.peek(')')) {
-        groups.push(parseOGroup(p));
-        p.maybe(',');
-      }
-      p.eat(')');
-      return GroupBind(name, {type: 'OGroup', groups});
-    });
-    if (bindingResult) return bindingResult;
-    // If backtrack failed, @ might be part of O_TERM key - fall through
-  }
-
-  // Try parenthesized O_BODY (grouping)
+  // Try parenthesized O_BODY (grouping), possibly with 'as @x' binding
   // Use backtracking because '(' could also be part of O_TERM's key pattern
   const groupResult = p.backtrack(() => {
     p.eat('(');
     const groups = [];
-    while (!p.peek(')')) {
+    while (!p.peek(')') && !p.peek('as')) {
       groups.push(parseOGroup(p));
       p.maybe(',');
+    }
+    // Check for 'as @x' binding suffix
+    if (p.maybe('as')) {
+      if (!p.peek('@')) p.fail('expected @var after "as" in object group');
+      p.eat('@');
+      const name = eatVarName(p);
+      p.eat(')');
+      return GroupBind(name, {type: 'OGroup', groups});
     }
     p.eat(')');
     return {type: 'OGroup', groups};

@@ -64,10 +64,10 @@ test('match When+Else with surrounding nodes using group bindings', () => {
   // Use %? to allow empty residual (bare % requires nonempty)
   const pattern = Tendril(`[
     ...
-    @whenelse=(
-      {tag: /^[Ww]hen$/, @attrs=(attrs:_), children: $then, @other=(%?)}
+    (
+      {tag: /^[Ww]hen$/, (attrs:_ as @attrs), children: $then, (%? as @other)}
       {tag: /^[Ee]lse$/, children: $else, %?}?
-    )
+    as @whenelse)
     ...
   ]`);
 
@@ -91,10 +91,10 @@ test('replaceAll transforms When+Else to If node', () => {
   // Use %? to allow empty residual (bare % requires nonempty)
   const pattern = Tendril(`[
     ...
-    @whenelse=(
-      {tag: /^[Ww]hen$/, @attrs=(attrs:_), children: $then, @other=(%?)}
+    (
+      {tag: /^[Ww]hen$/, (attrs:_ as @attrs), children: $then, (%? as @other)}
       {tag: /^[Ee]lse$/, children: $else, %?}?
-    )
+    as @whenelse)
     ...
   ]`);
 

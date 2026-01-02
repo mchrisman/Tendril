@@ -110,7 +110,7 @@ test('case-insensitive in object key', () => {
 });
 
 test('case-insensitive with binding', () => {
-  const sol = Tendril('[$x=(foo/i)]').match(['FOO']).solutions().first();
+  const sol = Tendril('[(foo/i as $x)]').match(['FOO']).solutions().first();
   assert(sol);
   assert.equal(sol.x, 'FOO'); // Binding captures actual value, not pattern
 });

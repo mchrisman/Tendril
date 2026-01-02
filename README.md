@@ -93,12 +93,12 @@ regardless of how distant the two nodes are in the tree.
 
 ```js
 Tendril(`{
-  ** $L=( { tag:'label', props:{for:$id}, children:[$text]   } )
-  **      { tag:'input', props:{id:$id @p=(placeholder:_?) } }
+  ** ({ tag:'label', props:{for:$id}, children:[$text]   } as $L)
+  **  { tag:'input', props:{id:$id (placeholder:_? as @p) } }
 }`)
 .match(vdom)
 .editAll({
-  L: undefined,                    // delete the <label>  
+  L: undefined,                    // delete the <label>
   p: $ => ({placeholder: $.text})  // move its text into the <input>
 });
 ```
@@ -296,11 +296,11 @@ The **remainder** (spelled `%`, pronounced "remainder") is a special clause repr
 Bind the remainder to capture it:
 
 ```
-{ a:b @rest=(%) }    // matches {"a":"b", "c":"d"}, binds {"c":"d"} to @rest
-                     // Note: requires nonempty remainder
+{ a:b (% as @rest) }    // matches {"a":"b", "c":"d"}, binds {"c":"d"} to @rest
+                        // Note: requires nonempty remainder
 
-{ a:b @rest=(%?) }   // also matches {"a":"b"}, binds {} to @rest
-                     // %? allows empty remainder
+{ a:b (%? as @rest) }   // also matches {"a":"b"}, binds {} to @rest
+                        // %? allows empty remainder
 ```
 
 ### Operators on Field Clauses
@@ -326,13 +326,13 @@ Negation uses lookahead syntax:
 
 Tendril has two kinds of variables. **Scalar variables** (prefix `$`) capture single values.  **Group variables** (prefix `@`) capture contiguous subsequences in arrays (**array slices**), or subsets of properties of objects (**object slices**). 
 
-The syntax for variable binding is `$x=(pattern)` or `@x=(pattern)`. **Parentheses are mandatory**. 
+The syntax for variable binding is `(pattern as $x)` or `(pattern as @x)`. **Parentheses are mandatory**.
 ```
-Tendril("[... $x=(2|4) $y=(_) ...]").match([1, 2, 3, 4, 5])  // two solutions: {x:2,y:3} and {x:4,y:5}
+Tendril("[... (2|4 as $x) (_ as $y) ...]").match([1, 2, 3, 4, 5])  // two solutions: {x:2,y:3} and {x:4,y:5}
 ```
-You cannot use both '@x' and '$x' in the same pattern.  (The JS API treats them as the same variable 'x'. The sigil is a type marker.) 
+You cannot use both '@x' and '$x' in the same pattern.  (The JS API treats them as the same variable 'x'. The sigil is a type marker.)
 
-`$x` (without the pattern) is short for `$x=(_)`, and `@x` is short for `@x=(_*)`.  
+`$x` (without the pattern) is short for `(_ as $x)`, and `@x` is short for `(_* as @x)`.  
 
 ```
 Tendril("[3 4 $x $y]").match([3,4,5,6])  // one match, with bindings {x:5, y:6}
@@ -357,8 +357,8 @@ Tendril("[@x @x]").find([1, [2, 2]]).editAll({x: _ => ['the','replacement']})  /
 
 To capture a set of matching key-value pairs, use a group variable with one or more field clauses. (Scalar variables work normally within K or V positions, but capturing entire field clauses requires a group.)
 ```
-Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}) // matches with binding {x:{Big:1, Alice:3}}
-Tendril("{ @x=(/a/:_, /b/:_) /c/:_ }").match({Big:1, Cute:2, Alice:3}).edit({x:_=>{foo:"bar"}}) // -> {foo:"bar",Cute:2}
+Tendril("{ (/a/:_, /b/:_ as @x) /c/:_ }").match({Big:1, Cute:2, Alice:3}) // matches with binding {x:{Big:1, Alice:3}}
+Tendril("{ (/a/:_, /b/:_ as @x) /c/:_ }").match({Big:1, Cute:2, Alice:3}).edit({x:_=>{foo:"bar"}}) // -> {foo:"bar",Cute:2}
 ```
 
 ### Scalars
@@ -416,11 +416,11 @@ When the same variable appears multiple times, all occurrences must match the sa
 [ $x ... $x ]      // does NOT match ["a", "other", "b"]
                    // $x can't be both "a" and "b"
 
-[ $x $x=(/[ab]/) $y ]  // matches ['a', 'a', 'y']
-                       // $x binds to 'a', matches /[ab]/, unifies
+[ $x (/[ab]/ as $x) $y ]  // matches ['a', 'a', 'y']
+                          // $x binds to 'a', matches /[ab]/, unifies
 
-[ $x $x=(/[ab]/) $y ]  // does NOT match ['a', 'b', 'y']
-                       // $x='a' doesn't unify with $x='b'
+[ $x (/[ab]/ as $x) $y ]  // does NOT match ['a', 'b', 'y']
+                          // $x='a' doesn't unify with $x='b'
 ```
 
 Unification works the same way in objects—variables unify across field clauses, and even between keys and values:
@@ -444,7 +444,7 @@ Unification works the same way in objects—variables unify across field clauses
 // With $x already bound: asserts all values equal $x
 ```
 
-The syntax `$x=(PATTERN)` binds variable `$x` if `PATTERN` matches and the matched value is a single item. Bare `$x` is shorthand for `$x=(_)`.
+The syntax `(PATTERN as $x)` binds variable `$x` if `PATTERN` matches and the matched value is a single item. Bare `$x` is shorthand for `(_ as $x)`.
 
 ### Using scalars to force single-item matches
 
@@ -452,12 +452,12 @@ Scalar variables are constrained to match only single items, not groups. This ef
 ```
 [1? 2?]            // matches [], [1], [2], [1,2]
 
-[@x=(1? 2?)]       // matches [], [1], [2], [1,2]
-                   // solutionSet = [ {x:[]}, {x:[1]}, {x:[2]}, {x:[1,2]} ]
-                   
+[(1? 2? as @x)]       // matches [], [1], [2], [1,2]
+                      // solutionSet = [ {x:[]}, {x:[1]}, {x:[2]}, {x:[1,2]} ]
+
 // $x must bind to a scalar, so this can't match [] nor [1,2]
-[$x=(1? 2?)]       // matches only [1] or [2]
-                   // solutionSet = [ {x:1}, {x:2} ]
+[(1? 2? as $x)]       // matches only [1] or [2]
+                      // solutionSet = [ {x:1}, {x:2} ]
 ```
 
 ### Guard Expressions
@@ -465,15 +465,15 @@ Scalar variables are constrained to match only single items, not groups. This ef
 Guard expressions constrain variable bindings with boolean conditions. The syntax extends the binding form with the `where` keyword:
 
 ```javascript
-$var=(PATTERN where EXPRESSION)
+(PATTERN as $var where EXPRESSION)
 ```
 
 The pattern must match, AND the expression must evaluate to true:
 
 ```javascript
-$x=(_number where $x > 100)           // matches numbers greater than 100
-$x=(_string where size($x) >= 3)      // matches strings of length 3+
-$n=(_number where $n % 2 == 0)        // matches even numbers
+(_number as $x where $x > 100)           // matches numbers greater than 100
+(_string as $x where size($x) >= 3)      // matches strings of length 3+
+(_number as $n where $n % 2 == 0)        // matches even numbers
 ```
 
 **Operators:** `< > <= >= == != && || ! + - * / %`
@@ -481,7 +481,7 @@ $n=(_number where $n % 2 == 0)        // matches even numbers
 Standard precedence applies. `&&` and `||` short-circuit. String concatenation uses `+`:
 
 ```javascript
-$x=(_string where $x + "!" == "hello!")  // matches "hello"
+(_string as $x where $x + "!" == "hello!")  // matches "hello"
 ```
 
 **Functions:**
@@ -494,7 +494,7 @@ Guards can reference other variables. Evaluation is **deferred** until all refer
 
 ```javascript
 // Match objects where min < max
-{ min: $a=(_number where $a < $b), max: $b=(_number) }
+{ min: (_number as $a where $a < $b), max: (_number as $b) }
 
 // The guard "$a < $b" waits until both $a and $b are bound
 {min: 1, max: 10}   // matches: 1 < 10
@@ -506,8 +506,8 @@ Guards can reference other variables. Evaluation is **deferred** until all refer
 If an expression errors, the match branch fails silently—no exception is thrown.
 
 ```javascript
-$x=(_string where $x * 2 > 10)  // never matches (can't multiply string)
-$x=(_number where $x / 0 > 0)   // never matches (division by zero)
+(_string as $x where $x * 2 > 10)  // never matches (can't multiply string)
+(_number as $x where $x / 0 > 0)   // never matches (division by zero)
 ```
 
 **Arithmetic strictness:** Unlike JavaScript, the expression language treats division by zero (`x/0`) and modulo by zero (`x%0`) as errors that cause match failure, rather than silently producing `Infinity` or `NaN`.
@@ -620,14 +620,14 @@ Lookaheads test conditions without consuming data:
 
 ```
     // Does not demand that all the colors are the same.
-    "{ $k=(/color/):>$c }" matches {backgroundColor:"green", color:"white"}
-    // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}] 
+    "{ (/color/ as $k):>$c }" matches {backgroundColor:"green", color:"white"}
+    // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}]
 ```
 
 ✅ Use this idiom to enforce universal equality over values:
 
 ```
-    "{ $k=(/color/):$c  $k=(/color/):>$c }"
+    "{ (/color/ as $k):$c  (/color/ as $k):>$c }"
 ```
 
 It works because variables unify across terms.
@@ -636,7 +636,7 @@ It works because variables unify across terms.
 
 In array context, a positive lookahead matches the next subsequence but does not consume it.
 ```
-[ (? $x=(/[ab]/)) $x ... ]  // first element must match /[ab]/, bind to $x
+[ (? (/[ab]/ as $x)) $x ... ]  // first element must match /[ab]/, bind to $x
 ```
 A negative look ahead cannot have bindings.
 ```
@@ -655,7 +655,7 @@ In objects, a positive lookahead is redundant. But you can have negative lookahe
 
 **High to low:**
 
-1. Binding `=`
+1. Binding `as`
 2. Optional `?`, quantifiers `+`, `*`, etc.
 3. Breadcrumb operators `.`, `**`, `[]`
 4. Adjacency/commas (in arrays and objects)
@@ -820,10 +820,10 @@ Tendril("@{ name:$n }").find([{name: "Alice"}, {name: "Bob"}])
 // Macro expansion: <When>/<Else> → If node
 const result = Tendril(`[
   ...
-  @whenelse=(
+  (
     {tag:when/i children:$then}
     {tag:else/i children:$else}?
-  )
+  as @whenelse)
   ...
 ]`).find(vdom).editAll($ => ({
   whenelse: [{
@@ -919,11 +919,11 @@ ITEM :=
 
 ITEM_TERM :=
       '(' ITEM ')'
+    | '(' ITEM 'as' S_ITEM ('where' GUARD_EXPR)? ')'   # binding with pattern and optional guard
+    | '(' ITEM 'as' S_GROUP ')'               # group binding with pattern
     | LOOK_AHEAD
-    | S_ITEM '=' '(' ITEM ('where' GUARD_EXPR)? ')'    # binding with pattern and optional guard
-    | S_ITEM                                       # bare $x ≡ $x=(_)
-    | S_GROUP '=' '(' A_GROUP ')'                  # binding with pattern
-    | S_GROUP                                      # bare @x ≡ @x=(_*)
+    | S_ITEM                                  # bare $x ≡ (_ as $x)
+    | S_GROUP                                 # bare @x ≡ (_* as @x)
     | TYPED_WILD                                   # _string, _number, _boolean
     | '_'
     | LITERAL
@@ -955,10 +955,10 @@ A_GROUP :=
 A_GROUP_BASE :=
       LOOK_AHEAD
     | '(' A_BODY ')'                           # if >1 element => Seq node
-    | S_GROUP '=' '(' A_BODY ')'               # group binding with pattern
-    | S_GROUP                                  # bare @x ≡ @x=(_*)
-    | S_ITEM '=' '(' A_BODY ('where' GUARD_EXPR)? ')'  # scalar binding with pattern and optional guard
-    | S_ITEM                                   # bare $x ≡ $x=(_)
+    | '(' A_BODY 'as' S_GROUP ')'              # group binding with pattern
+    | '(' A_BODY 'as' S_ITEM ('where' GUARD_EXPR)? ')'  # scalar binding with pattern and optional guard
+    | S_GROUP                                  # bare @x ≡ (_* as @x)
+    | S_ITEM                                   # bare $x ≡ (_ as $x)
     | ITEM_TERM                                # including nested ARR/OBJ
 
 A_QUANT :=
@@ -980,7 +980,7 @@ OBJ := '{' O_GROUP* O_REMNANT? '}'
 # Spelled '%', pronounced "remainder".
 
 O_REMNANT :=
-      S_GROUP '=' '(' '%' O_REM_QUANT? ')' ','?
+      '(' '%' O_REM_QUANT? 'as' S_GROUP ')' ','?
     | '%' O_REM_QUANT? ','?
     | '(!' '%' ')' ','?                        # closed-object assertion (equiv to %#{0})
 
@@ -997,7 +997,7 @@ O_REM_QUANT :=
 O_GROUP :=
       O_LOOKAHEAD
     | '(' O_GROUP* ')'                         # OGroup node
-    | S_GROUP '=' '(' O_GROUP* ')'             # group binding in object context
+    | '(' O_GROUP* 'as' S_GROUP ')'            # group binding in object context
     | O_TERM
 
 O_LOOKAHEAD :=
@@ -1070,7 +1070,7 @@ Group bindings (`@x`) succeed when:
 1. The pattern matches (may match zero or more items)
 2. If `@x` was previously bound, the new group equals the old group (structural equality)
 
-Bare variables are shorthand: `$x` ≡ `$x=(_)`, `@x` ≡ `@x=(_*)`.
+Bare variables are shorthand: `$x` ≡ `(_ as $x)`, `@x` ≡ `(_* as @x)`.
 
 ### Field Clauses (Slice-Based Semantics)
 
@@ -1089,14 +1089,14 @@ In the following short forms, `>` signifies "no bad values" (i.e. k~K => v~V), a
 
 Binding keys or values:
 ```
-{ $myKey=(K):$myVal=(V) }
+{ (K as $myKey):(V as $myVal) }
 ```
 
 Binding slices:
 ```
-{ @slice1=(K1:V1)       }   # bind one slice
-{ @slice2=(K2:V2 K3:V3) }   # bind a union of slices
-{ @x=(K1:V1) @x=(K2:V2) }   # asserting two slices are the same
+{ (K1:V1 as @slice1)       }   # bind one slice
+{ (K2:V2 K3:V3 as @slice2) }   # bind a union of slices
+{ (K1:V1 as @x) (K2:V2 as @x) }   # asserting two slices are the same
 ```
 
 `%` (pronounced "remainder") defines the slice of fields that didn't fall into any of the declared slices or bad sets; in other words, the **entries whose keys did not match any of the field clauses, regardless of whether the values matched.**  (The predominant use case is the fall-through of unrecognized fields, not the fall-through of invalid values.)
@@ -1108,7 +1108,7 @@ It may appear only once in the object pattern, only at the end. You can bind it 
 { K1:V1 K2:V2 % }           # Remainder is nonempty
 { K1:V1 K2:V2 %#{0} }       # Remainder is empty (closed object)
 { K1:V1 K2:V2 %#{3,4} }     # Remainder is of size 3-4
-{ K1:V1 K2:V2 @rest=(%) }   # Bind it
+{ K1:V1 K2:V2 (% as @rest) }   # Bind it
 ```
 
 Field clauses are evaluated non-exclusively: a single key-value pair may satisfy multiple clauses.
@@ -1216,15 +1216,15 @@ This is more sophisticated than the If/Else example, but it's genuinely useful a
 
 ```javascript
 Tendril(`{
-  **:@label=({
+  **:({
     tag: label,
     props: {for: $id},
-    children: [$labelText=(/.*/)]
-  })
+    children: [(/.*/ as $labelText)]
+  } as @label)
   **:{
     tag: input,
     props: {id: $id, type: text},
-    @placeholder=(placeholder:_?)
+    (placeholder:_? as @placeholder)
   }
 }`).match(data).editAll({
   label: undefined,  // delete it
@@ -1267,65 +1267,56 @@ Tendril("a:b").find(data).replaceAll("X:X") // Replace only that key, not the wh
 
 ## CW 2B. Better binding syntax.
 
-Current style
+**DONE** - Binding syntax changed from `$foo=(PATTERN)` to `(PATTERN as $foo)`.
 
 ```
-    $foo=(0|1|2|3|4)
-    $foo=(0|1|2|3|4 where $foo>1)
-    $foo=([$x $y] where $x>$y)
-    
-    (_ where _>1)
-    ([$x $y] where $x>$y)
-    
-    [ a b @foo=(c d) e f]
-    { @foo=( K:V K2:V2) }
-```
-
-Proposed style
-```
-    // style 2
-    (0|1|2|3|4 as $foo)
+    (0|1|2|3|4 as $foo)            // Regardless whether $foo was previously bound.
     (0|1|2|3|4 as $foo where $foo>1)
-    ([$x $y] as $foo where $x>$y)
-    
-    (_ where _>1)
-    ([$x $y] where $x>$y)
-    
+    ([$x $y] as $foo where $x>$y)  // regardless whether $x,$y were previously bound
+
+    (_ where _>1)                  // CW 2 point 5
+    ([$x $y] where $x>$y)          // New capability
+
     [ a b (c d as @foo) e f]
     { (K:V K2:V2 as @foo) }
 ```
 
+1. Parentheses are required for the full form `(PATTERN as $var)`. Keeps parsing simple, shorthand handles the common case.
+2. Allow `_` in guards to reference the anonymous match (per CW 2 point 5).
+3. Shorthands `$x` and `@x` are first-class—they're the primary way to write simple bindings.
+4. Mental model: "Every `$x` is really `(_ as $x)`; the full form lets you replace `_` with a real pattern."
+
 ## CW 2A. Object slice quantifiers
 
 Retire O_KV_QUANT and O_REM_QUANT. 
-Replace with the following:
 
-Bare K:V clauses:
+To replace the lost quantifiers (which are infrequently needed), support '#' (or 'size()' if you prefer) in EL:
+
+Bare K:V clauses (no change to existing)
 ```
-     K:V      // (no change to existing) asserts #{1,Infinity}
-     K:V ?    // (no change to existing, asserts #{0,Infinity}; 
-              // Note this acts like a quantifier, not a branching alternation. 
-              
+     K:V,   K:V else !    // asserts #{1,Infinity}
+     K:V ?, K:V else !?   // asserts #{0,Infinity}; 
+                          // - note this acts like a quantifier, 
+                          // not a branching alternation. 
 ```
 Slice variables bound to K:V clauses (Previously not supported at all.)
 ```
     // assuming CW 2b
-    (K:V as @foo)    // @foo is nonempty (contract of K:V) 
-    (K:V? as @foo)   // @foo may be empty (contract of K:V?)
+      
+    (K:V? as @foo where m < #@foo < n)
     
-    // assuming CW 14
-    (K:     V ->@foo 
-       else V2 ->@bar! // @bar is nonempty
-       else V3 ->!@baz // @baz is empty )
+    // K:V already asserts a nonempty result; the 'where' clause is a second constraint.
+    (K:V as @foo where m < #@foo < n)
     
 ```
-
-To replace the lost quantifiers (which are infrequently needed), support '#' (or 'size()' if you prefer) in EL:
+More examples
 ```
     [ ... (@slice where #@slice>5) ...]
     { (K:V as @S where #@S>5) }
-    { K: (V -> @bucket1 where #@bucket1>5)   // Evaluation deferred until the iteration is finished and the count is available. 
-         else (V2 -> @bucket2 where #@bucket2>5)}
+     // With '->', the sizes of the A/B buckets are not known until iteration is complete. Evaluation is deferred until then.
+    { K: (V -> @A where #@A>5) else (V2 -> @B where #@B>5)}
+    ( { K: (V -> @A) else (V2 -> @B) } where #@A==#@B )
+    
 ```
 
 
@@ -1886,3 +1877,19 @@ It assumes no prior knowledge of the old rules, avoids grammar talk, and focuses
             
             * tighten this further for README length, or
             * add a migration note showing how existing `/foo/` patterns change under anchoring.
+
+
+
+
+## CW 13
+
+Categorize features, both for pedagogy and for AI coder prompting
+
+Core (default / safe / first resort).
+These features preserve local reasoning and make most bugs unrepresentable. Matching literals, wildcards, $x scalars, basic arrays and objects, breadcrumbs without .., simple joins via repeated $x, and straightforward editAll/replaceAll. Patterns here behave almost like structural assertions with extraction; if something matches, it’s usually obvious why. This is where you want both humans and AIs to start, and where most documentation examples should live.
+Advanced (controlled power).
+These introduce multiplicity and conditional structure but still keep reasoning mostly compositional. ... / @x grouping, optional ?, else, slice captures, remainder %, and path descent (.. / **). This is where joins get interesting and transforms become expressive, but also where solution counts can grow and where intent must be clearer. The guideline here is “mark every place multiplicity enters,” which Tendril already enforces well.
+Arcane (expert-only / footguns acknowledged).
+These features break locality or make reasoning global: negative lookaheads, subtle :>/!bad semantics, regex-heavy keys, complex alternation with shared variables, and anything that can cause solution explosion or non-obvious binding behavior. These aren’t bad, but they’re the ones where users (and LLMs) should expect to read the spec or debug traces. They’re also the features you might hide behind explicit opt-ins or warnings.
+For AI-assisted programming, this categorization is gold. You can literally encode the rule: “Try Core only; if compilation fails with a specific diagnostic, allow Advanced; never use Arcane unless explicitly requested.” That turns Tendril into a constrained search space instead of an open-ended DSL, which is exactly what LLMs need to be effective and safe.
+It also gives you a principled answer to “why so many features?”: most users don’t need most of them, most of the time — but when you do need them, you need them precisely, and Tendril makes you say so.

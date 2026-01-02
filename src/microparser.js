@@ -136,6 +136,7 @@ export function tokenize(src) {
       if (w === 'false')    { push('bool', false, j - i); continue; }
       if (w === 'null')     { push('null', null, j - i); continue; }
       if (w === 'else')     { push('else', 'else', j - i); continue; }
+      if (w === 'as')       { push('as', 'as', j - i); continue; }
       if (w === 'where' && parenDepth > 0) {
         push('where', 'where', j - i);
         // Capture everything until the matching ')' as a guard_expr token

@@ -90,22 +90,22 @@ translates to
 Let's try a simpler two:'
 // editAll is now PURE (returns copy)
 // expected: {a:[99,100,101]}
-console.log(Tendril('{a[$x=(_)]:$y}').find({a: [1, 2, 3]}).editAll((v) => ({y: v.x + 99})));
+console.log(Tendril('{a[(_ as $x)]:$y}').find({a: [1, 2, 3]}).editAll((v) => ({y: v.x + 99})));
 
 //expected: {a:[undefined,undefined,2]}, or else error if replacing keys is not supported yet
-console.log(Tendril('{a[$x=(_)]:$y}').find({a: [1, 2, 3]}).editAll((v) => ({x: 2})));
+console.log(Tendril('{a[(_ as $x)]:$y}').find({a: [1, 2, 3]}).editAll((v) => ({x: 2})));
 
 // expected: { a: [ 1, 2, 3 ] } // 'out' binding does not exist, so is ignored'
-console.log(Tendril('{a[$x=(0)]:_}').find({a: [1, 2, 3]}).editAll(bindings => ({out: 99})));
+console.log(Tendril('{a[(0 as $x)]:_}').find({a: [1, 2, 3]}).editAll(bindings => ({out: 99})));
 
 // expected, { a: [ 1, 2, 3 ] } // no replacements specified
-console.log(Tendril('{a[$x=(0)]:_}').find({a: [1, 2, 3]}).editAll(bindings => ({})));
+console.log(Tendril('{a[(0 as $x)]:_}').find({a: [1, 2, 3]}).editAll(bindings => ({})));
 
 // expected: 99
-console.log(Tendril('{a[$x=(_)]:$y}').find({a: [1, 2, 3]}).replaceAll(() => 99));
+console.log(Tendril('{a[(_ as $x)]:$y}').find({a: [1, 2, 3]}).replaceAll(() => 99));
 
 // expected: 98
-console.log(Tendril('{a[$x=(_)]:$y}').find({a: [1, 2, 3]}).replaceAll(() => 98));
+console.log(Tendril('{a[(_ as $x)]:$y}').find({a: [1, 2, 3]}).replaceAll(() => 98));
 
  
 ```

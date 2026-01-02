@@ -131,11 +131,11 @@ test('collapse adjacent equal arrays - simple case', () => {
 
   console.log('Original data:', JSON.stringify(data));
 
-  // Pattern: [... @x=($y=([...]){2,}) ...]
+  // Pattern: [... (([...] as $y){2,} as @x) ...]
   // - Matches runs of 2+ adjacent equal arrays
   // - $y must unify across all occurrences (enforces equality via unification!)
   // - Binds the entire run to @x (group binding for the slice)
-  const pattern = '[... @x=($y=([...]){2,}) ...]';
+  const pattern = '[... (([...] as $y){2,} as @x) ...]';
 
   // First, let's just find matches to verify the pattern works
   const matches = Tendril(pattern).find(data).toArray();
