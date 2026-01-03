@@ -940,6 +940,10 @@ CI_STRING     := IDENT/i | QUOTED_STRING/i  # case-insensitive literal (no space
 BAREWORD      := IDENT, except 'true' 'false' 'null' 'else' are special-cased
 LITERAL       := NUMBER | BOOLEAN | NULL | QUOTED_STRING | REGEX | CI_STRING | BAREWORD
 
+# Labels for scope control (CW16)
+LABEL_DECL    := '§' IDENT                   # label declaration (attaches to OBJ or ARR)
+LABEL_REF     := '^' IDENT                   # label reference
+
 # Whitespace and // line comments allowed between tokens everywhere.
 
 # --------------------------------------------------------------------
@@ -961,7 +965,10 @@ ITEM :=
 # Precedence: 'as' (tightest) > '->' > 'else' (loosest)
 # So: K:V -> @x else W -> @y  parses as  K:((V -> @x) else (W -> @y))
 ITEM_TERM :=
-      ITEM_TERM_CORE ('->' S_GROUP)?          # optional flow-into-bucket suffix
+      ITEM_TERM_CORE ('->' S_GROUP FLOW_MOD?)?   # optional flow-into-bucket suffix
+
+FLOW_MOD :=
+      '<' LABEL_REF '>'                       # label reference modifier: <^label>
 
 ITEM_TERM_CORE :=
       '(' ITEM ')'
@@ -987,7 +994,7 @@ LOOK_AHEAD :=
 # Arrays
 # --------------------------------------------------------------------
 
-ARR := '[' A_BODY ']'
+ARR := LABEL_DECL? '[' A_BODY ']'             # optional label for scope control
 
 A_BODY := (A_GROUP (','? A_GROUP)*)?           # commas optional
 
@@ -1019,7 +1026,7 @@ A_QUANT :=
 # Objects
 # --------------------------------------------------------------------
 
-OBJ := '{' O_GROUP* O_REMNANT? '}'
+OBJ := LABEL_DECL? '{' O_GROUP* O_REMNANT? '}'   # optional label for scope control
     # O_GROUPs parsed greedily until they stop parsing, then O_REMNANT attempted once at end
 
 # Global remainder ("unmatched entries") is a special tail clause, only once, only at end.
@@ -2096,3 +2103,91 @@ Arcane (expert-only / footguns acknowledged).
 These features break locality or make reasoning global: negative lookaheads, subtle :>/!bad semantics, regex-heavy keys, complex alternation with shared variables, and anything that can cause solution explosion or non-obvious binding behavior. These aren’t bad, but they’re the ones where users (and LLMs) should expect to read the spec or debug traces. They’re also the features you might hide behind explicit opt-ins or warnings.
 For AI-assisted programming, this categorization is gold. You can literally encode the rule: “Try Core only; if compilation fails with a specific diagnostic, allow Advanced; never use Arcane unless explicitly requested.” That turns Tendril into a constrained search space instead of an open-ended DSL, which is exactly what LLMs need to be effective and safe.
 It also gives you a principled answer to “why so many features?”: most users don’t need most of them, most of the time — but when you do need them, you need them precisely, and Tendril makes you say so.
+
+
+## CW 17
+
+Things we might do in the future with angle brackets. 
+
+You already have several *suffix-ish* micro-constructs that are conceptually “options/constraints on the thing to the left.” A `[...]` qualifier could consolidate a lot of them over time (even if you don’t do it now).
+
+A few concrete candidates:
+
+### 1) Quantifiers and “optional” flags
+
+Right now you have postfix `?`, `*`, `+`, `#{m,n}`, and `%?`, `#?` shorthands. Those are all “cardinality constraints.”
+
+A bracket qualifier could become the general host for cardinality, while keeping the punctuation forms as sugar:
+
+* Current: `K:V?`, `K:V#{2,4}`, `%?`, `#?`
+* Future-capable: `K:V[count=0..∞]`, `K:V[count=2..4]`, `%[count=0..∞]`
+
+You probably wouldn’t replace `?`/`*`/`+` (they’re too ergonomic), but `#{m,n}` is already “less common / more advanced,” exactly where a bracket form shines.
+
+### 2) Strong semantics (`else !`) and future collision policies
+
+You’ve got strong semantics as a postfix-ish “mode switch” on a field clause. Brackets could house that as an attribute:
+
+* Current: `K:V else !`
+* Future: `K:V[strong]` or `K:V[bad=fail]`
+
+Likewise, your bucket collision policy is *exactly* a qualifier:
+
+* Default: collision ⇒ fail
+* Future: `-> @b[^L, collide=fail|first|last|merge]`
+
+This is the cleanest “extensibility” win of `@bucket[^label]`: you’re opening a slot for policy.
+
+### 3) Remainder (`%`, `!%`, `%?`)
+
+Remainder is currently a special tail clause with its own mini-syntax. If you ever want to generalize “remainder handling” (capture extras, forbid extras, etc.), a qualifier gives you a consistent story:
+
+* Current: `%`, `(!%)`, `(%? as @rest)`
+* Future direction: `%[allow]`, `%[deny]`, `%[optional]`, `(% as @rest)[optional]`
+
+Even if you keep `%` special, putting constraints in brackets makes the mental model uniform.
+
+### 4) Flow / bucket targeting (your immediate case)
+
+`@bucket[^label]` reads like “bucket qualified by anchor.” Great. And it extends naturally:
+
+* `@bucket[^label]` (anchor)
+* `@bucket[^label, collide=fail]`
+* `@bucket[^label, key=index]` vs `key=objectKey` (if you ever want array buckets keyed differently)
+
+It also makes your earlier “sadistic” temp-bucket joke unnecessary, because the bracket becomes the general wiring space.
+
+### 5) Breadcrumb/path modifiers (if you ever add any back)
+
+You removed breadcrumb quantifiers in v5, but if you later reintroduce any “path traversal options” (bounded depth, stop conditions, etc.), brackets are a natural place:
+
+* `**[maxDepth=3]`
+* `.foo[case=i]` (less likely, but you get the idea)
+
+### 6) Guards: probably *don’t* fold them into brackets
+
+Guards already have a good “language-y” slot: `(pattern as $x where expr)`. Brackets could theoretically host `where`, but you’d lose clarity fast. I’d keep guards as-is and treat brackets as “structural modifiers,” not “expression modifiers.”
+
+---
+
+#### The consolidation principle
+
+Brackets are best as a single, uniform place for **non-branching metadata**: scoping/anchoring, cardinality constraints, strictness modes, and policies (especially collision policy). That lines up with your desire to keep the language “punctual” while still searchable and extensible.
+
+If you want one crisp rule to prevent bracket sprawl: *“brackets may not introduce new branching.”* They can only constrain, not enumerate. That keeps them from becoming a second “where.”
+
+So yes: `@bucket[^label]` can be the first member of a broader "qualified suffix" family, and the best nearby consolidation targets are (a) bucket policies, (b) rarely-used count quantifiers, and (c) remainder strictness/optionality.
+
+## CW 18. Negated Ancestry Patterns
+
+Tendril cannot currently express "find X that is NOT under Y" in a single pattern. For example, validating that Flow nodes only appear inside Obj or Arr containers requires either:
+
+1. Multiple patterns checked in sequence
+2. A recursive function that walks the AST
+
+This came up when attempting to use Tendril to validate its own AST structures (meta-validation). The fundamental issue is that `**` can assert "there exists an ancestor Y containing X", but cannot assert "there is no ancestor Y above X".
+
+Possible future directions:
+- Negated path assertions: `(!** Y) X` meaning "X with no Y ancestor"
+- Context predicates: `X where !hasAncestor(Y)`
+- This may simply be out of scope for a pattern language

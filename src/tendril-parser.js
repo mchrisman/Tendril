@@ -24,6 +24,7 @@ export function parsePattern(src) {
   const p = new Parser(src);
   const ast = parseRootPattern(p);
   if (!p.atEnd()) p.fail('trailing input after pattern');
+  validateAST(ast);
   return ast;
 }
 
@@ -42,11 +43,11 @@ const RootKey = () => ({type: 'RootKey'}); // Special marker for leading ** in p
 // Bindings
 const SBind = (name, pat, guard = null) => ({type: 'SBind', name, pat, guard});  // $x=(pat) or $x=(pat where expr)
 const GroupBind = (name, pat) => ({type: 'GroupBind', name, pat});  // @x=(pat)
-const Flow = (pat, bucket) => ({type: 'Flow', pat, bucket});  // pat -> @bucket (collect k:v into bucket)
+const Flow = (pat, bucket, labelRef = null) => ({type: 'Flow', pat, bucket, labelRef});  // pat -> @bucket/^label (collect k:v into bucket)
 
 // Containers
-const Arr = (items) => ({type: 'Arr', items});
-const Obj = (terms, spread = null) => ({type: 'Obj', terms, spread});
+const Arr = (items, label = null) => ({type: 'Arr', items, label});
+const Obj = (terms, spread = null, label = null) => ({type: 'Obj', terms, spread, label});
 
 // Operators
 // Alt: alternation. prioritized=false means enumerate all (|), prioritized=true means first-match-wins (else)
@@ -211,22 +212,31 @@ function parseItem(p) {
 }
 
 function parseItemTerm(p) {
-  // ITEM_TERM := ITEM_TERM_CORE ('->' S_GROUP)?
+  // ITEM_TERM := ITEM_TERM_CORE ('->' S_GROUP ('<^' IDENT '>')?)?
   //
   // The '->' suffix flows matching k:v pairs into a bucket during object iteration.
+  // The optional <^label> suffix specifies which labeled scope provides the key.
   // Parses the core term, then optionally wraps it in a Flow node.
 
   const core = parseItemTermCore(p);
 
   // Check for '->' suffix (flow into bucket)
-  const flowResult = p.backtrack(() => {
+  const flowResult = p.ifPeek('->', () => {
     p.eat('->');
     p.eat('@');
     const bucket = eatVarName(p);
-    return bucket;
+    // Check for optional <^label> suffix (label reference)
+    let labelRef = null;
+    if (p.peek('<')) {
+      p.eat('<');
+      p.eat('^');
+      labelRef = eatVarName(p);
+      p.eat('>');
+    }
+    return {bucket, labelRef};
   });
   if (flowResult !== null) {
-    return Flow(core, flowResult);
+    return Flow(core, flowResult.bucket, flowResult.labelRef);
   }
 
   return core;
@@ -344,6 +354,20 @@ function parseItemTermCore(p) {
     return StringPattern('ci', desc, s => typeof s === 'string' && s.toLowerCase() === lower);
   }
 
+  // Labeled object or array: §label { ... } or §label [ ... ]
+  const labeled = p.ifPeek('§', () => {
+    p.eat('§');
+    const label = eatVarName(p);
+    if (p.peek('{')) {
+      return parseObj(p, label);
+    }
+    if (p.peek('[')) {
+      return parseArr(p, label);
+    }
+    p.fail('§label must be followed by { or [');
+  });
+  if (labeled) return labeled;
+
   // Object
   if (p.peek('{')) {
     return parseObj(p);
@@ -401,12 +425,12 @@ function parseABody(p, ...stopTokens) {
   return items;
 }
 
-function parseArr(p) {
+function parseArr(p, label = null) {
   // ARR := '[' A_BODY ']'
   p.eat('[');
   const items = parseABody(p, ']');
   p.eat(']');
-  return Arr(items);
+  return Arr(items, label);
 }
 
 function parseAGroup(p) {
@@ -594,7 +618,7 @@ function parseAQuant(p) {
 
 // ---------- OBJECTS ----------
 
-function parseObj(p) {
+function parseObj(p, label = null) {
   // OBJ := '{' O_BODY O_REMNANT? '}'
   // O_REMNANT := S_GROUP ':' '(' 'remainder' ')'
   //            | '(!' 'remainder' ')'
@@ -618,7 +642,7 @@ function parseObj(p) {
   const remnant = parseORemnant(p);
 
   p.eat('}');
-  return Obj(terms, remnant);
+  return Obj(terms, remnant, label);
 }
 
 function parseORemnant(p) {
@@ -921,6 +945,64 @@ Parser.prototype.peekAt = function(offset, kind) {
   if (idx >= this.toks.length) return false;
   return this.toks[idx].k === kind;
 };
+
+// ---------- AST Validation ----------
+
+// Validate that Flow nodes only appear inside Obj or Arr context
+function validateAST(ast) {
+  validateNode(ast, false);
+}
+
+function validateNode(node, inContainer) {
+  if (!node || typeof node !== 'object') return;
+
+  if (node.type === 'Flow') {
+    if (!inContainer) {
+      throw new Error(
+        `Flow operator ->@${node.bucket} can only be used inside an object or array pattern`
+      );
+    }
+  }
+
+  // Obj and Arr establish container context
+  const isContainer = node.type === 'Obj' || node.type === 'Arr';
+  const childContext = inContainer || isContainer;
+
+  // Recurse into children based on node type
+  switch (node.type) {
+    case 'Obj':
+      for (const term of node.terms || []) validateNode(term, childContext);
+      if (node.spread) validateNode(node.spread, childContext);
+      break;
+    case 'Arr':
+      for (const item of node.items || []) validateNode(item, childContext);
+      break;
+    case 'OTerm':
+      validateNode(node.key, childContext);
+      validateNode(node.val, childContext);
+      for (const bc of node.breadcrumbs || []) validateNode(bc.key, childContext);
+      break;
+    case 'Alt':
+      for (const alt of node.alts || []) validateNode(alt, childContext);
+      break;
+    case 'Quant':
+    case 'Look':
+    case 'SBind':
+    case 'GroupBind':
+    case 'Flow':
+      validateNode(node.pat || node.sub, childContext);
+      break;
+    case 'Seq':
+      for (const item of node.items || []) validateNode(item, childContext);
+      break;
+    case 'OGroup':
+      for (const g of node.groups || []) validateNode(g, childContext);
+      break;
+    case 'SlicePattern':
+      validateNode(node.content, true); // Slice patterns are container-like
+      break;
+  }
+}
 
 // ---------- Exports ----------
 

@@ -206,7 +206,8 @@ export function tokenize(src) {
     }
 
     // one-character punctuation/operators (excluding parens, handled above)
-    const single = '[]{}:,.$@=|*+?!-#%<>&/'.includes(c) ? c : null;
+    // § (U+00A7) is for label declarations, ^ is for label references
+    const single = '[]{}:,.$@=|*+?!-#%<>&/§^'.includes(c) ? c : null;
     if (single) { push(single, single, 1); continue; }
 
     throw syntax(`unexpected character '${c}'`, src, i);
@@ -309,6 +310,14 @@ export class Parser {
     throw syntax(msg, this.src, pos);
   }
 
+  // ifPeek('{', parseobject)
+  // Peek first then try fn,
+  // return the output or null if it failed
+  ifPeek(next, fn) {
+     return this.peek(next)
+    ? this.backtrack(fn) : null
+  }
+  
   // --- backtracking
   backtrack(fn) {
     const save = this.mark();
