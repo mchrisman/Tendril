@@ -26,7 +26,9 @@ class StopSearch extends Error {
 //  - group (object): {kind: 'group', path: [], keys: ['a', ...], valueRefs: {a: obj1, ...}}
 
 function newSolution() {
-  return {env: new Map(), sites: new Map(), guards: [], bucketStack: []};
+  // labels: Map<labelName, {key: flowKey, bucketLevel: number}>
+  // bucketLevel is the index in bucketStack where entries for this label should go
+  return {env: new Map(), sites: new Map(), guards: [], bucketStack: [], labels: new Map()};
 }
 
 function cloneSolution(sol) {
@@ -46,7 +48,8 @@ function cloneSolution(sol) {
     env: cloneEnv(sol.env),
     sites,
     guards: sol.guards ? [...sol.guards] : [],
-    bucketStack
+    bucketStack,
+    labels: new Map([...sol.labels].map(([name, info]) => [name, {...info}]))
   };
 }
 
@@ -57,25 +60,43 @@ function pushBucketLevel(sol) {
   sol.bucketStack.push(new Map());
 }
 
-// Add an entry to the current (top) bucket level
-function addToBucket(sol, bucketName, key, value) {
+// Add an entry to a bucket level
+// If bucketLevel is provided, add to that level; otherwise add to current (top) level
+// Returns true on success, false on collision (same key already exists)
+function addToBucket(sol, bucketName, key, value, bucketLevel = null) {
   if (sol.bucketStack.length === 0) {
     throw new Error(`Flow ->@${bucketName} used outside of K:V context`);
   }
-  const top = sol.bucketStack[sol.bucketStack.length - 1];
-  if (!top.has(bucketName)) {
-    top.set(bucketName, {});
+
+  const levelIndex = bucketLevel !== null ? bucketLevel : sol.bucketStack.length - 1;
+  if (levelIndex < 0 || levelIndex >= sol.bucketStack.length) {
+    throw new Error(`Invalid bucket level ${levelIndex} (stack size: ${sol.bucketStack.length})`);
   }
-  top.get(bucketName)[key] = value;
+
+  const level = sol.bucketStack[levelIndex];
+  if (!level.has(bucketName)) {
+    level.set(bucketName, {});
+  }
+  const bucket = level.get(bucketName);
+  if (Object.prototype.hasOwnProperty.call(bucket, key)) {
+    // Collision: same key already in bucket - fail this branch
+    return false;
+  }
+  bucket[key] = value;
+  return true;
 }
 
 // Collect and merge bucket entries from top level of all solutions,
-// then pop that level and bind merged buckets to all solutions
+// then pop that level and bind merged buckets to all solutions.
+// Returns the filtered list of solutions (those where binding succeeded).
 function finalizeBucketLevel(solutions) {
-  if (solutions.length === 0) return;
+  if (solutions.length === 0) return solutions;
 
   // Collect and merge from top level of all solutions
+  // Also detect collisions: same key appearing in multiple solutions with different values
   const merged = new Map(); // bucketName -> {key: value, ...}
+  let hasCollision = false;
+
   for (const state of solutions) {
     const sol = state.sol || state;
     if (sol.bucketStack.length === 0) continue;
@@ -84,22 +105,56 @@ function finalizeBucketLevel(solutions) {
       if (!merged.has(name)) {
         merged.set(name, {});
       }
-      Object.assign(merged.get(name), entries);
+      const bucket = merged.get(name);
+      for (const [key, value] of Object.entries(entries)) {
+        if (Object.prototype.hasOwnProperty.call(bucket, key)) {
+          // Same key already exists - only a collision if values differ
+          const existing = bucket[key];
+          if (!sameValueZero(existing, value) && JSON.stringify(existing) !== JSON.stringify(value)) {
+            // Collision: same key with different values
+            hasCollision = true;
+          }
+          // If same value, just keep the existing (they're duplicates)
+        } else {
+          bucket[key] = value;
+        }
+      }
     }
   }
 
-  // Pop and bind to all solutions
+  // If there was a collision during merge, fail all solutions
+  if (hasCollision) {
+    // Pop bucket levels but don't bind
+    for (const state of solutions) {
+      const sol = state.sol || state;
+      if (sol.bucketStack.length > 0) {
+        sol.bucketStack.pop();
+      }
+    }
+    return [];
+  }
+
+  // Pop and bind to all solutions, filtering out those where binding fails
+  const surviving = [];
   for (const state of solutions) {
     const sol = state.sol || state;
     if (sol.bucketStack.length > 0) {
       sol.bucketStack.pop();
     }
     // Bind each merged bucket as a group variable
+    let bindOk = true;
     for (const [name, entries] of merged) {
       const groupValue = Group.object(entries);
-      bindGroup(sol.env, name, groupValue);
+      if (!bindGroup(sol.env, name, groupValue)) {
+        bindOk = false;
+        break;
+      }
+    }
+    if (bindOk) {
+      surviving.push(state);
     }
   }
+  return surviving;
 }
 
 // Add a guard to the solution's pending guards list
@@ -498,9 +553,10 @@ function matchItem(item, node, path, sol, emit, ctx) {
         return;
 
       case 'Flow': {
-        // Flow operator: P -> @bucket
+        // Flow operator: P -> @bucket or P -> @bucket<^label>
         // Match the inner pattern; if successful, record {flowKey: matchedValue} in bucket
-        // ctx.flowKey must be set by the enclosing K:V iteration
+        // ctx.flowKey is set by the enclosing K:V iteration
+        // If labelRef is specified, use the key from that labeled scope instead
 
         // Disallow Flow inside arrays that are inside K:V (key collisions)
         if (ctx.inArrayUnderKV) {
@@ -512,8 +568,35 @@ function matchItem(item, node, path, sol, emit, ctx) {
         }
 
         matchItem(item.pat, node, path, sol, (s2) => {
-          if (ctx.flowKey !== undefined) {
-            addToBucket(s2, item.bucket, ctx.flowKey, node);
+          // Determine which key and bucket level to use
+          let flowKey;
+          let bucketLevel = null; // null means current (top) level
+
+          if (item.labelRef) {
+            // Use key and bucket level from labeled scope
+            if (!s2.labels.has(item.labelRef)) {
+              throw new Error(
+                `Flow operator ->@${item.bucket}<^${item.labelRef}> references unknown label '${item.labelRef}'`
+              );
+            }
+            const labelInfo = s2.labels.get(item.labelRef);
+            if (labelInfo.key === undefined) {
+              throw new Error(
+                `Flow operator ->@${item.bucket}<^${item.labelRef}> references label '${item.labelRef}' ` +
+                `which was not in a K:V iteration context`
+              );
+            }
+            flowKey = labelInfo.key;
+            bucketLevel = labelInfo.bucketLevel;
+          } else {
+            flowKey = ctx.flowKey;
+          }
+
+          if (flowKey !== undefined) {
+            // addToBucket returns false on collision - fail this branch
+            if (!addToBucket(s2, item.bucket, flowKey, node, bucketLevel)) {
+              return; // Collision - don't emit this solution
+            }
           }
           emit(s2);
         }, ctx);
@@ -614,13 +697,27 @@ function matchItem(item, node, path, sol, emit, ctx) {
         const arrayCtx = ctx.flowKey !== undefined && !ctx.inArrayUnderKV
           ? {...ctx, inArrayUnderKV: true}
           : ctx;
-        matchArray(item.items, node, path, sol, emit, arrayCtx);
+        // If this array has a label and we have a flowKey, record it with bucket level
+        if (item.label && ctx.flowKey !== undefined) {
+          const s2 = cloneSolution(sol);
+          s2.labels.set(item.label, {key: ctx.flowKey, bucketLevel: s2.bucketStack.length - 1});
+          matchArray(item.items, node, path, s2, emit, arrayCtx);
+        } else if (item.label) {
+          // Label exists but no flowKey - record undefined so we can detect it later
+          const s2 = cloneSolution(sol);
+          s2.labels.set(item.label, {key: undefined, bucketLevel: s2.bucketStack.length - 1});
+          matchArray(item.items, node, path, s2, emit, arrayCtx);
+        } else {
+          matchArray(item.items, node, path, sol, emit, arrayCtx);
+        }
         return;
       }
 
       case 'Obj': {
         if (!isObject(node)) return;
-        matchObject(item.terms, item.spread, node, path, sol, emit, ctx);
+        // Pass the label to matchObject - it will record the label with the iteration key
+        // when iterating over K:V pairs inside this object
+        matchObject(item.terms, item.spread, node, path, sol, emit, ctx, null, item.label);
         return;
       }
 
@@ -912,7 +1009,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
 
 // ------------- Object matching -------------
 
-function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = null) {
+function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = null, objLabel = null) {
   guard(ctx);
 
   const DEBUG = false; // Set to true for debugging
@@ -922,6 +1019,10 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
   // - testedKeys: keys that were successfully matched (for backward compat)
   // - coveredKeys: keys that match any K pattern (for remainder calculation)
   let solutions = [{sol: cloneSolution(sol), testedKeys: new Set(), coveredKeys: new Set()}];
+
+  // Push bucket level at object start - all terms share this level
+  // (Cloned solutions inherit the bucket stack, so only need to push for initial)
+  pushBucketLevel(solutions[0].sol);
 
   if (DEBUG) console.log(`[matchObject] obj keys:`, Object.keys(obj), `terms:`, terms.length);
 
@@ -1091,10 +1192,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       throw new Error(`Expected OTerm, GroupBind, OLook, or OGroup, got ${term.type}`);
     }
 
-    // Push bucket level for this K:V term (will be popped after processing)
-    for (const state of solutions) {
-      pushBucketLevel(state.sol);
-    }
+    // Bucket level is pushed once at object start, shared by all terms
 
     // Slice-based semantics:
     // - K:V         = slice exists (#{1,}), bad entries allowed
@@ -1153,13 +1251,20 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
         // Test if value matches V (after navigating breadcrumbs)
         let valueMatches = false;
 
+        // Create a test solution with the label set (if this object has a label)
+        // This is needed because the value test may involve Flows that reference the label
+        const testSol = cloneSolution(s0);
+        if (objLabel) {
+          testSol.labels.set(objLabel, {key: k, bucketLevel: testSol.bucketStack.length - 1});
+        }
+
         if (term.breadcrumbs && term.breadcrumbs.length > 0) {
           // Navigate breadcrumbs first, then test value at final node
           navigateBreadcrumbs(
             term.breadcrumbs,
             obj[k],
             [...path, k],
-            cloneSolution(s0),
+            testSol,
             (finalNode, finalPath, s2) => {
               matchItem(term.val, finalNode, finalPath, s2, () => {
                 valueMatches = true;
@@ -1169,7 +1274,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
           );
         } else {
           // No breadcrumbs - test value directly
-          matchItem(term.val, obj[k], [...path, k], cloneSolution(s0), () => {
+          matchItem(term.val, obj[k], [...path, k], testSol, () => {
             valueMatches = true;
           }, ctx);
         }
@@ -1223,6 +1328,12 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
           const newTestedKeys = new Set(testedKeys);
           newTestedKeys.add(k);
 
+          // If this object has a label, record the current iteration key and bucket level
+          // This allows inner Flows with <^label> to use this key and add to this bucket level
+          if (objLabel) {
+            s1.labels.set(objLabel, {key: k, bucketLevel: s1.bucketStack.length - 1});
+          }
+
           // Bind key variables
           if (!bindKeyVariables(term.key, k, s1, path)) {
             continue; // Binding failed
@@ -1255,10 +1366,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
 
     solutions = next;
 
-    // Finalize bucket level: collect from all solutions, merge, pop, bind
-    if (solutions.length > 0) {
-      finalizeBucketLevel(solutions);
-    }
+    // Bucket finalization moved to end of object (after all terms)
 
     if (!solutions.length) break;
   }
@@ -1349,6 +1457,12 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       }
       solutions = next;
     }
+  }
+
+  // Finalize bucket level: collect from all solutions, merge, pop, bind
+  // This happens once at end of object, after all terms have contributed
+  if (solutions.length > 0) {
+    solutions = finalizeBucketLevel(solutions);
   }
 
   // Report matched keys to caller if requested (collect from all branches)
