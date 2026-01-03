@@ -558,14 +558,9 @@ function matchItem(item, node, path, sol, emit, ctx) {
         // ctx.flowKey is set by the enclosing K:V iteration
         // If labelRef is specified, use the key from that labeled scope instead
 
-        // Disallow Flow inside arrays that are inside K:V (key collisions)
-        if (ctx.inArrayUnderKV) {
-          throw new Error(
-            `Flow operator ->@${item.bucket} cannot be used inside an array ` +
-            `that is a value in an object pattern. The array iteration would ` +
-            `produce multiple entries with the same key, causing collisions.`
-          );
-        }
+        // Note: Flow inside arrays under K:V uses the outer flowKey for all elements.
+        // If multiple elements match and flow DIFFERENT values, that's a collision.
+        // If they flow the SAME value, deduplication handles it.
 
         matchItem(item.pat, node, path, sol, (s2) => {
           // Determine which key and bucket level to use
@@ -692,23 +687,18 @@ function matchItem(item, node, path, sol, emit, ctx) {
 
       case 'Arr': {
         if (!Array.isArray(node)) return;
-        // Track if we're entering an array while inside K:V iteration
-        // This is used to disallow Flow inside such arrays (key collision issue)
-        const arrayCtx = ctx.flowKey !== undefined && !ctx.inArrayUnderKV
-          ? {...ctx, inArrayUnderKV: true}
-          : ctx;
         // If this array has a label and we have a flowKey, record it with bucket level
         if (item.label && ctx.flowKey !== undefined) {
           const s2 = cloneSolution(sol);
           s2.labels.set(item.label, {key: ctx.flowKey, bucketLevel: s2.bucketStack.length - 1});
-          matchArray(item.items, node, path, s2, emit, arrayCtx);
+          matchArray(item.items, node, path, s2, emit, ctx);
         } else if (item.label) {
           // Label exists but no flowKey - record undefined so we can detect it later
           const s2 = cloneSolution(sol);
           s2.labels.set(item.label, {key: undefined, bucketLevel: s2.bucketStack.length - 1});
-          matchArray(item.items, node, path, s2, emit, arrayCtx);
+          matchArray(item.items, node, path, s2, emit, ctx);
         } else {
-          matchArray(item.items, node, path, sol, emit, arrayCtx);
+          matchArray(item.items, node, path, sol, emit, ctx);
         }
         return;
       }
@@ -745,9 +735,11 @@ function matchArray(items, arr, path, sol, emit, ctx) {
   }
 
   // Match array items anchored at start (and end if no trailing ..)
-  stepItems(0, 0, sol);
+  step(items, 0, 0, sol);
 
-  function stepItems(ixItem, ixArr, sIn) {
+  // step: match pattern items against array elements
+  // items is passed as parameter to allow splicing in Seq items from Alt branches
+  function step(items, ixItem, ixArr, sIn) {
     guard(ctx);
     if (ixItem === items.length) {
       // If we had trailing spread, allow leftover elements; otherwise require exact match
@@ -764,7 +756,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
       const maxK = Math.min(max, arr.length - ixArr);
 
       for (let k = min; k <= maxK; k++) {
-        stepItems(ixItem + 1, ixArr + k, sIn);
+        step(items, ixItem + 1, ixArr + k, sIn);
         if (ctx.steps > ctx.maxSteps) break;
       }
       return;
@@ -772,7 +764,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
 
     // Group binding @x or @x:(pattern)
     if (it.type === 'GroupBind') {
-      return matchArrayGroupBind(it, ixItem, ixArr, sIn);
+      return matchArrayGroupBind(items, it, ixItem, ixArr, sIn);
     }
 
     // Scalar binding with Seq pattern: $x=(seq) matches iff seq matches exactly 1 element
@@ -796,7 +788,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
               addGuard(s3, it.guard, it.name);
               // Check guards - prune if any closed guard fails
               if (!checkGuards(s3)) return;
-              stepItems(ixItem + 1, ixArr + k, s3);
+              step(items, ixItem + 1, ixArr + k, s3);
             }
           }
           // k === 0 or k >= 2: seq matched but wrong length, no solution emitted
@@ -810,7 +802,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
       const min = it.min !== null ? it.min : 0;
       const max = it.max !== null ? it.max : Infinity;
       const op = it.op || '?';
-      return quantOnArray(it.sub, min, max, op, ixItem, ixArr, sIn);
+      return quantOnArray(items, it.sub, min, max, op, ixItem, ixArr, sIn);
     }
 
     // Lookahead — zero-width assertion at current position (unanchored)
@@ -833,12 +825,12 @@ function matchArray(items, arr, path, sol, emit, ctx) {
           matched = true;
         }, ctx);
         if (!matched) {
-          stepItems(ixItem + 1, ixArr, sIn);
+          step(items, ixItem + 1, ixArr, sIn);
         }
       } else if (hasBindings) {
         // Positive lookahead with bindings: enumerate all solutions
         matchArray(patternItems, remainingGroup, [...path, ixArr], sIn, (s2) => {
-          stepItems(ixItem + 1, ixArr, s2);
+          step(items, ixItem + 1, ixArr, s2);
         }, ctx);
       } else {
         // Positive lookahead without bindings: stop at first match (optimization)
@@ -847,7 +839,36 @@ function matchArray(items, arr, path, sol, emit, ctx) {
           if (!matchedSol) matchedSol = s2;
         }, ctx);
         if (matchedSol) {
-          stepItems(ixItem + 1, ixArr, matchedSol);
+          step(items, ixItem + 1, ixArr, matchedSol);
+        }
+      }
+      return;
+    }
+
+    // Alt — try each alternative; Seq branches consume multiple elements
+    if (it.type === 'Alt') {
+      let anyEmitted = false;
+      for (const sub of it.alts) {
+        if (it.prioritized && anyEmitted) break;
+        guard(ctx);
+
+        // Unwrap Paren if present
+        let inner = sub;
+        while (inner.type === 'Paren') inner = inner.item;
+
+        if (inner.type === 'Seq') {
+          // Seq in alternation: splice Seq items in place of this Alt
+          const newItems = [...inner.items, ...items.slice(ixItem + 1)];
+          step(newItems, 0, ixArr, sIn);
+          anyEmitted = true; // Conservative: assume it may have emitted
+        } else {
+          // Single item: match at current position
+          if (ixArr < arr.length) {
+            matchItem(sub, arr[ixArr], [...path, ixArr], sIn, (s2) => {
+              anyEmitted = true;
+              step(items, ixItem + 1, ixArr + 1, s2);
+            }, ctx);
+          }
         }
       }
       return;
@@ -856,11 +877,11 @@ function matchArray(items, arr, path, sol, emit, ctx) {
     // Regular pattern item — match one element at current index
     if (ixArr >= arr.length) return;
     matchItem(it, arr[ixArr], [...path, ixArr], sIn, (s2) => {
-      stepItems(ixItem + 1, ixArr + 1, s2);
+      step(items, ixItem + 1, ixArr + 1, s2);
     }, ctx);
   }
 
-  function matchArrayGroupBind(groupBind, ixItem, ixArr, sIn) {
+  function matchArrayGroupBind(items, groupBind, ixItem, ixArr, sIn) {
     // @x matches 0+ consecutive items
     // @x:(pat) matches 0+ items where each matches pat
     const maxK = arr.length - ixArr;
@@ -881,7 +902,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
             if (ctx.debug?.onBind) {
               ctx.debug.onBind('group', groupBind.name, groupValue);
             }
-            stepItems(ixItem + 1, ixArr + k, s3);
+            step(items, ixItem + 1, ixArr + k, s3);
           }
         }, ctx);
       }
@@ -895,7 +916,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
       const n = max !== null ? max : Infinity;
       const quantOp = op || '?';
 
-      return quantOnArray(sub, m, n, quantOp, ixItem, ixArr, sIn, (st) => {
+      return quantOnArray(items, sub, m, n, quantOp, ixItem, ixArr, sIn, (st) => {
         const start = ixArr;
         const end = st.idx;
         const group = arr.slice(start, end);
@@ -906,7 +927,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
           if (ctx.debug?.onBind) {
             ctx.debug.onBind('group', groupBind.name, groupValue);
           }
-          stepItems(ixItem + 1, end, s2);
+          step(items, ixItem + 1, end, s2);
         }
       });
     } else {
@@ -921,14 +942,14 @@ function matchArray(items, arr, path, sol, emit, ctx) {
             if (ctx.debug?.onBind) {
               ctx.debug.onBind('group', groupBind.name, groupValue);
             }
-            stepItems(ixItem + 1, ixArr + 1, s3);
+            step(items, ixItem + 1, ixArr + 1, s3);
           }
         }, ctx);
       }
     }
   }
 
-  function quantOnArray(sub, m, n, op, ixItem, ixArr, sIn, cont) {
+  function quantOnArray(items, sub, m, n, op, ixItem, ixArr, sIn, cont) {
     // Consume exactly k repetitions for some k ∈ [m..n]
     const maxRep = Math.min(n, arr.length - ixArr);
 
@@ -938,7 +959,7 @@ function matchArray(items, arr, path, sol, emit, ctx) {
 
     const continueWith = cont
       ? (st) => cont(st)
-      : (st) => stepItems(ixItem + 1, st.idx, st.sol);
+      : (st) => step(items, ixItem + 1, st.idx, st.sol);
 
     // DP-like iterative expansion to avoid deep recursion explosion
     let frontier = [{idx: ixArr, sol: cloneSolution(sIn), reps: 0}];

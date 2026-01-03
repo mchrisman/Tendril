@@ -77,8 +77,11 @@ src/
   ...                 # other impl files
   
 test/
-  engine.test.js           # Main engine tests
-  else.test.js             # 'else' operator (prioritized choice)
+  engine.test.js               # Main engine tests
+  else.test.js                 # 'else' operator (prioritized choice)
+  flow-operator.test.js        # Flow operator (->) for bucket collection
+  cw4-cw14-conformance.test.js # CW4/CW14/CW16 conformance (buckets, labels)
+  label-parsing.test.js        # Label syntax (§label, <^label>)
   object-semantics-v2.test.js  # Slice-based object matching
   residual-tracking.test.js    # Coverage-based remainder
   optional-patterns.test.js    # K:>V? syntax

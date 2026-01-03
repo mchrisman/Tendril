@@ -203,9 +203,8 @@ test('CW14: nested maps — bucket whole sub-objects based on their contents', (
 
 // ==================== Backtracking / Rollback Tests ====================
 
-// SKIP: Flow inside arrays is currently restricted to prevent collisions.
-// This test requires CW16 label-directed aggregation or array index keys.
-test.skip('CW14: bucket rollback when array * backtracks (no ghost kvs)', () => {
+// Flow inside arrays uses outer key; same key+same value is deduplicated
+test('CW14: bucket rollback when array * backtracks (no ghost kvs)', () => {
   const data = {
     k: [ {t:1}, {t:1}, {t:2} ]   // forces backtracking for the * below
   };
@@ -227,14 +226,14 @@ test.skip('CW14: bucket rollback when array * backtracks (no ghost kvs)', () => 
   assert.deepEqual(sol.ones, {k: {t:1}});
 });
 
-// ==================== CW 15: Known Bug - Seq in Alternation ====================
-// These tests trigger "Unknown item type: Seq" because the engine doesn't handle
-// Seq nodes inside alternation branches. See README CW 15 for details.
+// ==================== CW 15: Seq in Alternation ====================
+// Tests for Seq nodes inside alternation branches (now fixed).
 
-test.skip('CW15 BUG: bucket rollback across | alternation (Seq in Alt)', () => {
+test('CW15: Seq in Alt - first branch succeeds', () => {
   const data = {box: [ {kind:"A"}, {kind:"B"} ]};
 
-  // This pattern creates Seq nodes inside Alt, which the engine can't handle
+  // Branch 1: matches {kind:"A"} (flows it), then {kind:"B"} - succeeds
+  // Branch 2: tries {kind:"B"} at index 0 which is {kind:"A"} - fails
   const pat = `{
     box: [
       ({kind:"A"}->@picked {kind:"B"})
@@ -244,13 +243,14 @@ test.skip('CW15 BUG: bucket rollback across | alternation (Seq in Alt)', () => {
   }`;
 
   const sol = Tendril(pat).match(data).solutions().first();
-  assert.deepEqual(sol.picked, {box: {kind:"B"}});
+  assert.deepEqual(sol.picked, {box: {kind:"A"}});
 });
 
-test.skip('CW15 BUG: no double-pour with Seq in Alt', () => {
+test('CW15: fallback to second branch when first fails', () => {
   const data = {k: [ {p:1}, {q:2} ]};
 
-  // This pattern creates Seq nodes inside Alt
+  // Branch 1: {p:1}->{r:3} fails because arr[1] is {q:2} not {r:3}
+  // Branch 2: {p:1} succeeds, flows to @seen, then {q:2} matches
   const pat = `{
     k: [
       ({p:1}->@seen {r:3})
@@ -283,9 +283,8 @@ test('CW14: bucket rollback - losing value branch does not pour', () => {
   assert.deepEqual(sol.twos, {k1: [{x:2}]});
 });
 
-// SKIP: Flow inside arrays is currently restricted to prevent collisions.
-// This test requires CW16 label-directed aggregation or array index keys.
-test.skip('CW14: greedy * backtracking does not leave ghost bucket entries', () => {
+// Flow inside arrays uses outer key; same key+same value is deduplicated
+test('CW14: greedy * backtracking does not leave ghost bucket entries', () => {
   const data = {
     items: [1, 1, 1, 2]  // greedy * will try to eat all 1s, must backtrack
   };

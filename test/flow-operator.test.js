@@ -85,16 +85,15 @@ test('flow with else _ - catch-all', () => {
   assert.deepEqual(result.rest, {b: 3});
 });
 
-// ==================== Flow restriction: cannot use inside arrays under K:V ====================
+// ==================== Flow inside arrays under K:V ====================
 
-test('flow inside array under K:V - throws error', () => {
-  // Flow inside an array that is a value in K:V would cause key collisions
-  // (multiple array elements would all have the same outer key)
-  // This is now disallowed.
-  assert.throws(
-    () => extract('{$k: [/a/ -> @captured, b]}', {x: ['apple', 'b']}),
-    /Flow operator ->@captured cannot be used inside an array/
-  );
+test('flow inside array under K:V - uses outer key', () => {
+  // Flow inside an array uses the outer K:V key
+  // Multiple array elements flowing the same value are deduplicated
+  const result = extract('{$k: [/a/ -> @captured, b]}', {x: ['apple', 'b']});
+  assert.ok(result);
+  // 'apple' matches /a/ and flows to @captured with key 'x' (from outer $k)
+  assert.deepEqual(result.captured, {x: 'apple'});
 });
 
 test('flow at outer level - captures full value', () => {
