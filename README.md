@@ -550,6 +550,19 @@ If an expression errors, the match branch fails silently—no exception is throw
 
 **Arithmetic strictness:** Unlike JavaScript, the expression language treats division by zero (`x/0`) and modulo by zero (`x%0`) as errors that cause match failure, rather than silently producing `Infinity` or `NaN`.
 
+**Anonymous guards:**
+
+Guards can also be used without binding, using `_` to refer to the matched value:
+
+```javascript
+(_ where _ > 3)                   // matches values > 3
+(_ where size(_) >= 3)            // matches arrays/strings with 3+ elements
+([$x $y] where $y == $x + 1)      // pattern with bindings + guard
+({x:$x, y:$y} where $x < $y)      // object with constraint
+```
+
+The `_` variable is only available within the guard expression—it doesn't bind to the solution.
+
 **Restrictions:**
 - Guards only work with scalar bindings (`$x`), not group bindings (`@x`)
 - All variables referenced in a guard must eventually be bound, or the match fails
@@ -1012,6 +1025,7 @@ ITEM_TERM_CORE :=
       '(' ITEM ')'
     | '(' ITEM 'as' S_ITEM ('where' GUARD_EXPR)? ')'   # binding with pattern and optional guard
     | '(' ITEM 'as' S_GROUP ')'               # group binding with pattern
+    | '(' ITEM 'where' GUARD_EXPR ')'         # anonymous guard (no binding)
     | LOOK_AHEAD
     | S_ITEM                                  # bare $x ≡ (_ as $x)
     | S_GROUP                                 # bare @x ≡ (_* as @x)
@@ -1022,7 +1036,7 @@ ITEM_TERM_CORE :=
     | ARR
 
 GUARD_EXPR := <expression with operators: < > <= >= == != && || ! + - * / %>
-            # References $variables, literals, and functions: size(), number(), string(), boolean()
+            # References $variables, literals, _ (matched value), and functions: size(), number(), string(), boolean()
 
 LOOK_AHEAD :=
       '(?' A_GROUP ')'
@@ -1048,6 +1062,7 @@ A_GROUP_BASE :=
     | '(' A_BODY ')'                           # if >1 element => Seq node
     | '(' A_BODY 'as' S_GROUP ')'              # group binding with pattern
     | '(' A_BODY 'as' S_ITEM ('where' GUARD_EXPR)? ')'  # scalar binding with pattern and optional guard
+    | '(' A_BODY 'where' GUARD_EXPR ')'        # anonymous guard (no binding)
     | S_GROUP                                  # bare @x ≡ (_* as @x)
     | S_ITEM                                   # bare $x ≡ (_ as $x)
     | ITEM_TERM                                # including nested ARR/OBJ
@@ -1600,28 +1615,12 @@ Tendril("{ a:b }").find(data).replaceAll("X") // Cross out any object that conta
 Tendril("a:b").find(data).replaceAll("X:X") // Replace only that key, not the whole object. 
 ```
 7. Retire quantifiers for object remainders. Retain only '%','!%','%?'.
+8. 
+Commit harder to the Core subset. Make it possible—maybe even default—to use Tendril with just literals, $x, arrays, objects, and breadcrumbs. No @, no ->, no guards. That's already more powerful than JSONPath.
+Make explosion visible.
+Simplify object semantics. The weak/strong distinction is too subtle. Consider making else ! the default (fail-fast) and requiring explicit opt-in to weak semantics.
+Document the cost model. Users need to know what's O(1), O(n), and O(n^k). Right now it's opaque.
 
-
-## CW 2B. Better binding syntax. **DONE**
-
- - Binding syntax changed from `$foo=(PATTERN)` to `(PATTERN as $foo)`.
-
-```
-    (0|1|2|3|4 as $foo)            // Regardless whether $foo was previously bound.
-    (0|1|2|3|4 as $foo where $foo>1)
-    ([$x $y] as $foo where $x>$y)  // regardless whether $x,$y were previously bound
-
-    (_ where _>1)                  // CW 2 point 5
-    ([$x $y] where $x>$y)          // New capability
-
-    [ a b (c d as @foo) e f]
-    { (K:V K2:V2 as @foo) }
-```
-
-1. Parentheses are required for the full form `(PATTERN as $var)`. Keeps parsing simple, shorthand handles the common case.
-2. Allow `_` in guards to reference the anonymous match (per CW 2 point 5).
-3. Shorthands `$x` and `@x` are first-class—they're the primary way to write simple bindings.
-4. Mental model: "Every `$x` is really `(_ as $x)`; the full form lets you replace `_` with a real pattern."
 
 ## CW 2A. Object slice quantifiers
 
@@ -1729,8 +1728,49 @@ Then a cyclic graph is `[... $start.**↳($a,$b where $b=($a[1])):$start) ...]`
 (You don't need to point out that this particular example would be very inefficient, and that we'd need a 'visited' flag and a depth limit, and that this is a complication to the language that is prima facie unjustified. )
     ``
 
-## CW 7. **Training wheels**:
-Add a **boundedness mode** that distinguishes **O(1), syntactically finite branching** from **data-dependent enumeration**: small alternations like `red|rouge` are always safe, while constructs whose match count depends on input size (regex or wildcard keys in object position, array spreads/splits, variable-length quantifiers, wildcard indices, unbound `_:$x`) are rejected unless explicitly marked. Provide two opt-ins: `enum(P)` to acknowledge intentional enumeration, and `one(P)` / `atMostOne(P)` to assert uniqueness and fail otherwise. Implement this via a simple syntactic classification of branching sites (finite vs size-dependent) with clear compile-time errors explaining which construct causes unbounded branching and how to fix it; this teaches users to avoid accidental Cartesian products without limiting legitimate finite alternation.
+## CW 7. **Static analysis / linting **
+
+This proposal introduces a **clarifying mode** for Tendril that asks users to *affirm intent* in cases where an expression is precise and correct, but plausibly misread.
+
+The motivation is conversational rather than corrective. When a careful human hears a statement that is clear but easily mistaken, they naturally ask for confirmation: *“Just to be sure I understood you correctly…”* Clarifying mode applies the same principle to Tendril patterns.
+
+#### What clarifying mode does
+
+When clarifying mode is enabled, Tendril checks for **clauses whose surface form is commonly read as universal**, even though their semantics are existential. This typically occurs when:
+
+* the key pattern can match many keys (e.g. `_`, regexes, alternation), and
+* the value pattern is constraining, and
+* no variable binding makes the existential intent explicit.
+
+In such cases, Tendril emits a diagnostic that:
+
+1. **States the actual meaning** of the clause (e.g. “this means *some* matching value satisfies …”).
+2. **Asks for confirmation** if that is the intended meaning.
+3. **Offers a clear alternative** for the universal interpretation.
+
+Example message:
+
+> This clause means **“some matching value satisfies …”**.
+> Confirm with `/*intent:some*/`, or use `else !` (or `else !?`) for **“all”**.
+> *(Clarifying mode.)*
+
+Importantly, the tool never claims the clause is ambiguous or incorrect. The request is about *plausible miscommunication*, not semantics.
+
+#### Affirming comments
+
+To confirm existential intent, users add a short **affirming comment**, such as `/*intent:some*/`, adjacent to the clause. This comment does not change runtime semantics. It serves only to affirm intent and satisfy clarifying mode.
+
+This mirrors well-established patterns like `@ts-expect-error`: an explicit acknowledgment that a potentially surprising construct is intentional.
+
+#### Scope and philosophy
+
+Clarifying mode is not “training wheels” or “don’t trust the user” mode. It is a precision mode that enhances readability and teachability by placing semantic emphasis on **intent**, not on suppressing warnings.
+
+The mode is especially recommended for generated patterns (e.g. LLM output), but remains useful for humans working in high-precision contexts.
+
+When clarifying mode is disabled, Tendril behaves exactly as it does today.
+
+-----------
 
 ## CW 8. EL assertions applied to structural pieces other than bindings.
 
@@ -2253,6 +2293,102 @@ Validate:
 // not supported yet
 // "Show me violations" → Tendril(pat).validate(data) → {valid, errors}
 
+
+### Alternate suggestions
+
+Sure — here’s a **concise list of concrete API candidates**, framed as *use-case–level entry points*, not low-level plumbing. Think of these as *additive* layers on top of your existing model.
+
+---
+
+### **Extraction / Query (relational-style results)**
+
+1. **`rows(data, columns?, options?)`**
+   Return an array of plain objects (records).
+
+    * Scans or anchors depending on pattern type or option
+    * Projects only selected bindings
+    * Normalizes missing fields (omit / `undefined` / error)
+
+2. **`row(data, columns?, options?)`**
+   First row only (or `null` / error).
+
+3. **`pluck(data, vars, options?)`**
+   Shorthand for extracting one or more bindings without full records.
+
+4. **`get(data, var)`**
+   Return the first bound value of a variable.
+
+5. **`getAll(data, var)`**
+   Return all bound values of a variable across matches.
+
+6. **Row post-processing helpers (chainable or optional):**
+
+    * `.unique()` / `.distinctBy(vars)`
+    * `.groupBy(var)`
+    * `.orderBy(vars)`
+
+---
+
+### **Transformation / Rewrite (tree surgery)**
+
+7. **`rewrite(data, rule, options?)`**
+   Apply a rewrite rule everywhere (default = per occurrence, first solution).
+
+8. **`rewriteFirst(data, rule, options?)`**
+   Rewrite only the first matching occurrence.
+
+9. **`rewriteAllSolutions(data, rule, options?)`** *(explicit / advanced)*
+   Opt-in footgun for solution-level rewriting.
+
+10. **`replace(data, value | fn, options?)`**
+    High-level `$0` replacement (wrapper around `replaceAll`).
+
+---
+
+### **Validation / Assertion**
+
+11. **`assertMatch(data, options?)`**
+    Require anchored match; throw rich error if not.
+
+12. **`assertFind(data, options?)`**
+    Require at least one match anywhere.
+
+13. **`check(data, options?)`**
+    Return a structured validation report:
+    `{ ok, matchCount, samplePaths, warnings }`
+
+---
+
+### **Convenience / Shortcuts**
+
+14. **`firstSolution(data)`**
+    Return `{…bindings}` for the first match.
+
+15. **`firstOccurrence(data)`**
+    Return `{ path, value, bindings[] }`.
+
+16. **`matches(data)`**
+    Iterate `(occurrence, solution)` pairs directly (flattened but contextual).
+
+---
+
+### **Design Notes (implicit in all candidates)**
+
+* Occurrence context is **preserved by default**, but hidden unless requested
+* Shape differences across occurrences are **explicitly handled** via projection
+* Editing defaults are **deterministic and safe**
+* Low-level `match/find/OccurrenceSet/SolutionSet` remain as escape hatches
+
+---
+
+### **Minimal “If You Only Add Two” Recommendation**
+
+If you want the biggest payoff with the least surface area:
+
+* **`rows()`** — extraction / joins become obvious
+* **`rewrite()`** — transformation becomes obvious
+
+Those two alone make Tendril feel like a *tool*, not just a *mechanism*.
 
 
 

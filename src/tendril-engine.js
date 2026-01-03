@@ -685,6 +685,24 @@ function matchItem(item, node, path, sol, emit, ctx) {
         throw new Error('Group binding @x cannot appear at top level');
       }
 
+      case 'Guarded': {
+        // Guarded pattern: (PATTERN where EXPR)
+        // Match inner pattern, then evaluate guard with _ = matched value
+        matchItem(item.pat, node, path, sol, (s2) => {
+          // Create temp env for guard evaluation: solution bindings + _ = node
+          const guardEnv = new Map(s2.env);
+          guardEnv.set('_', {kind: 'scalar', value: node});
+          try {
+            if (evaluateExpr(item.guard, guardEnv)) {
+              emit(s2);  // emit WITHOUT _ in the env
+            }
+          } catch (e) {
+            // Guard evaluation error - treat as non-match
+          }
+        }, ctx);
+        return;
+      }
+
       case 'Arr': {
         if (!Array.isArray(node)) return;
         // If this array has a label and we have a flowKey, record it with bucket level

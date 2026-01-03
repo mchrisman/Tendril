@@ -139,12 +139,13 @@ export function tokenize(src) {
       if (w === 'as')       { push('as', 'as', j - i); continue; }
       if (w === 'where' && parenDepth > 0) {
         push('where', 'where', j - i);
-        // Capture everything until the matching ')' as a guard_expr token
+        // Capture everything until the ')' that closes the paren containing 'where'
         // Need to handle nested parens, strings properly
         const exprStart = i;
         let depth = parenDepth;
+        const targetDepth = parenDepth - 1;  // Stop when we exit the paren containing 'where'
         let k = i;
-        while (k < src.length && depth > 0) {
+        while (k < src.length && depth > targetDepth) {
           const ch = src[k];
           // Skip over string literals
           if (ch === '"' || ch === "'") {
@@ -159,9 +160,9 @@ export function tokenize(src) {
           }
           if (ch === '(') depth++;
           else if (ch === ')') depth--;
-          if (depth > 0) k++;
+          if (depth > targetDepth) k++;
         }
-        if (depth !== 0) throw syntax(`unmatched parenthesis in guard expression`, src, exprStart);
+        if (depth !== targetDepth) throw syntax(`unmatched parenthesis in guard expression`, src, exprStart);
         const exprText = src.slice(exprStart, k).trim();
         if (exprText) {
           push('guard_expr', exprText, k - i);

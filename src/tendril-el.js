@@ -200,6 +200,12 @@ export function parseExpr(src) {
       return ELit(eat('str').v);
     }
 
+    // Bare underscore as anonymous variable reference (for guarded patterns)
+    if (peek('id') && peek('id').v === '_') {
+      eat('id');
+      return EVar('_');
+    }
+
     throw new Error(`Unexpected token in expression: '${peek()?.v || 'EOF'}'`);
   }
 

@@ -39,6 +39,7 @@ const Bool = (v) => ({type: 'Bool', value: v});
 const Null = () => ({type: 'Null'});
 const Fail = () => ({type: 'Fail'}); // Always fails - used for 'else !' strong semantics
 const RootKey = () => ({type: 'RootKey'}); // Special marker for leading ** in paths
+const Guarded = (pat, guard) => ({type: 'Guarded', pat, guard}); // (PATTERN where EXPR) without binding
 
 // Bindings
 const SBind = (name, pat, guard = null) => ({type: 'SBind', name, pat, guard});  // $x=(pat) or $x=(pat where expr)
@@ -290,6 +291,14 @@ function parseItemTermCore(p) {
       p.fail('expected $var or @var after "as"');
     }
 
+    // Check for 'where EXPR' guard without binding (creates Guarded node)
+    // Syntax: (PATTERN where EXPR) - _ in guard refers to matched value
+    if (p.maybe('where')) {
+      const guard = parseGuardExpr(p);
+      p.eat(')');
+      return Guarded(inner, guard);
+    }
+
     p.eat(')');
     return inner;
   }
@@ -516,7 +525,7 @@ function parseAGroupBase(p) {
   // Parenthesized A_BODY (grouping), possibly with 'as $x' or 'as @x' binding
   if (p.peek('(')) {
     p.eat('(');
-    const items = parseABody(p, ')', 'as');
+    const items = parseABody(p, ')', 'as', 'where');
     const inner = items.length === 1 ? items[0] : {type: 'Seq', items};
 
     // Check for 'as $x' or 'as @x' binding suffix
@@ -542,6 +551,14 @@ function parseAGroupBase(p) {
         return GroupBind(name, inner);
       }
       p.fail('expected $var or @var after "as"');
+    }
+
+    // Check for 'where EXPR' guard without binding (creates Guarded node)
+    // Syntax: (PATTERN where EXPR) - _ in guard refers to matched value
+    if (p.maybe('where')) {
+      const guard = parseGuardExpr(p);
+      p.eat(')');
+      return Guarded(inner, guard);
     }
 
     p.eat(')');
@@ -990,6 +1007,7 @@ function validateNode(node, inContainer) {
     case 'SBind':
     case 'GroupBind':
     case 'Flow':
+    case 'Guarded':
       validateNode(node.pat || node.sub, childContext);
       break;
     case 'Seq':
@@ -1010,7 +1028,7 @@ export const AST = {
   // Atoms
   Any, Lit, StringPattern, Bool, Null, Fail, RootKey,
   // Bindings
-  SBind, GroupBind,
+  SBind, GroupBind, Guarded,
   // Containers
   Arr, Obj,
   // Operators

@@ -81,6 +81,7 @@ test/
   else.test.js                 # 'else' operator (prioritized choice)
   flow-operator.test.js        # Flow operator (->) for bucket collection
   cw4-cw14-conformance.test.js # CW4/CW14/CW16 conformance (buckets, labels)
+  guarded-patterns.test.js     # CW 2B: anonymous guards (PATTERN where EXPR)
   label-parsing.test.js        # Label syntax (§label, <^label>)
   object-semantics-v2.test.js  # Slice-based object matching
   residual-tracking.test.js    # Coverage-based remainder
