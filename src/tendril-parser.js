@@ -85,33 +85,90 @@ const Breadcrumb = (kind, key, quant) => ({
   quant   // null or {op: '?'|'+'|'*', min, max}
 });
 
-// Helper: eat a variable name (identifier or keyword like 'else')
-// This allows $else, @else etc. as valid variable names
+// Helper: eat a variable name (any identifier, including keywords like 'else')
+// This allows $else, @else, $where, $as etc. as valid variable names
 function eatVarName(p) {
-  const t = p.peek();
-  if (t && (t.k === 'id' || t.k === 'else')) {
-    p.eat(t.k);
+  const t = p.peek('id');
+  if (t) {
+    p.eat('id');
     return t.v;
   }
   p.fail('expected variable name');
 }
 
-// Parse guard expression: consume guard_expr token and parse as expression
-function parseGuardExpr(p) {
-  // The tokenizer now produces a guard_expr token with raw expression text
-  const tok = p.peek('guard_expr');
-  if (!tok) p.fail('expected guard expression');
-  p.eat('guard_expr');
+// ---------- Suffix Combinators ----------
+// These factor out the repeated (INNER as $x where EXPR) pattern
 
-  const exprSrc = tok.v;
-  if (!exprSrc) p.fail('empty guard expression');
+/**
+ * Parse a parenthesized expression with optional binding and guard.
+ * Handles: (INNER), (INNER as $x), (INNER as $x where EXPR), (INNER as @x), (INNER where EXPR)
+ * @param {Parser} p - Parser instance
+ * @param {Function} parseInner - Function to parse the inner content (returns AST node)
+ * @param {Array<string>} stopTokens - Tokens that signal end of inner (besides 'as', 'where', ')')
+ * @returns {Object|null} - AST node (SBind, GroupBind, Guarded, or plain inner), or null if no '('
+ */
+function parseParenWithBindingAndGuard(p, parseInner, stopTokens = []) {
+  if (!p.maybe('(')) return null;
 
-  // Parse the expression using the expression language parser
-  try {
-    return parseExpr(exprSrc);
-  } catch (e) {
-    p.fail(`invalid guard expression: ${e.message}`);
+  const inner = parseInner(p, [')', 'as', 'where', ...stopTokens]);
+
+  // Check for 'as $x' or 'as @x' binding suffix
+  if (p.maybe('as')) {
+    if (p.peek('$')) {
+      p.eat('$');
+      const name = eatVarName(p);
+      let guard = null;
+      if (p.maybe('where')) {
+        guard = parseExpr(p);
+      }
+      p.eat(')');
+      return SBind(name, inner, guard);
+    }
+    if (p.peek('@')) {
+      p.eat('@');
+      const name = eatVarName(p);
+      if (p.peek('where')) {
+        p.fail('guard expressions are not supported on group bindings (@var)');
+      }
+      p.eat(')');
+      return GroupBind(name, inner);
+    }
+    p.fail('expected $var or @var after "as"');
   }
+
+  // Check for 'where EXPR' guard without binding (creates Guarded node)
+  if (p.maybe('where')) {
+    const guard = parseExpr(p);
+    p.eat(')');
+    return Guarded(inner, guard);
+  }
+
+  p.eat(')');
+  return inner;
+}
+
+/**
+ * Parse optional flow suffix: '->' '@' IDENT ('<^' IDENT '>')?
+ * @param {Parser} p - Parser instance
+ * @param {Object} node - The node to potentially wrap in a Flow
+ * @returns {Object} - Original node or Flow-wrapped node
+ */
+function withOptionalFlow(p, node) {
+  if (!p.maybe('->')) return node;
+
+  p.eat('@');
+  const bucket = eatVarName(p);
+
+  // Check for optional <^label> suffix
+  let labelRef = null;
+  if (p.peek('<')) {
+    p.eat('<');
+    p.eat('^');
+    labelRef = eatVarName(p);
+    p.eat('>');
+  }
+
+  return Flow(node, bucket, labelRef);
 }
 
 // ---------- ROOT_PATTERN ----------
@@ -163,263 +220,100 @@ function parseArraySlicePattern(p) {
 // ---------- ITEM ----------
 
 function parseItem(p) {
-  // Handle alternation and else at this level (same precedence, but cannot mix)
-  // ITEM := Term ('|' Term)* | Term ('else' Term)*
-  // Both produce Alt nodes; else sets prioritized=true
-  let left = parseItemTerm(p);
+  // ITEM := ITEM_TERM ('|' ITEM_TERM)* | ITEM_TERM ('else' ITEM_TERM)*
+  // Both produce Alt nodes; else sets prioritized=true; cannot mix.
+  const first = parseItemTerm(p);
 
-  if (p.peek('|')) {
-    // Parse alternation chain: A | B | C → Alt([A,B,C], false)
-    // Use backtracking so that if parseItemTerm fails after '|', we stop cleanly
-    const alts = [left];
-    while (true) {
-      const next = p.backtrack(() => {
-        p.eat('|');
-        return parseItemTerm(p);
-      });
-      if (next === null) break;
-      alts.push(next);
+  // Try alternation: A | B | C  (entire chain must succeed or we abandon it)
+  const altChain = p.backtrack(() => {
+    p.eat('|');
+    const alts = [first, parseItemTerm(p)];
+    while (p.backtrack(() => { p.eat('|'); return true; })) {
+      alts.push(parseItemTerm(p));
     }
-    if (alts.length > 1) {
-      if (p.peek('else')) {
-        p.fail("cannot mix '|' and 'else' without parentheses");
-      }
-      return Alt(alts, false);
+    return Alt(alts, false);
+  });
+  if (altChain) {
+    if (p.backtrack(() => { p.eat('else'); return true; })) {
+      p.fail("cannot mix '|' and 'else' without parentheses");
     }
+    return altChain;
   }
 
-  if (p.peek('else')) {
-    // Parse else chain: A else B else C → Alt([A,B,C], true)
-    // Use backtracking so that 'else !' doesn't get consumed (! is not a valid ITEM_TERM)
-    const alts = [left];
-    while (true) {
-      const next = p.backtrack(() => {
-        p.eat('else');
-        return parseItemTerm(p);
-      });
-      if (next === null) break;
-      // Check for mixing OUTSIDE backtracking so error propagates
-      if (p.peek('|')) {
-        p.fail("cannot mix '|' and 'else' without parentheses");
-      }
-      alts.push(next);
+  // Try else chain: A else B else C  (entire chain must succeed or we abandon it)
+  // But 'else !' and 'else !?' are reserved for object strong semantics, don't consume
+  const elseChain = p.backtrack(() => {
+    p.eat('else');
+    if (p.peek('!')) return null;  // 'else !' is for object strong semantics
+    const alts = [first, parseItemTerm(p)];
+    // Continue eating 'else' unless followed by '!' (object strong semantics)
+    while (p.backtrack(() => { p.eat('else'); if (p.peek('!')) return null; return true; })) {
+      alts.push(parseItemTerm(p));
     }
-    if (alts.length > 1) {
-      return Alt(alts, true);
+    return Alt(alts, true);
+  });
+  if (elseChain) {
+    if (p.backtrack(() => { p.eat('|'); return true; })) {
+      p.fail("cannot mix '|' and 'else' without parentheses");
     }
+    return elseChain;
   }
 
-  return left;
+  return first;
 }
 
 function parseItemTerm(p) {
-  // ITEM_TERM := ITEM_TERM_CORE ('->' S_GROUP ('<^' IDENT '>')?)?
-  //
-  // The '->' suffix flows matching k:v pairs into a bucket during object iteration.
-  // The optional <^label> suffix specifies which labeled scope provides the key.
-  // Parses the core term, then optionally wraps it in a Flow node.
-
+  // ITEM_TERM := ITEM_TERM_CORE ('->' S_GROUP FLOW_MOD?)?
   const core = parseItemTermCore(p);
-
-  // Check for '->' suffix (flow into bucket)
-  const flowResult = p.ifPeek('->', () => {
-    p.eat('->');
-    p.eat('@');
-    const bucket = eatVarName(p);
-    // Check for optional <^label> suffix (label reference)
-    let labelRef = null;
-    if (p.peek('<')) {
-      p.eat('<');
-      p.eat('^');
-      labelRef = eatVarName(p);
-      p.eat('>');
-    }
-    return {bucket, labelRef};
-  });
-  if (flowResult !== null) {
-    return Flow(core, flowResult.bucket, flowResult.labelRef);
-  }
-
-  return core;
+  return withOptionalFlow(p, core);
 }
 
 function parseItemTermCore(p) {
-  // ITEM_TERM_CORE := '(' ITEM ')'
-  //                 | '(' ITEM 'as' S_ITEM ('where' GUARD_EXPR)? ')'
-  //                 | '(' ITEM 'as' S_GROUP ')'
-  //                 | LOOK_AHEAD
-  //                 | S_ITEM
-  //                 | S_GROUP
-  //                 | TYPED_WILD
-  //                 | '_'
-  //                 | LITERAL
-  //                 | OBJ
-  //                 | ARR
+  // ITEM_TERM_CORE := LOOK_AHEAD
+  //                 | '(' ITEM ')' | '(' ITEM 'as' ... ')' | '(' ITEM 'where' ... ')'
+  //                 | S_ITEM | S_GROUP | TYPED_WILD | '_' | LITERAL | OBJ | ARR
+  //
+  // Uses ordered backtracking: try each alternative, return first success.
 
-  // Lookahead: (? or (!
-  if (p.peek('(?') || p.peek('(!')) {
-    return parseLookahead(p);
-  }
-
-  // Parenthesized grouping, possibly with 'as $x' or 'as @x' binding
-  if (p.peek('(')) {
-    p.eat('(');
-    const inner = parseItem(p);
-
-    // Check for 'as $x' or 'as @x' binding suffix
-    if (p.maybe('as')) {
-      if (p.peek('$')) {
-        p.eat('$');
-        const name = eatVarName(p);
-        let guard = null;
-        if (p.maybe('where')) {
-          guard = parseGuardExpr(p);
-        }
-        p.eat(')');
-        return SBind(name, inner, guard);
-      }
-      if (p.peek('@')) {
-        p.eat('@');
-        const name = eatVarName(p);
-        // Guards on group bindings are not supported
-        if (p.peek('where')) {
-          p.fail('guard expressions are not supported on group bindings (@var)');
-        }
-        p.eat(')');
-        return GroupBind(name, inner);
-      }
-      p.fail('expected $var or @var after "as"');
-    }
-
-    // Check for 'where EXPR' guard without binding (creates Guarded node)
-    // Syntax: (PATTERN where EXPR) - _ in guard refers to matched value
-    if (p.maybe('where')) {
-      const guard = parseGuardExpr(p);
-      p.eat(')');
-      return Guarded(inner, guard);
-    }
-
-    p.eat(')');
-    return inner;
-  }
-
-  // Scalar variable: bare $x (shorthand for (_ as $x))
-  // For binding with pattern, use (PATTERN as $x) syntax
-  if (p.peek('$')) {
-    p.eat('$');
-    const name = eatVarName(p);
-    return SBind(name, Any());
-  }
-
-  // Group variable: bare @x (shorthand for (_* as @x))
-  // For binding with pattern, use (PATTERN as @x) syntax
-  if (p.peek('@')) {
-    p.eat('@');
-    const name = eatVarName(p);
-    return GroupBind(name, Quant(Any(), '*', 0, Infinity));
-  }
-
-  // Wildcard
-  if (p.maybe('any')) {
-    return Any();
-  }
-
-  // Typed wildcards
-  if (p.maybe('any_string')) {
-    return TypedAny('string');
-  }
-  if (p.maybe('any_number')) {
-    return TypedAny('number');
-  }
-  if (p.maybe('any_boolean')) {
-    return TypedAny('boolean');
-  }
-
-  // Literals
-  if (p.peek('num')) {
-    return Lit(p.eat('num').v);
-  }
-  if (p.peek('bool')) {
-    return Bool(p.eat('bool').v);
-  }
-  if (p.peek('null')) {
-    p.eat('null');
-    return Null();
-  }
-  if (p.peek('str')) {
-    return Lit(p.eat('str').v);
-  }
-  if (p.peek('id')) {
-    // Bareword string
-    return Lit(p.eat('id').v);
-  }
-  if (p.peek('re')) {
-    const {source, flags} = p.eat('re').v;
-    const re = makeRegExp({source, flags});
-    return StringPattern('regex', `/${source}/${flags}`, s => typeof s === 'string' && re.test(s));
-  }
-  if (p.peek('ci')) {
-    const {lower, desc} = p.eat('ci').v;
-    return StringPattern('ci', desc, s => typeof s === 'string' && s.toLowerCase() === lower);
-  }
-
-  // Labeled object or array: §label { ... } or §label [ ... ]
-  const labeled = p.ifPeek('§', () => {
-    p.eat('§');
-    const label = eatVarName(p);
-    if (p.peek('{')) {
-      return parseObj(p, label);
-    }
-    if (p.peek('[')) {
-      return parseArr(p, label);
-    }
-    p.fail('§label must be followed by { or [');
-  });
-  if (labeled) return labeled;
-
-  // Object
-  if (p.peek('{')) {
-    return parseObj(p);
-  }
-
-  // Array
-  if (p.peek('[')) {
-    return parseArr(p);
-  }
-
-  p.fail('expected item (literal, wildcard, $var, @var, array, object, or parenthesized expression)');
+  return p.backtrack(() => parseLookahead(p))
+      || parseParenWithBindingAndGuard(p, () => parseItem(p))
+      || p.backtrack(() => { p.eat('$'); return SBind(eatVarName(p), Any()); })
+      || p.backtrack(() => { p.eat('@'); return GroupBind(eatVarName(p), Quant(Any(), '*', 0, Infinity)); })
+      || p.backtrack(() => { p.eat('any'); return Any(); })
+      || p.backtrack(() => { p.eat('any_string'); return TypedAny('string'); })
+      || p.backtrack(() => { p.eat('any_number'); return TypedAny('number'); })
+      || p.backtrack(() => { p.eat('any_boolean'); return TypedAny('boolean'); })
+      || p.backtrack(() => Lit(p.eat('num').v))
+      || p.backtrack(() => Bool(p.eat('bool').v))
+      || p.backtrack(() => { p.eat('null'); return Null(); })
+      || p.backtrack(() => Lit(p.eat('str').v))
+      || p.backtrack(() => Lit(p.eat('id').v))
+      || p.backtrack(() => {
+           const {source, flags} = p.eat('re').v;
+           const re = makeRegExp({source, flags});
+           return StringPattern('regex', `/${source}/${flags}`, s => typeof s === 'string' && re.test(s));
+         })
+      || p.backtrack(() => {
+           const {lower, desc} = p.eat('ci').v;
+           return StringPattern('ci', desc, s => typeof s === 'string' && s.toLowerCase() === lower);
+         })
+      || p.backtrack(() => { p.eat('§'); const label = eatVarName(p); return parseObj(p, label); })
+      || p.backtrack(() => { p.eat('§'); const label = eatVarName(p); return parseArr(p, label); })
+      || p.backtrack(() => parseObj(p))
+      || p.backtrack(() => parseArr(p))
+      || p.fail('expected item');
 }
 
 function parseLookahead(p) {
   // (? A_GROUP) or (! A_GROUP)
-  let neg = false;
-  if (p.peek('(?')) {
-    p.eat('(?');
-  } else if (p.peek('(!')) {
-    p.eat('(!');
-    neg = true;
-  } else {
-    p.fail('expected (? or (! for lookahead');
-  }
-  const pat = parseAGroup(p);
-  p.eat(')');
-  return Look(neg, pat);
+  return p.backtrack(() => { p.eat('(?'); const pat = parseAGroup(p); p.eat(')'); return Look(false, pat); })
+      || p.backtrack(() => { p.eat('(!'); const pat = parseAGroup(p); p.eat(')'); return Look(true, pat); });
 }
 
 function parseObjectLookahead(p) {
   // (? O_GROUP) or (! O_GROUP)
-  let neg = false;
-  if (p.peek('(?')) {
-    p.eat('(?');
-  } else if (p.peek('(!')) {
-    p.eat('(!');
-    neg = true;
-  } else {
-    p.fail('expected (? or (! for object lookahead');
-  }
-  const pat = parseOGroup(p);
-  p.eat(')');
-  return {type: 'OLook', neg, pat};
+  return p.backtrack(() => { p.eat('(?'); const pat = parseOGroup(p); p.eat(')'); return {type: 'OLook', neg: false, pat}; })
+      || p.backtrack(() => { p.eat('(!'); const pat = parseOGroup(p); p.eat(')'); return {type: 'OLook', neg: true, pat}; });
 }
 
 // ---------- ARRAYS ----------
@@ -443,194 +337,84 @@ function parseArr(p, label = null) {
 }
 
 function parseAGroup(p) {
-  // A_GROUP := '(' A_BODY ')'
-  //          | S_GROUP
-  //          | S_GROUP '=' '(' A_BODY ')'
-  //          | S_ITEM
-  //          | S_ITEM '=' '(' A_BODY ')'
-  //          | ITEM
-  //          | OBJ
-  //          | ARR
-  //          | A_GROUP A_QUANT
-  //          | A_GROUP '|' A_GROUP
-  //          | '(?' A_GROUP ')'
-  //          | '(!' A_GROUP ')'
+  // A_GROUP := '...' | A_GROUP_BASE A_QUANT? ('|' A_GROUP_BASE A_QUANT?)* | A_GROUP_BASE A_QUANT? ('else' A_GROUP_BASE A_QUANT?)*
 
-  // Special handling for ... (spread)
-  if (p.peek('...')) {
+  // Spread (quantifiers disallowed)
+  const spread = p.backtrack(() => {
     p.eat('...');
-    // Quantifiers on ... are disallowed - they're either meaningless or a performance bomb
-    const quant = p.backtrack(() => parseAQuant(p));
-    if (quant) {
-      p.fail(`Quantifiers on '...' are not allowed (found '...${quant.op}')`);
-    }
+    const q = parseAQuant(p);
+    if (q) p.fail(`Quantifiers on '...' are not allowed (found '...${q.op}')`);
     return Spread(null);
-  }
+  });
+  if (spread) return spread;
 
-  let base = parseAGroupBase(p);
+  // Parse base with optional quantifier
+  const parseBaseWithQuant = () => {
+    const base = parseAGroupBase(p);
+    const q = parseAQuant(p);
+    return q ? Quant(base, q.op, q.min, q.max) : base;
+  };
 
-  // Handle quantifier
-  const q = p.backtrack(() => parseAQuant(p));
-  if (q) {
-    base = Quant(base, q.op, q.min, q.max);
-  }
+  const first = parseBaseWithQuant();
 
-  // Handle alternation or else (same precedence, cannot mix)
-  // Both produce Alt nodes; else sets prioritized=true
-  if (p.peek('|')) {
-    // Parse alternation chain: A | B | C → Alt([A,B,C], false)
-    const alts = [base];
-    while (p.maybe('|')) {
-      let alt = parseAGroupBase(p);
-      const q = p.backtrack(() => parseAQuant(p));
-      if (q) {
-        alt = Quant(alt, q.op, q.min, q.max);
-      }
-      alts.push(alt);
+  // Try alternation: A | B | C
+  if (p.backtrack(() => { p.eat('|'); return true; })) {
+    const alts = [first, parseBaseWithQuant()];
+    while (p.backtrack(() => { p.eat('|'); return true; })) {
+      alts.push(parseBaseWithQuant());
     }
-    if (p.peek('else')) {
+    if (p.backtrack(() => { p.eat('else'); return true; })) {
       p.fail("cannot mix '|' and 'else' without parentheses");
     }
     return Alt(alts, false);
   }
 
-  if (p.peek('else')) {
-    // Parse else chain: A else B else C → Alt([A,B,C], true)
-    const alts = [base];
-    while (p.maybe('else')) {
-      let alt = parseAGroupBase(p);
-      const q = p.backtrack(() => parseAQuant(p));
-      if (q) {
-        alt = Quant(alt, q.op, q.min, q.max);
-      }
-      alts.push(alt);
-      if (p.peek('|')) {
-        p.fail("cannot mix '|' and 'else' without parentheses");
-      }
+  // Try else chain: A else B else C
+  if (p.backtrack(() => { p.eat('else'); return true; })) {
+    const alts = [first, parseBaseWithQuant()];
+    while (p.backtrack(() => { p.eat('else'); return true; })) {
+      alts.push(parseBaseWithQuant());
+    }
+    if (p.backtrack(() => { p.eat('|'); return true; })) {
+      p.fail("cannot mix '|' and 'else' without parentheses");
     }
     return Alt(alts, true);
   }
 
-  return base;
+  return first;
 }
 
 function parseAGroupBase(p) {
   // Base A_GROUP without quantifiers or alternation
-
-  // Lookahead
-  if (p.peek('(?') || p.peek('(!')) {
-    return parseLookahead(p);
-  }
-
-  // Parenthesized A_BODY (grouping), possibly with 'as $x' or 'as @x' binding
-  if (p.peek('(')) {
-    p.eat('(');
-    const items = parseABody(p, ')', 'as', 'where');
-    const inner = items.length === 1 ? items[0] : {type: 'Seq', items};
-
-    // Check for 'as $x' or 'as @x' binding suffix
-    if (p.maybe('as')) {
-      if (p.peek('$')) {
-        p.eat('$');
-        const name = eatVarName(p);
-        let guard = null;
-        if (p.maybe('where')) {
-          guard = parseGuardExpr(p);
-        }
-        p.eat(')');
-        return SBind(name, inner, guard);
-      }
-      if (p.peek('@')) {
-        p.eat('@');
-        const name = eatVarName(p);
-        // Guards on group bindings are not supported
-        if (p.peek('where')) {
-          p.fail('guard expressions are not supported on group bindings (@var)');
-        }
-        p.eat(')');
-        return GroupBind(name, inner);
-      }
-      p.fail('expected $var or @var after "as"');
-    }
-
-    // Check for 'where EXPR' guard without binding (creates Guarded node)
-    // Syntax: (PATTERN where EXPR) - _ in guard refers to matched value
-    if (p.maybe('where')) {
-      const guard = parseGuardExpr(p);
-      p.eat(')');
-      return Guarded(inner, guard);
-    }
-
-    p.eat(')');
-    return inner;
-  }
-
-  // Group variable: bare @x (shorthand for (_* as @x))
-  // For binding with pattern, use (PATTERN as @x) syntax
-  if (p.peek('@')) {
-    p.eat('@');
-    const name = eatVarName(p);
-    return GroupBind(name, Quant(Any(), '*', 0, Infinity));
-  }
-
-  // Scalar variable: bare $x (shorthand for (_ as $x))
-  // For binding with pattern, use (PATTERN as $x) syntax
-  if (p.peek('$')) {
-    p.eat('$');
-    const name = eatVarName(p);
-    return SBind(name, Any());
-  }
-
-  // Otherwise, parse as ITEM
-  return parseItemTerm(p);
+  // Uses ordered backtracking: try each alternative, return first success.
+  return parseLookahead(p)
+      || parseParenWithBindingAndGuard(p, (p, stopTokens) => {
+           const items = parseABody(p, ...stopTokens);
+           return items.length === 1 ? items[0] : {type: 'Seq', items};
+         })
+      || p.backtrack(() => { p.eat('@'); return GroupBind(eatVarName(p), Quant(Any(), '*', 0, Infinity)); })
+      || p.backtrack(() => { p.eat('$'); return SBind(eatVarName(p), Any()); })
+      || parseItemTerm(p);
 }
 
 // isAQuant removed - use backtracking with parseAQuant instead
 
 function parseAQuant(p) {
-  // A_QUANT := '?' | '??' | '?+'
-  //          | '+' | '+?' | '++'
-  //          | '*' | '*?' | '*+'
-  //          | '{' INTEGER '}'
-  //          | '{' INTEGER ',' INTEGER? '}'
-  //          | '{' ',' INTEGER '}'
-
-  if (p.maybe('?+')) return {op: '?+', min: 0, max: 1};
-  if (p.maybe('??')) return {op: '??', min: 0, max: 1};
-  if (p.maybe('?'))  return {op: '?', min: 0, max: 1};
-  if (p.maybe('++')) return {op: '++', min: 1, max: null};
-  if (p.maybe('+?')) return {op: '+?', min: 1, max: null};
-  if (p.maybe('+'))  return {op: '+', min: 1, max: null};
-  if (p.maybe('*+')) return {op: '*+', min: 0, max: null};
-  if (p.maybe('*?')) return {op: '*?', min: 0, max: null};
-  if (p.maybe('*'))  return {op: '*', min: 0, max: null};
-
-  // {m}, {m,n}, {m,}, {,n}
-  if (p.maybe('{')) {
-    let min = null, max = null;
-
-    if (p.maybe(',')) {
-      // {,n}
-      min = 0;
-      max = eatNonNegInt(p, 'array quantifier');
-    } else {
-      min = eatNonNegInt(p, 'array quantifier');
-      if (p.maybe(',')) {
-        if (p.peek('num')) {
-          max = eatNonNegInt(p, 'array quantifier');
-        } else {
-          max = null;  // unbounded
-        }
-      } else {
-        max = min;  // exact count
-      }
-    }
-
-    p.eat('}');
-    return {op: `{${min},${max ?? ''}}`, min, max};
-  }
-
-  p.fail('expected quantifier');
+  // A_QUANT := '?' | '??' | '?+' | '+' | '+?' | '++' | '*' | '*?' | '*+'
+  //          | '{' INTEGER '}' | '{' INTEGER ',' INTEGER? '}' | '{' ',' INTEGER '}'
+  return p.backtrack(() => { p.eat('?+'); return {op: '?+', min: 0, max: 1}; })
+      || p.backtrack(() => { p.eat('??'); return {op: '??', min: 0, max: 1}; })
+      || p.backtrack(() => { p.eat('?');  return {op: '?',  min: 0, max: 1}; })
+      || p.backtrack(() => { p.eat('++'); return {op: '++', min: 1, max: Infinity}; })
+      || p.backtrack(() => { p.eat('+?'); return {op: '+?', min: 1, max: Infinity}; })
+      || p.backtrack(() => { p.eat('+');  return {op: '+',  min: 1, max: Infinity}; })
+      || p.backtrack(() => { p.eat('*+'); return {op: '*+', min: 0, max: Infinity}; })
+      || p.backtrack(() => { p.eat('*?'); return {op: '*?', min: 0, max: Infinity}; })
+      || p.backtrack(() => { p.eat('*');  return {op: '*',  min: 0, max: Infinity}; })
+      || p.backtrack(() => { p.eat('{'); p.eat(','); const max = eatNonNegInt(p, 'quantifier'); p.eat('}'); return {op: `{0,${max}}`, min: 0, max}; })
+      || p.backtrack(() => { p.eat('{'); const min = eatNonNegInt(p, 'quantifier'); p.eat(','); const max = eatNonNegInt(p, 'quantifier'); p.eat('}'); return {op: `{${min},${max}}`, min, max}; })
+      || p.backtrack(() => { p.eat('{'); const min = eatNonNegInt(p, 'quantifier'); p.eat(','); p.eat('}'); return {op: `{${min},}`, min, max: Infinity}; })
+      || p.backtrack(() => { p.eat('{'); const n = eatNonNegInt(p, 'quantifier'); p.eat('}'); return {op: `{${n}}`, min: n, max: n}; });
 }
 
 // ---------- OBJECTS ----------
@@ -663,285 +447,121 @@ function parseObj(p, label = null) {
 }
 
 function parseORemnant(p) {
-  // O_REMNANT := '@' IDENT '=' '(' '%' ')' O_REM_QUANT?
-  //            | '%' O_REM_QUANT?
-  //            | '(!' '%' ')'                             // closed-object assertion
-
-  // Helper to check if current token is remainder marker (%)
-  const isRemainderMarker = () => p.peek('%');
-
-  const eatRemainderMarker = () => {
-    if (p.peek('%')) return p.eat('%');
-    return null;
-  };
-
-  // Try (% as @x) or (%? as @x) with optional quantifier
-  // New syntax: (% as @x) - parens around %, 'as' keyword, then variable
-  const bindRemnant = p.backtrack(() => {
-    if (!p.maybe('(')) return null;
-    if (!isRemainderMarker()) return null;
-    eatRemainderMarker();
-    // Handle %? inside parens (shorthand for optional remainder)
-    let quant = null;
-    if (p.maybe('?')) {
-      quant = {min: 0, max: null}; // %? means 0..∞ (can be empty)
-    }
-    // Also check for quantifier before 'as'
-    if (!quant) {
-      quant = parseRemainderQuant(p);
-    }
-    // Now expect 'as @name'
-    if (!p.maybe('as')) return null;
-    if (!p.peek('@')) return null;
-    p.eat('@');
-    const name = eatVarName(p);
-    p.eat(')');
-    p.maybe(',');
-    return GroupBind(name, Spread(quant));
-  });
-  if (bindRemnant) return bindRemnant;
-
-  // Try bare '%' with optional quantifier
-  const bareRemnant = p.backtrack(() => {
-    if (!isRemainderMarker()) return null;
-    eatRemainderMarker();
-    // Handle %? shorthand for optional (can be empty)
-    let quant = null;
-    if (p.maybe('?')) {
-      quant = {min: 0, max: null}; // %? means 0..∞
-    } else {
-      quant = parseRemainderQuant(p);
-    }
-    p.maybe(',');
-    return Spread(quant);
-  });
-  if (bareRemnant) return bareRemnant;
-
-  // Try (!%)
-  const negRemnant = p.backtrack(() => {
-    if (!p.peek('(!')) return null;
-    p.eat('(!');
-    if (!isRemainderMarker()) return null;
-    eatRemainderMarker();
-    p.eat(')');
-    p.maybe(',');
-    return {type: 'OLook', neg: true, pat: Spread(null)};
-  });
-  if (negRemnant) return negRemnant;
-
-  // Check for common mistake: using old '..' syntax
-  // Note: '...' is not valid in objects (it's for arrays); '**' is for path skip
-  // This case shouldn't happen now that '..' isn't tokenized, but keep for safety
-
-  return null;
+  // O_REMNANT := '(' '%' QUANT? 'as' '@' IDENT ')' | '%' QUANT? | '(!' '%' ')'
+  // Uses ordered backtracking.
+  return p.backtrack(() => {
+           p.eat('('); p.eat('%');
+           const q = p.backtrack(() => { p.eat('?'); return {min: 0, max: Infinity}; }) || parseRemainderQuant(p);
+           p.eat('as'); p.eat('@');
+           const name = eatVarName(p);
+           p.eat(')'); p.maybe(',');
+           return GroupBind(name, Spread(q));
+         })
+      || p.backtrack(() => {
+           p.eat('%');
+           const q = p.backtrack(() => { p.eat('?'); return {min: 0, max: Infinity}; }) || parseRemainderQuant(p);
+           p.maybe(',');
+           return Spread(q);
+         })
+      || p.backtrack(() => { p.eat('(!'); p.eat('%'); p.eat(')'); p.maybe(','); return {type: 'OLook', neg: true, pat: Spread(null)}; });
 }
 
-// Parse remainder quantifier: #{n}, #{n,m}, #{n,}, #?
 function parseRemainderQuant(p) {
-  if (!p.peek('#')) return null;
-  p.eat('#');
-
-  if (p.maybe('?')) {
-    // #? means 0..∞ (any count)
-    return {min: 0, max: null};
-  }
-
-  if (!p.peek('{')) p.fail('expected { or ? after # in remainder quantifier');
-  p.eat('{');
-
-  const min = eatNonNegInt(p, 'remainder quantifier');
-  let max = min;
-
-  if (p.maybe(',')) {
-    if (p.peek('num')) {
-      max = eatNonNegInt(p, 'remainder quantifier');
-    } else {
-      max = null; // unbounded
-    }
-  }
-
-  p.eat('}');
-
-  if (max !== null && max < min) p.fail('remainder quantifier upper < lower');
-  return {min, max};
+  // QUANT := '#?' | '#{' INTEGER '}' | '#{' INTEGER ',' INTEGER? '}'
+  return p.backtrack(() => { p.eat('#'); p.eat('?'); return {min: 0, max: Infinity}; })
+      || p.backtrack(() => { p.eat('#'); p.eat('{'); const min = eatNonNegInt(p, '%'); p.eat(','); const max = eatNonNegInt(p, '%'); p.eat('}'); if (max < min) p.fail('% quantifier upper < lower'); return {min, max}; })
+      || p.backtrack(() => { p.eat('#'); p.eat('{'); const min = eatNonNegInt(p, '%'); p.eat(','); p.eat('}'); return {min, max: Infinity}; })
+      || p.backtrack(() => { p.eat('#'); p.eat('{'); const n = eatNonNegInt(p, '%'); p.eat('}'); return {min: n, max: n}; });
 }
 
 function parseOGroup(p) {
-  // O_GROUP := '(' O_GROUP* ')'
-  //          | '@' IDENT '=' '(' O_GROUP* ')'
-  //          | O_TERM
-  //          | '(?' O_GROUP ')'
-  //          | '(!' O_GROUP ')'
+  // O_GROUP := '(?' O_GROUP ')' | '(!' O_GROUP ')' | '(' O_GROUP* ')' | '(' O_GROUP* 'as' '@' IDENT ')' | O_TERM
+  // Uses ordered backtracking.
 
-  // Try lookahead first
-  if (p.peek('(?') || p.peek('(!')) {
-    return parseObjectLookahead(p);
-  }
+  // Lookahead
+  const look = parseObjectLookahead(p);
+  if (look) return look;
 
-  // Try parenthesized O_BODY (grouping), possibly with 'as @x' binding
-  // Use backtracking because '(' could also be part of O_TERM's key pattern
-  const groupResult = p.backtrack(() => {
+  // Parenthesized grouping with optional 'as @x' binding
+  const groupWithBind = p.backtrack(() => {
     p.eat('(');
-    const groups = [];
-    while (!p.peek(')') && !p.peek('as')) {
-      groups.push(parseOGroup(p));
-      p.maybe(',');
-    }
-    // Check for 'as @x' binding suffix
-    if (p.maybe('as')) {
-      if (!p.peek('@')) p.fail('expected @var after "as" in object group');
-      p.eat('@');
-      const name = eatVarName(p);
-      p.eat(')');
-      return GroupBind(name, {type: 'OGroup', groups});
-    }
+    const groups = parseOBodyUntil(p, ')', 'as');
+    p.eat('as');
+    p.eat('@');
+    const name = eatVarName(p);
+    p.eat(')');
+    return GroupBind(name, {type: 'OGroup', groups});
+  });
+  if (groupWithBind) return groupWithBind;
+
+  const groupPlain = p.backtrack(() => {
+    p.eat('(');
+    const groups = parseOBodyUntil(p, ')');
     p.eat(')');
     return {type: 'OGroup', groups};
   });
-  if (groupResult) return groupResult;
+  if (groupPlain) return groupPlain;
 
-  // Try STRONG_O_TERM first: O_TERM followed by 'else !'
-  // If that fails, fall back to plain O_TERM
-  // Then parse O_KV_OPT (?) at the end for both paths
+  // O_TERM with possible 'else !' suffix and '?' suffix
   const strongTerm = p.backtrack(() => {
     const term = parseOTerm(p);
     p.eat('else');
     p.eat('!');
-    return {term, strong: true};
+    const optional = !!p.backtrack(() => { p.eat('?'); return true; });
+    return OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, true);
   });
+  if (strongTerm) return strongTerm;
 
-  let baseTerm, strong;
-  if (strongTerm) {
-    baseTerm = strongTerm.term;
-    strong = true;
-  } else {
-    baseTerm = parseOTerm(p);
-    strong = false;
+  const term = parseOTerm(p);
+  const optional = !!p.backtrack(() => { p.eat('?'); return true; });
+  return OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, false);
+}
+
+// Helper: parse O_GROUP* until one of stopTokens
+function parseOBodyUntil(p, ...stopTokens) {
+  const groups = [];
+  while (!stopTokens.some(t => p.peek(t))) {
+    groups.push(parseOGroup(p));
+    p.maybe(',');
   }
-
-  // O_KV_OPT? - the '?' suffix for optional existence
-  const optional = !!p.maybe('?');
-
-  return OTerm(baseTerm.key, baseTerm.breadcrumbs, baseTerm.val, baseTerm.quant, optional, strong);
+  return groups;
 }
 
 function parseOTerm(p) {
   // O_TERM := KEY BREADCRUMB* ':' VALUE O_KV_QUANT?
   // Note: 'else !' suffix and '?' suffix are handled by parseOGroup
 
-  // Check for leading ** (e.g., {**.password:$x})
-  let key;
+  // Leading ** means "start from root, match at any depth"
+  // Peek only - don't consume **, breadcrumb parser will consume it
+  const key = p.peek('**') ? RootKey() : parseItem(p);
+
+  // Parse breadcrumbs
   const breadcrumbs = [];
+  for (let bc; (bc = parseBreadcrumb(p)); ) breadcrumbs.push(bc);
 
-  if (p.peek('**')) {
-    // Leading ** means "start from root, match at any depth including zero"
-    // Use special RootKey marker
-    key = RootKey();
-    // Don't consume the '**' yet - it will be parsed as first breadcrumb
-  } else {
-    // KEY BREADCRUMB* : VALUE
-    key = parseItem(p);
-  }
-
-  // Parse breadcrumbs (. ** or [)
-  while (p.peek('.') || p.peek('**') || p.peek('[')) {
-    const bc = parseBreadcrumb(p);
-    if (bc) breadcrumbs.push(bc);
-    else break;
-  }
-
-  // ':' operator
-  if (!p.maybe(':')) {
-    p.fail('expected : in object term');
-  }
-
-  // VALUE
+  p.eat(':');
   const val = parseItem(p);
-
-  // O_KV_QUANT? (e.g., #{2,3})
   const quant = parseOQuant(p);
 
-  // Note: '?' suffix (O_KV_OPT) is parsed at O_GROUP level, not here
   return OTerm(key, breadcrumbs, val, quant, false, false);
 }
 
 function parseBreadcrumb(p) {
-  // BREADCRUMB := '**' KEY          // skip levels (glob-style)
-  //             | '**' ':'          // skip to any key (use _ as key)
-  //             | '.' KEY           // single level
-  //             | '[' KEY ']'       // array index
-
-  // Skip levels: ** or **.KEY (glob-style)
-  if (p.peek('**')) {
-    p.eat('**');
-    // Special case: '**' immediately followed by ':' means "any key at any depth"
-    if (p.peek(':')) {
-      return Breadcrumb('skip', Any(), null);
-    }
-    // Consume optional separator dot (supports both **.foo and **foo syntax)
-    p.maybe('.');
-    const key = parseItem(p);
-    return Breadcrumb('skip', key, null);
-  }
-
-  // Dot notation: . KEY
-  // But if . is followed by **, it's a skip breadcrumb (e.g., foo.**.bar)
-  if (p.peek('.')) {
-    p.eat('.');
-    // Check if this is actually .** (skip via dot-star-star)
-    if (p.peek('**')) {
-      p.eat('**');
-      if (p.peek(':')) {
-        return Breadcrumb('skip', Any(), null);
-      }
-      p.maybe('.');
-      const key = parseItem(p);
-      return Breadcrumb('skip', key, null);
-    }
-    const key = parseItem(p);
-    return Breadcrumb('dot', key, null);
-  }
-
-  // Bracket notation: [ KEY ]
-  if (p.peek('[')) {
-    p.eat('[');
-    const key = parseItem(p);
-    p.eat(']');
-    return Breadcrumb('bracket', key, null);
-  }
-
-  return null;
+  // BREADCRUMB := '**' ':'? | '**' '.'? KEY | '.' '**' ':'? | '.' '**' '.'? KEY | '.' KEY | '[' KEY ']'
+  return p.backtrack(() => { p.eat('**'); if (p.peek(':')) return Breadcrumb('skip', Any(), null); p.maybe('.'); return Breadcrumb('skip', parseItem(p), null); })
+      || p.backtrack(() => { p.eat('.'); p.eat('**'); if (p.peek(':')) return Breadcrumb('skip', Any(), null); p.maybe('.'); return Breadcrumb('skip', parseItem(p), null); })
+      || p.backtrack(() => { p.eat('.'); return Breadcrumb('dot', parseItem(p), null); })
+      || p.backtrack(() => { p.eat('['); const key = parseItem(p); p.eat(']'); return Breadcrumb('bracket', key, null); });
 }
 
 // parseBQuant removed - breadcrumbs no longer support quantifiers in v5
 
 function parseOQuant(p) {
-  // O_QUANT := '#' ( '?' | '{' INTEGER (',' INTEGER?)? '}' )
-  if (!p.peek('#')) return null;
-
-  p.eat('#');
-  if (p.maybe('?')) {
-    return {min: 0, max: null};  // #{0,∞}
-  }
-
-  if (!p.peek('{')) p.fail('expected { or ? after #');
-  p.eat('{');
-
-  const min = eatNonNegInt(p, 'object quantifier');
-  let max = min;
-
-  if (p.maybe(',')) {
-    if (p.peek('num')) {
-      max = eatNonNegInt(p, 'object quantifier');
-    } else {
-      max = null;  // unbounded
-    }
-  }
-
-  p.eat('}');
-
-  if (max !== null && max < min) p.fail('O_QUANT upper < lower');
-  return {min, max};
+  // O_QUANT := '#?' | '#{' INTEGER '}' | '#{' INTEGER ',' INTEGER? '}'
+  return p.backtrack(() => { p.eat('#'); p.eat('?'); return {min: 0, max: Infinity}; })
+      || p.backtrack(() => { p.eat('#'); p.eat('{'); const min = eatNonNegInt(p, 'O_QUANT'); p.eat(','); const max = eatNonNegInt(p, 'O_QUANT'); p.eat('}'); if (max < min) p.fail('O_QUANT upper < lower'); return {min, max}; })
+      || p.backtrack(() => { p.eat('#'); p.eat('{'); const min = eatNonNegInt(p, 'O_QUANT'); p.eat(','); p.eat('}'); return {min, max: Infinity}; })
+      || p.backtrack(() => { p.eat('#'); p.eat('{'); const n = eatNonNegInt(p, 'O_QUANT'); p.eat('}'); return {min: n, max: n}; });
 }
 
 // ---------- Parser Utilities ----------
@@ -955,13 +575,6 @@ function eatNonNegInt(p, context = 'quantifier') {
   }
   return v;
 }
-
-// Add peekAt helper if not in Parser class
-Parser.prototype.peekAt = function(offset, kind) {
-  const idx = this.i + offset;
-  if (idx >= this.toks.length) return false;
-  return this.toks[idx].k === kind;
-};
 
 // ---------- AST Validation ----------
 

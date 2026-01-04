@@ -1,6 +1,6 @@
 // tendril-el.js — Expression Language for guard expressions
 //
-// Syntax: $x=(_number; $x > 100)
+// Syntax: (PATTERN where $x > 100)
 //
 // Operators: < > <= >= == != && || ! + - * / %
 // Functions: number($x), string($x), boolean($x), size($x)
@@ -17,88 +17,10 @@ const EUnary = (op, arg) => ({type: 'EUnary', op, arg});
 const EBinary = (op, left, right) => ({type: 'EBinary', op, left, right});
 const ECall = (fn, args) => ({type: 'ECall', fn, args});
 
-// ==================== Expression Tokenizer ====================
-
-const EL_OPERATORS = ['<=', '>=', '==', '!=', '&&', '||', '<', '>', '+', '-', '*', '/', '%', '!'];
-const EL_KEYWORDS = ['true', 'false', 'null'];
-const EL_FUNCTIONS = ['number', 'string', 'boolean', 'size'];
-
-export function tokenizeExpr(src) {
-  const toks = [];
-  let i = 0;
-
-  const push = (k, v, len) => { toks.push({k, v, pos: i}); i += len; };
-  const reWS = /\s+/y;
-  const reNum = /-?\d+(\.\d+)?/y;
-  const reId = /[A-Za-z_][A-Za-z0-9_]*/y;
-
-  while (i < src.length) {
-    // Whitespace
-    reWS.lastIndex = i;
-    if (reWS.test(src)) { i = reWS.lastIndex; continue; }
-
-    const c = src[i], c2 = src.slice(i, i + 2);
-
-    // String literals: "..." or '...'
-    if (c === '"' || c === "'") {
-      const q = c;
-      let j = i + 1, out = '';
-      while (j < src.length && src[j] !== q) {
-        if (src[j] === '\\' && j + 1 < src.length) {
-          const next = src[j + 1];
-          if (next === 'n') { out += '\n'; j += 2; }
-          else if (next === 't') { out += '\t'; j += 2; }
-          else if (next === 'r') { out += '\r'; j += 2; }
-          else { out += next; j += 2; }
-        } else {
-          out += src[j++];
-        }
-      }
-      if (src[j] !== q) throw new Error(`Unterminated string at position ${i}`);
-      push('str', out, (j + 1) - i);
-      continue;
-    }
-
-    // Two-character operators
-    if (['<=', '>=', '==', '!=', '&&', '||'].includes(c2)) {
-      push(c2, c2, 2);
-      continue;
-    }
-
-    // Single-character operators and punctuation
-    if ('<>+-*/%!(),$'.includes(c)) {
-      push(c, c, 1);
-      continue;
-    }
-
-    // Numbers
-    reNum.lastIndex = i;
-    if (reNum.test(src)) {
-      const j = reNum.lastIndex;
-      push('num', Number(src.slice(i, j)), j - i);
-      continue;
-    }
-
-    // Identifiers, keywords, functions
-    reId.lastIndex = i;
-    if (reId.test(src)) {
-      const j = reId.lastIndex;
-      const w = src.slice(i, j);
-      if (w === 'true') { push('bool', true, j - i); continue; }
-      if (w === 'false') { push('bool', false, j - i); continue; }
-      if (w === 'null') { push('null', null, j - i); continue; }
-      if (EL_FUNCTIONS.includes(w)) { push('fn', w, j - i); continue; }
-      push('id', w, j - i);
-      continue;
-    }
-
-    throw new Error(`Unexpected character in expression: '${c}' at position ${i}`);
-  }
-
-  return toks;
-}
-
 // ==================== Expression Parser ====================
+
+// Built-in function names recognized in expressions
+const EL_FUNCTIONS = ['number', 'string', 'boolean', 'size'];
 
 // Operator precedence (higher = binds tighter)
 const PRECEDENCE = {
@@ -110,103 +32,95 @@ const PRECEDENCE = {
   '*': 6, '/': 6, '%': 6,
 };
 
-export function parseExpr(src) {
-  const toks = typeof src === 'string' ? tokenizeExpr(src) : src;
-  let i = 0;
-
-  function peek(k) {
-    const t = toks[i];
-    if (!t) return null;
-    if (!k) return t;
-    return (t.k === k || t.v === k) ? t : null;
-  }
-
-  function eat(k) {
-    const t = toks[i];
-    if (!t) throw new Error(`Unexpected end of expression`);
-    if (k && t.k !== k && t.v !== k) {
-      throw new Error(`Expected '${k}' but got '${t.v}' at position ${t.pos}`);
-    }
-    i++;
-    return t;
-  }
-
-  function maybe(k) {
-    if (peek(k)) { i++; return true; }
-    return false;
-  }
-
+/**
+ * Parse an expression from the shared token stream.
+ * @param {Parser} p - Parser instance (from microparser.js)
+ * @returns {Object} Expression AST
+ */
+export function parseExpr(p) {
   // Primary: literals, variables, function calls, parenthesized expressions
   function parsePrimary() {
-    // Unary operators - check token kind explicitly to avoid matching string values
-    const tok = peek();
-    if (tok && tok.k === '!') {
-      eat('!');
+    const tok = p.peek();
+    if (!tok) p.fail('unexpected end of expression');
+
+    // Unary not
+    if (tok.k === '!') {
+      p.eat('!');
       return EUnary('!', parsePrimary());
     }
-    if (tok && tok.k === '-' && (!toks[i-1] || ['(', ',', '||', '&&', '==', '!=', '<', '>', '<=', '>=', '+', '-', '*', '/', '%', '!'].includes(toks[i-1].k))) {
-      eat('-');
+
+    // Unary minus (at start of primary, so it's unary not binary)
+    if (tok.k === '-') {
+      p.eat('-');
       return EUnary('-', parsePrimary());
     }
 
     // Parenthesized expression
-    if (maybe('(')) {
+    if (p.maybe('(')) {
       const expr = parseExpression(0);
-      eat(')');
+      p.eat(')');
       return expr;
     }
 
     // Number literal
-    if (peek('num')) {
-      return ELit(eat('num').v);
+    if (p.peek('num')) {
+      return ELit(p.eat('num').v);
     }
 
     // Boolean literal
-    if (peek('bool')) {
-      return ELit(eat('bool').v);
+    if (p.peek('bool')) {
+      return ELit(p.eat('bool').v);
     }
 
     // Null literal
-    if (peek('null')) {
-      eat('null');
+    if (p.peek('null')) {
+      p.eat('null');
       return ELit(null);
     }
 
-    // Function call
-    if (peek('fn')) {
-      const fn = eat('fn').v;
-      eat('(');
-      const args = [];
-      if (!peek(')')) {
-        args.push(parseExpression(0));
-        while (maybe(',')) {
-          args.push(parseExpression(0));
-        }
-      }
-      eat(')');
-      return ECall(fn, args);
+    // String literal
+    if (p.peek('str')) {
+      return ELit(p.eat('str').v);
     }
 
-    // Variable reference ($x)
-    if (maybe('$')) {
-      const t = peek('id');
-      if (!t) throw new Error(`Expected variable name after $`);
-      eat('id');
-      return EVar(t.v);
-    }
-
-    // String literal (for future extension)
-    if (peek('str')) {
-      return ELit(eat('str').v);
-    }
-
-    // Bare underscore as anonymous variable reference (for guarded patterns)
-    if (peek('id') && peek('id').v === '_') {
-      eat('id');
+    // Anonymous variable _ (tokenized as 'any')
+    if (p.peek('any')) {
+      p.eat('any');
       return EVar('_');
     }
 
-    throw new Error(`Unexpected token in expression: '${peek()?.v || 'EOF'}'`);
+    // Variable reference ($name)
+    if (p.maybe('$')) {
+      const t = p.peek('id');
+      if (!t) p.fail('expected variable name after $');
+      p.eat('id');
+      return EVar(t.v);
+    }
+
+    // Function call or bareword - check for identifier
+    if (p.peek('id')) {
+      const name = p.cur().v;
+
+      // Check if it's a known function followed by '('
+      if (EL_FUNCTIONS.includes(name)) {
+        p.eat('id');
+        p.eat('(');
+        const args = [];
+        if (!p.peek(')')) {
+          args.push(parseExpression(0));
+          while (p.maybe(',')) {
+            args.push(parseExpression(0));
+          }
+        }
+        p.eat(')');
+        return ECall(name, args);
+      }
+
+      // Unknown identifier in expression context - error
+      p.fail(`unexpected identifier '${name}' in expression (variables must be prefixed with $)`);
+    }
+
+    p.fail(`unexpected token in expression: '${tok.v || tok.k}'`);
   }
 
   // Pratt parser for binary operators
@@ -214,13 +128,13 @@ export function parseExpr(src) {
     let left = parsePrimary();
 
     while (true) {
-      const t = peek();
+      const t = p.peek();
       if (!t) break;
 
-      const prec = PRECEDENCE[t.v];
+      const prec = PRECEDENCE[t.k];
       if (prec === undefined || prec < minPrec) break;
 
-      const op = eat().v;
+      const op = p.eat().k;
       const right = parseExpression(prec + 1); // left-associative
       left = EBinary(op, left, right);
     }
@@ -228,11 +142,7 @@ export function parseExpr(src) {
     return left;
   }
 
-  const ast = parseExpression(0);
-  if (i < toks.length) {
-    throw new Error(`Unexpected token after expression: '${toks[i].v}'`);
-  }
-  return ast;
+  return parseExpression(0);
 }
 
 // ==================== Expression Evaluator ====================

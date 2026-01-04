@@ -20,12 +20,6 @@ export function tokenize(src) {
   const reNum = /-?\d+(\.\d+)?/y;
   const reId  = /[A-Za-z_][A-Za-z0-9_]*/y;
 
-  // Track if we might be in a guard context: $x=(PATTERN; EXPR)
-  // When we see ';' after '(' and before ')', capture rest as guard_expr
-  let parenDepth = 0;
-  let guardStartDepth = 0;
-  let inGuardContext = false;
-
   while (i < src.length) {
     // whitespace (incl. newlines)
     reWS.lastIndex = i;
@@ -63,8 +57,17 @@ export function tokenize(src) {
       continue;
     }
 
-    // regex literal: /.../flags  (no division in this DSL; treat leading / as regex)
-    if (c === '/' && src[i + 1] !== '/') {
+    // regex literal: /.../flags
+    // Disambiguate from division: / is division only when:
+    // 1. Previous token is a "value" token (num, id, ), ], any), AND
+    // 2. Token before that is NOT ':' (which would mean we just finished a k:v value, not mid-expression)
+    // This handles: {/a/:1 /b/:2} (regex keys) vs ($x / 2) (division in expression)
+    const lastTok = toks[toks.length - 1];
+    const prevPrevTok = toks[toks.length - 2];
+    const afterValue = lastTok && ['num', 'id', ')', ']', 'any'].includes(lastTok.k);
+    const afterKVValue = prevPrevTok && prevPrevTok.k === ':';
+    const isDivision = afterValue && !afterKVValue;
+    if (c === '/' && src[i + 1] !== '/' && !isDivision) {
       // Single-pass scan: handle escapes and character classes
       let j = i + 1, inClass = false;
       while (j < src.length) {
@@ -127,54 +130,21 @@ export function tokenize(src) {
         push('ci', { lower: w.toLowerCase(), desc: src.slice(i, j + 2) }, (j + 2) - i);
         continue;
       }
-      // Keywords and special tokens
+      // Wildcards and typed wildcards (start with _, not valid identifiers)
       if (w === '_')        { push('any', '_', j - i); continue; }
       if (w === '_string')  { push('any_string', '_string', j - i); continue; }
       if (w === '_number')  { push('any_number', '_number', j - i); continue; }
       if (w === '_boolean') { push('any_boolean', '_boolean', j - i); continue; }
+      // Literals (not keywords — these are values)
       if (w === 'true')     { push('bool', true, j - i); continue; }
       if (w === 'false')    { push('bool', false, j - i); continue; }
       if (w === 'null')     { push('null', null, j - i); continue; }
-      if (w === 'else')     { push('else', 'else', j - i); continue; }
-      if (w === 'as')       { push('as', 'as', j - i); continue; }
-      if (w === 'where' && parenDepth > 0) {
-        push('where', 'where', j - i);
-        // Capture everything until the ')' that closes the paren containing 'where'
-        // Need to handle nested parens, strings properly
-        const exprStart = i;
-        let depth = parenDepth;
-        const targetDepth = parenDepth - 1;  // Stop when we exit the paren containing 'where'
-        let k = i;
-        while (k < src.length && depth > targetDepth) {
-          const ch = src[k];
-          // Skip over string literals
-          if (ch === '"' || ch === "'") {
-            const quote = ch;
-            k++;
-            while (k < src.length && src[k] !== quote) {
-              if (src[k] === '\\') k++; // Skip escaped char
-              k++;
-            }
-            if (k < src.length) k++; // Skip closing quote
-            continue;
-          }
-          if (ch === '(') depth++;
-          else if (ch === ')') depth--;
-          if (depth > targetDepth) k++;
-        }
-        if (depth !== targetDepth) throw syntax(`unmatched parenthesis in guard expression`, src, exprStart);
-        const exprText = src.slice(exprStart, k).trim();
-        if (exprText) {
-          push('guard_expr', exprText, k - i);
-        }
-        continue;
-      }
-      // 'where' outside parens is just an identifier (variable name, etc.)
-      if (w === 'where')    { push('id', w, j - i); continue; }
       // Reject other underscore-prefixed identifiers
       if (w[0] === '_') {
         throw syntax(`identifiers cannot start with underscore: ${w}`, src, i);
       }
+      // All other words are identifiers (keywords like 'else', 'as', 'where'
+      // are recognized by the parser in context, not by the tokenizer)
       push('id', w, j - i);
       continue;
     }
@@ -192,23 +162,17 @@ export function tokenize(src) {
     if (c2 === '*+')  { push('*+', '*+', 2); continue; }   // possessive star
     if (c2 === '+?')  { push('+?', '+?', 2); continue; }   // lazy plus
     if (c2 === '*?')  { push('*?', '*?', 2); continue; }   // lazy star
+    // Expression language operators (must check before single-char versions)
+    if (c2 === '<=')  { push('<=', '<=', 2); continue; }
+    if (c2 === '>=')  { push('>=', '>=', 2); continue; }
+    if (c2 === '==')  { push('==', '==', 2); continue; }
+    if (c2 === '!=')  { push('!=', '!=', 2); continue; }
+    if (c2 === '&&')  { push('&&', '&&', 2); continue; }
+    if (c2 === '||')  { push('||', '||', 2); continue; }
 
-
-    // Track paren depth for guard expression handling
-    if (c === '(') {
-      parenDepth++;
-      push('(', '(', 1);
-      continue;
-    }
-    if (c === ')') {
-      parenDepth--;
-      push(')', ')', 1);
-      continue;
-    }
-
-    // one-character punctuation/operators (excluding parens, handled above)
+    // one-character punctuation/operators
     // § (U+00A7) is for label declarations, ^ is for label references
-    const single = '[]{}:,.$@=|*+?!-#%<>&/§^'.includes(c) ? c : null;
+    const single = '()[]{}<>:,.$@=|*+?!-#%&/§^'.includes(c) ? c : null;
     if (single) { push(single, single, 1); continue; }
 
     throw syntax(`unexpected character '${c}'`, src, i);
@@ -320,9 +284,18 @@ export class Parser {
   }
   
   // --- backtracking
+  // Restores parser state if fn() throws OR returns null/undefined.
+  // This makes "soft failure" (return null) safe by construction.
   backtrack(fn) {
     const save = this.mark();
-    try { return fn(); }
+    try {
+      const result = fn();
+      if (result == null) {
+        this.restore(save);
+        return null;
+      }
+      return result;
+    }
     catch (e) {
       if (this._cut != null && save.i >= this._cut) throw e; // committed
       this.restore(save);

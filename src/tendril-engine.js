@@ -1825,8 +1825,9 @@ function parseQuantRange(quant) {
   if (!quant) return {min: 0, max: Infinity};
 
   // If quant is already an object with min/max (from parser), use it directly
+  // Parser now emits Infinity for unbounded max (not null)
   if (typeof quant === 'object' && 'min' in quant && 'max' in quant) {
-    return {min: quant.min, max: quant.max === null ? Infinity : quant.max};
+    return {min: quant.min, max: quant.max};
   }
 
   // quant could be: '?', '+', '*', '{m}', '{m,}', '{m,n}'

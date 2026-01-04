@@ -925,7 +925,3 @@ As is already implemented, the buckets are visible in all of the branches that t
 ```
 (Yes, there is cross-branch leakage, and that's the point.) 
 
-
-CW 18
-
-

@@ -50,9 +50,16 @@ test('tokenizer - bareword without /i is normal id', () => {
   assert.equal(toks[0].v, 'foo');
 });
 
-test('tokenizer - /i requires no space (throws on space)', () => {
-  // With a space, 'foo' is a normal id, and '/i' tries to parse as regex and fails
-  assert.throws(() => tokenize('foo /i'), /unterminated regex/);
+test('tokenizer - /i requires no space (with space, becomes division)', () => {
+  // With a space, 'foo' is a normal id, and '/i' is now division by 'i' (not regex)
+  // This is valid tokenization in expression context
+  const toks = tokenize('foo /i');
+  assert.equal(toks.length, 3);
+  assert.equal(toks[0].k, 'id');
+  assert.equal(toks[0].v, 'foo');
+  assert.equal(toks[1].k, '/');
+  assert.equal(toks[2].k, 'id');
+  assert.equal(toks[2].v, 'i');
 });
 
 // ============ Matching Tests ============
