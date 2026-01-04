@@ -45,11 +45,13 @@ const result = Tendril(`[
 could become (this one's more difficult, involves a conditional structure)
 
 ```
-// Macro expansion: <When>/<Else> → If node
+// Macro expansion: Replace <When>/<Else> with <If props={thenChildren:[ ], elseChildren:[ ]}>
 const result = Tendril(`@(
     {tag:when/i children:$then}
     {tag:else/i children:$else}?
-)`).find(vdom).transformAll(`
+)`)
+.findAll(vdom)
+.transformAll(`
          {tag:if thenChildren:$then elseChildren:(?_)$else}
     else {tag:if thenChildren:$then}
   }]
