@@ -602,79 +602,6 @@ These features break locality or make reasoning global: negative lookaheads, sub
 For AI-assisted programming, this categorization is gold. You can literally encode the rule: “Try Core only; if compilation fails with a specific diagnostic, allow Advanced; never use Arcane unless explicitly requested.” That turns Tendril into a constrained search space instead of an open-ended DSL, which is exactly what LLMs need to be effective and safe.
 It also gives you a principled answer to “why so many features?”: most users don’t need most of them, most of the time — but when you do need them, you need them precisely, and Tendril makes you say so.
 
-## CW 17
-
-Things we might do in the future with angle brackets.
-
-You already have several *suffix-ish* micro-constructs that are conceptually “options/constraints on the thing to the left.” A `[...]` qualifier could consolidate a lot of them over time (even if you don’t do it now).
-
-A few concrete candidates:
-
-### 1) Quantifiers and “optional” flags
-
-Right now you have postfix `?`, `*`, `+`, `#{m,n}`, and `%?`, `#?` shorthands. Those are all “cardinality constraints.”
-
-A bracket qualifier could become the general host for cardinality, while keeping the punctuation forms as sugar:
-
-* Current: `K:V?`, `K:V#{2,4}`, `%?`, `#?`
-* Future-capable: `K:V[count=0..∞]`, `K:V[count=2..4]`, `%[count=0..∞]`
-
-You probably wouldn’t replace `?`/`*`/`+` (they’re too ergonomic), but `#{m,n}` is already “less common / more advanced,” exactly where a bracket form shines.
-
-### 2) Strong semantics (`else !`) and future collision policies
-
-You’ve got strong semantics as a postfix-ish “mode switch” on a field clause. Brackets could house that as an attribute:
-
-* Current: `K:V else !`
-* Future: `K:V[strong]` or `K:V[bad=fail]`
-
-Likewise, your bucket collision policy is *exactly* a qualifier:
-
-* Default: collision ⇒ fail
-* Future: `-> @b[^L, collide=fail|first|last|merge]`
-
-This is the cleanest “extensibility” win of `@bucket[^label]`: you’re opening a slot for policy.
-
-### 3) Remainder (`%`, `!%`, `%?`)
-
-Remainder is currently a special tail clause with its own mini-syntax. If you ever want to generalize “remainder handling” (capture extras, forbid extras, etc.), a qualifier gives you a consistent story:
-
-* Current: `%`, `(!%)`, `(%? as @rest)`
-* Future direction: `%[allow]`, `%[deny]`, `%[optional]`, `(% as @rest)[optional]`
-
-Even if you keep `%` special, putting constraints in brackets makes the mental model uniform.
-
-### 4) Flow / bucket targeting (your immediate case)
-
-`@bucket[^label]` reads like “bucket qualified by anchor.” Great. And it extends naturally:
-
-* `@bucket[^label]` (anchor)
-* `@bucket[^label, collide=fail]`
-* `@bucket[^label, key=index]` vs `key=objectKey` (if you ever want array buckets keyed differently)
-
-It also makes your earlier “sadistic” temp-bucket joke unnecessary, because the bracket becomes the general wiring space.
-
-### 5) Breadcrumb/path modifiers (if you ever add any back)
-
-You removed breadcrumb quantifiers in v5, but if you later reintroduce any “path traversal options” (bounded depth, stop conditions, etc.), brackets are a natural place:
-
-* `**[maxDepth=3]`
-* `.foo[case=i]` (less likely, but you get the idea)
-
-### 6) Guards: probably *don’t* fold them into brackets
-
-Guards already have a good “language-y” slot: `(pattern as $x where expr)`. Brackets could theoretically host `where`, but you’d lose clarity fast. I’d keep guards as-is and treat brackets as “structural modifiers,” not “expression modifiers.”
-
----
-
-#### The consolidation principle
-
-Brackets are best as a single, uniform place for **non-branching metadata**: scoping/anchoring, cardinality constraints, strictness modes, and policies (especially collision policy). That lines up with your desire to keep the language “punctual” while still searchable and extensible.
-
-If you want one crisp rule to prevent bracket sprawl: *“brackets may not introduce new branching.”* They can only constrain, not enumerate. That keeps them from becoming a second “where.”
-
-So yes: `@bucket[^label]` can be the first member of a broader "qualified suffix" family, and the best nearby consolidation targets are (a) bucket policies, (b) rarely-used count quantifiers, and (c) remainder strictness/optionality.
-
 ## CW 18. Negated Ancestry Patterns
 
 Tendril cannot currently express "find X that is NOT under Y" in a single pattern. For example, validating that Flow nodes only appear inside Obj or Arr containers requires either:
@@ -810,6 +737,10 @@ If you want the biggest payoff with the least surface area:
 
 Those two alone make Tendril feel like a *tool*, not just a *mechanism*.
 
+
+
+
+
 ## CW 17 (simpler form)
 
 
@@ -925,3 +856,279 @@ As is already implemented, the buckets are visible in all of the branches that t
 ```
 (Yes, there is cross-branch leakage, and that's the point.) 
 
+Test the same value being sent to two buckets, (_ -> @b1) -> @b2 
+
+
+## **UPDATE**
+
+1. Kept % for remainder (not %%)
+2. Object group bindings use %: (K:V as %slice) not @slice
+3. Array group bindings use @: (... as @slice) unchanged
+4. @bucket in object context collects values only (array output, loses keys)
+5. %bucket in array context collects index:value pairs (object output)
+6. Flow in fixed-position array elements uses outer object key (not array index)
+7. Flow in quantified array elements uses array index ([(_ -> @bucket)*])
+8. Wrong sigil in wrong context = parse error (generic, not specific message)
+
+
+## **CW 18 Grammar for directives**
+
+That makes sense — and if angle brackets are *the* general attachment point for “meta that affects matching/execution but isn’t a data-shape pattern,” then it’s worth leaning into that and making it feel like a coherent subsystem rather than an ad-hoc exception for collection.
+
+Two things to get right so it doesn’t become a second DSL:
+
+You want a **very small, regular core** that can host multiple commands, and you want a **crisp semantic contract** for all meta commands (when they run, whether they backtrack, how they scope, whether they can bind, etc.). If you nail those, the mini-grammar will feel like “attributes” in Rust, not like a new language.
+
+### 1) A uniform attachment model
+
+Make `<…>` an “attached meta clause” that can follow any ITEM (or maybe any ITEM_TERM) in any context (array/object/value/key), with this contract:
+
+* It is **zero-width**: it never consumes input.
+* It is **branch-local**: it runs only if the match branch containing it succeeds.
+* It is **rollback-safe**: if later matching fails/backtracks, its effects are reverted (same property you already want for buckets).
+* It cannot introduce new branching (unless you deliberately allow that, but I’d forbid it).
+* It sees the current bindings/environment at the attachment point.
+
+This makes all meta commands behave predictably.
+
+### 2) A tiny command grammar, not a freeform language
+
+Even if you allow multiple commands, keep each command a single, fixed-shape form with optional modifiers. Something like:
+
+```
+META := '<' META_CMD ( ';' META_CMD )* '>'
+META_CMD :=
+    'collect' EXPR 'in' TARGET
+  | 'assert'  EXPR
+  | 'trace'   STRING?
+  | 'limit'   INTEGER
+  | ...
+TARGET := '%' IDENT | '@' IDENT
+EXPR := <EL expression> | <pair expr for % targets>
+```
+
+Now `<collect …>` is just one instance. You can later add `<assert …>` for your “training wheels / boundedness” ideas without inventing new syntactic corners.
+
+### 3) Your collect proposal fits this beautifully
+
+With the contract above, `<collect …>` becomes a straightforward effectful meta command:
+
+```tendril
+{ $key: { name: $n <collect $key:$n in %names> } }
+```
+
+and because it’s attached after `$n`, it naturally means “collect when this submatch succeeds.” No labels, no “across,” no implicit scope selection.
+
+If you ever need to refer to *which key loop* you’re in, that’s already explicit: you use `$key` (or any expression) as the collected key. The “scope” becomes data in the environment, not a separate label system.
+
+### 4) A naming suggestion: call them “annotations” or “directives”
+
+To keep the mental model clean, I’d give the `<…>` forms a name that signals “not a pattern” but also “not a comment”:
+
+* “annotations” is good (Rust/TS vibes).
+* “directives” is okay but can feel compiler-ish.
+* “meta clauses” is accurate but a bit jargon.
+
+“Attached annotations” reads nicely in docs: “You can attach annotations like `<collect …>` to any subpattern.”
+
+### 5) Keep the no-branching rule
+
+If angle brackets are the “meta convention,” your best guardrail is the one you already hinted at earlier with brackets:
+
+> Meta annotations may **constrain, record, or limit**, but may not **enumerate**.
+
+That single rule prevents the subsystem from turning into a second pattern language.
+
+So: I think making `<…>` a real grammatical feature is a strong move, as long as you treat it as a tiny, regular “attribute language” with a strict semantic contract. If you do, the collect syntax you proposed feels like the first obviously-good use case rather than a one-off.
+
+## CW 20
+
+I've just realized that instead of using labels, there's a much better spelling. instead of
+`§L { $key: { name: ($n -> %names<^L>) } }`
+you could say
+`{ $key: { name: $n <collect $key:$n in %names> }}`
+
+Note, this adopts the proposal that % is an object slice and @ is an array slice. If you only wanted to collect the values, it would be something like.
+`{ $key: { name: $n <collect $n in @names across $key>}}`
+
+If you just want to collect from the local iteration and not from a key-loop at a higher level:
+`{ _: { name: $n <collect $n in @names>}}`
+
+If you want to collect a derived value, use the EL.
+
+### **ChatGPT's response**
+
+This is a genuinely nicer *mental model* than labels: it makes the “wiring” explicit at the point of collection, and it reads like an English side-condition rather than a second scoping language. It also avoids the biggest label problem: labels are metadata you have to chase to understand what a collector is keyed by.
+
+A few thoughts on how it lands, and what I’d tweak to keep it sharp.
+
+Your first example:
+
+```tendril
+{ $key: { name: $n <collect $key:$n in %names> } }
+```
+
+reads well. It says: “while matching `name:$n`, also collect `$key:$n` into `%names`.” That’s much more discoverable than `-> @names<^L>` because it explains both *what* you’re collecting and *where* it goes in one place.
+
+A couple of design tensions to watch:
+
+### 1) The angle-bracket payload is its own mini-language
+
+That’s not necessarily bad, but you’ll want it to be very small and regular so it doesn’t become “second DSL.” Your proposed forms are already close to a tiny grammar:
+
+* `<collect EXPR in TARGET (across KEYEXPR)?>`
+
+That’s good. I’d keep it to exactly that, plus maybe one optional policy later (collisions).
+
+### 2) “across $key” vs “collect $key:$n”
+
+You’ve shown two ways to express keying:
+
+* explicit pair: `collect $key:$n in %names`
+* implicit keying via `across`: `collect $n in @names across $key`
+
+Pick one as canonical. I’d lean toward the **explicit pair** form because it’s self-contained and doesn’t invent a new preposition:
+
+* object collector: `in %names` expects a `{k:v}` expression
+* array collector: `in @names` expects a scalar (or slice) value
+
+Then your “values only” example becomes:
+
+```tendril
+{ $key: { name: $n <collect $n in @names> } }
+```
+
+and if you actually want the association to the outer key while still collecting “values,” you can just collect pairs into an object-slice collector instead:
+
+```tendril
+{ $key: { name: $n <collect $key:$n in %names> } }   // values keyed by $key
+```
+
+This eliminates `across` entirely, and the reader doesn’t have to learn two keying mechanisms.
+
+(If you truly need “array bucket per outer key” you can still model it by collecting nested objects: collect `$key:[$n]`-ish, but that’s a separate feature.)
+
+### 3) Where does it attach?
+
+You’re attaching the collect-clause after `$n`, which is nice because it’s local and reads like an annotation. But you should specify attachment rules:
+
+* It should be **zero-width** (doesn’t consume / doesn’t affect matching).
+* It should run **only on successful branches** (your rollback property).
+* It should be allowed after any ITEM, not just scalar bindings, if you want to collect derived values.
+
+If you support EL, the derived-value story is clean:
+
+```tendril
+{ $key: { name: $n <collect $key:(string($n)+"!") in %names> } }
+```
+
+### 4) This obsoletes labels in the common case
+
+Mostly, yes. Labels were doing two jobs: naming scopes and selecting which loop provides the key. Your `<collect …>` form selects the key by *expression* (`$key`) rather than by “which ancestor loop,” which is strictly more direct.
+
+You might still want labels for other things (debugging, readability, maybe future constraints), but for collection scoping, this is a big simplification.
+
+### 5) `%` vs `@` for slice type is a good clarification
+
+If `%names` is “object slice collector” and `@names` is “array slice collector,” then the target itself communicates the shape. That makes the collect syntax easier to read and to type-check.
+
+---
+
+If I rewrite your three examples in the “explicit pair for objects, plain value for arrays” style (no `across`), they look like:
+
+**Collect key→value pairs into an object slice:**
+
+```tendril
+{ $key: { name: $n <collect $key:$n in %names> } }
+```
+
+**Collect values into an array slice (local loop):**
+
+```tendril
+{ _: { name: $n <collect $n in @names> } }
+```
+
+**Collect derived value:**
+
+```tendril
+{ _: { name: $n <collect string($n) in @names> } }
+```
+
+That’s extremely readable.
+
+The only missing piece is collision policy (do we fail, dedupe, append?), but you can punt that exactly the way you’ve been punting other “advanced” knobs: default to fail, and leave a future hook in the collect clause.
+
+Net: this is a strong improvement. It moves “where does this collect and what key does it use?” from an out-of-band label mechanism into a **local, intention-revealing annotation**, which is exactly the direction your whole “clarifying / affirming intent” theme has been heading.
+
+## CW 21
+
+Things we might do in the future with angle brackets.
+
+You already have several *suffix-ish* micro-constructs that are conceptually “options/constraints on the thing to the left.” A `[...]` qualifier could consolidate a lot of them over time (even if you don’t do it now).
+
+A few concrete candidates:
+
+### 1) Quantifiers and “optional” flags
+
+Right now you have postfix `?`, `*`, `+`, `#{m,n}`, and `%?`, `#?` shorthands. Those are all “cardinality constraints.”
+
+A bracket qualifier could become the general host for cardinality, while keeping the punctuation forms as sugar:
+
+* Current: `K:V?`, `K:V#{2,4}`, `%?`, `#?`
+* Future-capable: `K:V[count=0..∞]`, `K:V[count=2..4]`, `%[count=0..∞]`
+
+You probably wouldn’t replace `?`/`*`/`+` (they’re too ergonomic), but `#{m,n}` is already “less common / more advanced,” exactly where a bracket form shines.
+
+### 2) Strong semantics (`else !`) and future collision policies
+
+You’ve got strong semantics as a postfix-ish “mode switch” on a field clause. Brackets could house that as an attribute:
+
+* Current: `K:V else !`
+* Future: `K:V[strong]` or `K:V[bad=fail]`
+
+Likewise, your bucket collision policy is *exactly* a qualifier:
+
+* Default: collision ⇒ fail
+* Future: `-> @b[^L, collide=fail|first|last|merge]`
+
+This is the cleanest “extensibility” win of `@bucket[^label]`: you’re opening a slot for policy.
+
+### 3) Remainder (`%`, `!%`, `%?`)
+
+Remainder is currently a special tail clause with its own mini-syntax. If you ever want to generalize “remainder handling” (capture extras, forbid extras, etc.), a qualifier gives you a consistent story:
+
+* Current: `%`, `(!%)`, `(%? as @rest)`
+* Future direction: `%[allow]`, `%[deny]`, `%[optional]`, `(% as @rest)[optional]`
+
+Even if you keep `%` special, putting constraints in brackets makes the mental model uniform.
+
+### 4) Flow / bucket targeting (your immediate case)
+
+`@bucket[^label]` reads like “bucket qualified by anchor.” Great. And it extends naturally:
+
+* `@bucket[^label]` (anchor)
+* `@bucket[^label, collide=fail]`
+* `@bucket[^label, key=index]` vs `key=objectKey` (if you ever want array buckets keyed differently)
+
+It also makes your earlier “sadistic” temp-bucket joke unnecessary, because the bracket becomes the general wiring space.
+
+### 5) Breadcrumb/path modifiers (if you ever add any back)
+
+You removed breadcrumb quantifiers in v5, but if you later reintroduce any “path traversal options” (bounded depth, stop conditions, etc.), brackets are a natural place:
+
+* `**[maxDepth=3]`
+* `.foo[case=i]` (less likely, but you get the idea)
+
+### 6) Guards: probably *don’t* fold them into brackets
+
+Guards already have a good “language-y” slot: `(pattern as $x where expr)`. Brackets could theoretically host `where`, but you’d lose clarity fast. I’d keep guards as-is and treat brackets as “structural modifiers,” not “expression modifiers.”
+
+---
+
+#### The consolidation principle
+
+Brackets are best as a single, uniform place for **non-branching metadata**: scoping/anchoring, cardinality constraints, strictness modes, and policies (especially collision policy). That lines up with your desire to keep the language “punctual” while still searchable and extensible.
+
+If you want one crisp rule to prevent bracket sprawl: *“brackets may not introduce new branching.”* They can only constrain, not enumerate. That keeps them from becoming a second “where.”
+
+So yes: `@bucket[^label]` can be the first member of a broader "qualified suffix" family, and the best nearby consolidation targets are (a) bucket policies, (b) rarely-used count quantifiers, and (c) remainder strictness/optionality.
