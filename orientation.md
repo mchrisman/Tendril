@@ -66,6 +66,45 @@ node test/foo.js   # Run a specific test file
 
 Tests use Node's built-in test runner (`node:test`). To add a new test file, create `test/foo.test.js` and import from `node:test` and `node:assert/strict`.
 
+### Debugging the parser
+
+The parser has built-in debugging support via the `debug` option:
+
+```javascript
+import { parsePattern } from './src/tendril-parser.js';
+import { createTraceDebugger, createReportDebugger } from './src/microparser.js';
+
+// Parse errors include a detailed report
+try {
+  parsePattern('{ foo: bar baz }');
+} catch (e) {
+  console.log(e.parseReport);  // Shows context, tried alternatives, token window
+}
+
+// Trace debugger - logs parsing activity to console
+parsePattern(src, { debug: createTraceDebugger() });
+parsePattern(src, { debug: createTraceDebugger({ showTokens: true }) });
+parsePattern(src, { debug: createTraceDebugger({ filter: l => l.startsWith('obj-') }) });
+
+// Report debugger - collects data silently, then summarize
+const dbg = createReportDebugger();
+try { parsePattern(src, { debug: dbg }); } catch(e) {}
+console.log(dbg.getReport());  // Shows hotspots, token count, failures
+```
+
+Custom debug hooks (mirrors engine's ctx.debug pattern):
+```javascript
+const debug = {
+  onEnter: (label, idx) => {},     // entering labeled rule
+  onExit: (label, idx, success) => {}, // exiting rule
+  onEat: (tok, idx) => {},         // consuming token
+  onBacktrack: (label, startIdx, success) => {}, // backtrack result
+  onFail: (msg, idx, contextStack) => {}, // parse failure
+};
+```
+
+Key labeled hotspots: `parseItemTermCore`, `parseAGroupBase`, `parseOGroup`, `parseORemnant`, `parseBreadcrumb`.
+
 ## Map
 
 ```
@@ -73,7 +112,7 @@ src/
   tendril-api.js      # Public API (Tendril(), match/find/solutions/etc)
   tendril-engine.js   # Core matching engine (the heart of the system)
   tendril-parser.js   # Pattern parser (AST construction)
-  microparser.js      # Low-level tokenizer
+  microparser.js      # Low-level tokenizer + Parser class with debug hooks
   ...                 # other impl files
   
 test/

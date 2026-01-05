@@ -20,12 +20,20 @@ import {parseExpr} from './tendril-el.js';
 
 // ---------- Public API ----------
 
-export function parsePattern(src) {
-  const p = new Parser(src);
-  const ast = parseRootPattern(p);
-  if (!p.atEnd()) p.fail('trailing input after pattern');
-  validateAST(ast);
-  return ast;
+export function parsePattern(src, opts = {}) {
+  const p = new Parser(src, undefined, opts);
+  try {
+    const ast = parseRootPattern(p);
+    if (!p.atEnd()) p.fail('trailing input after pattern');
+    validateAST(ast, src);
+    return ast;
+  } catch (e) {
+    // Attach debug report to error for better diagnostics
+    if (p.farthest && p.farthest.i > 0) {
+      e.parseReport = p.formatReport();
+    }
+    throw e;
+  }
 }
 
 // ---------- AST Node Constructors ----------
@@ -222,6 +230,10 @@ function parseArraySlicePattern(p) {
 function parseItem(p) {
   // ITEM := ITEM_TERM ('|' ITEM_TERM)* | ITEM_TERM ('else' ITEM_TERM)*
   // Both produce Alt nodes; else sets prioritized=true; cannot mix.
+  return p.span(() => parseItemInner(p));
+}
+
+function parseItemInner(p) {
   const first = parseItemTerm(p);
 
   // Try alternation: A | B | C  (entire chain must succeed or we abandon it)
@@ -275,32 +287,32 @@ function parseItemTermCore(p) {
   //
   // Uses ordered backtracking: try each alternative, return first success.
 
-  return p.backtrack(() => parseLookahead(p))
+  return p.bt('lookahead', () => parseLookahead(p))
       || parseParenWithBindingAndGuard(p, () => parseItem(p))
-      || p.backtrack(() => { p.eat('$'); return SBind(eatVarName(p), Any()); })
-      || p.backtrack(() => { p.eat('@'); return GroupBind(eatVarName(p), Quant(Any(), '*', 0, Infinity)); })
-      || p.backtrack(() => { p.eat('any'); return Any(); })
-      || p.backtrack(() => { p.eat('any_string'); return TypedAny('string'); })
-      || p.backtrack(() => { p.eat('any_number'); return TypedAny('number'); })
-      || p.backtrack(() => { p.eat('any_boolean'); return TypedAny('boolean'); })
-      || p.backtrack(() => Lit(p.eat('num').v))
-      || p.backtrack(() => Bool(p.eat('bool').v))
-      || p.backtrack(() => { p.eat('null'); return Null(); })
-      || p.backtrack(() => Lit(p.eat('str').v))
-      || p.backtrack(() => Lit(p.eat('id').v))
-      || p.backtrack(() => {
+      || p.bt('$bind', () => { p.eat('$'); return SBind(eatVarName(p), Any()); })
+      || p.bt('@bind', () => { p.eat('@'); return GroupBind(eatVarName(p), Quant(Any(), '*', 0, Infinity)); })
+      || p.bt('any', () => { p.eat('any'); return Any(); })
+      || p.bt('any_string', () => { p.eat('any_string'); return TypedAny('string'); })
+      || p.bt('any_number', () => { p.eat('any_number'); return TypedAny('number'); })
+      || p.bt('any_boolean', () => { p.eat('any_boolean'); return TypedAny('boolean'); })
+      || p.bt('number', () => Lit(p.eat('num').v))
+      || p.bt('boolean', () => Bool(p.eat('bool').v))
+      || p.bt('null', () => { p.eat('null'); return Null(); })
+      || p.bt('string', () => Lit(p.eat('str').v))
+      || p.bt('identifier', () => Lit(p.eat('id').v))
+      || p.bt('regex', () => {
            const {source, flags} = p.eat('re').v;
            const re = makeRegExp({source, flags});
            return StringPattern('regex', `/${source}/${flags}`, s => typeof s === 'string' && re.test(s));
          })
-      || p.backtrack(() => {
+      || p.bt('case-insensitive', () => {
            const {lower, desc} = p.eat('ci').v;
            return StringPattern('ci', desc, s => typeof s === 'string' && s.toLowerCase() === lower);
          })
-      || p.backtrack(() => { p.eat('§'); const label = eatVarName(p); return parseObj(p, label); })
-      || p.backtrack(() => { p.eat('§'); const label = eatVarName(p); return parseArr(p, label); })
-      || p.backtrack(() => parseObj(p))
-      || p.backtrack(() => parseArr(p))
+      || p.bt('labeled-obj', () => { p.eat('§'); const label = eatVarName(p); return parseObj(p, label); })
+      || p.bt('labeled-arr', () => { p.eat('§'); const label = eatVarName(p); return parseArr(p, label); })
+      || p.bt('object', () => parseObj(p))
+      || p.bt('array', () => parseArr(p))
       || p.fail('expected item');
 }
 
@@ -330,10 +342,12 @@ function parseABody(p, ...stopTokens) {
 
 function parseArr(p, label = null) {
   // ARR := '[' A_BODY ']'
-  p.eat('[');
-  const items = parseABody(p, ']');
-  p.eat(']');
-  return Arr(items, label);
+  return p.span(() => {
+    p.eat('[');
+    const items = parseABody(p, ']');
+    p.eat(']');
+    return Arr(items, label);
+  });
 }
 
 function parseAGroup(p) {
@@ -387,13 +401,13 @@ function parseAGroup(p) {
 function parseAGroupBase(p) {
   // Base A_GROUP without quantifiers or alternation
   // Uses ordered backtracking: try each alternative, return first success.
-  return parseLookahead(p)
+  return p.bt('arr-lookahead', () => parseLookahead(p))
       || parseParenWithBindingAndGuard(p, (p, stopTokens) => {
            const items = parseABody(p, ...stopTokens);
            return items.length === 1 ? items[0] : {type: 'Seq', items};
          })
-      || p.backtrack(() => { p.eat('@'); return GroupBind(eatVarName(p), Quant(Any(), '*', 0, Infinity)); })
-      || p.backtrack(() => { p.eat('$'); return SBind(eatVarName(p), Any()); })
+      || p.bt('arr-@bind', () => { p.eat('@'); return GroupBind(eatVarName(p), Quant(Any(), '*', 0, Infinity)); })
+      || p.bt('arr-$bind', () => { p.eat('$'); return SBind(eatVarName(p), Any()); })
       || parseItemTerm(p);
 }
 
@@ -424,32 +438,34 @@ function parseObj(p, label = null) {
   // O_REMNANT := S_GROUP ':' '(' 'remainder' ')'
   //            | '(!' 'remainder' ')'
   //            | 'remainder'
-  p.eat('{');
-  const terms = [];
+  return p.span(() => {
+    p.eat('{');
+    const terms = [];
 
-  // Parse O_BODY: greedily parse O_GROUPs until we can't
-  while (true) {
-    const group = p.backtrack(() => {
-      if (p.peek('}')) return null;
-      const s = parseOGroup(p);
-      p.maybe(',');
-      return s;
-    });
-    if (!group) break;
-    terms.push(group);
-  }
+    // Parse O_BODY: greedily parse O_GROUPs until we can't
+    while (true) {
+      const group = p.backtrack(() => {
+        if (p.peek('}')) return null;
+        const s = parseOGroup(p);
+        p.maybe(',');
+        return s;
+      });
+      if (!group) break;
+      terms.push(group);
+    }
 
-  // Now try to parse optional O_REMNANT
-  const remnant = parseORemnant(p);
+    // Now try to parse optional O_REMNANT
+    const remnant = parseORemnant(p);
 
-  p.eat('}');
-  return Obj(terms, remnant, label);
+    p.eat('}');
+    return Obj(terms, remnant, label);
+  });
 }
 
 function parseORemnant(p) {
   // O_REMNANT := '(' '%' QUANT? 'as' '@' IDENT ')' | '%' QUANT? | '(!' '%' ')'
   // Uses ordered backtracking.
-  return p.backtrack(() => {
+  return p.bt('remainder-bind', () => {
            p.eat('('); p.eat('%');
            const q = p.backtrack(() => { p.eat('?'); return {min: 0, max: Infinity}; }) || parseRemainderQuant(p);
            p.eat('as'); p.eat('@');
@@ -457,13 +473,13 @@ function parseORemnant(p) {
            p.eat(')'); p.maybe(',');
            return GroupBind(name, Spread(q));
          })
-      || p.backtrack(() => {
+      || p.bt('remainder', () => {
            p.eat('%');
            const q = p.backtrack(() => { p.eat('?'); return {min: 0, max: Infinity}; }) || parseRemainderQuant(p);
            p.maybe(',');
            return Spread(q);
          })
-      || p.backtrack(() => { p.eat('(!'); p.eat('%'); p.eat(')'); p.maybe(','); return {type: 'OLook', neg: true, pat: Spread(null)}; });
+      || p.bt('no-remainder', () => { p.eat('(!'); p.eat('%'); p.eat(')'); p.maybe(','); return {type: 'OLook', neg: true, pat: Spread(null)}; });
 }
 
 function parseRemainderQuant(p) {
@@ -479,11 +495,11 @@ function parseOGroup(p) {
   // Uses ordered backtracking.
 
   // Lookahead
-  const look = parseObjectLookahead(p);
+  const look = p.bt('obj-lookahead', () => parseObjectLookahead(p));
   if (look) return look;
 
   // Parenthesized grouping with optional 'as @x' binding
-  const groupWithBind = p.backtrack(() => {
+  const groupWithBind = p.bt('obj-group-bind', () => {
     p.eat('(');
     const groups = parseOBodyUntil(p, ')', 'as');
     p.eat('as');
@@ -494,7 +510,7 @@ function parseOGroup(p) {
   });
   if (groupWithBind) return groupWithBind;
 
-  const groupPlain = p.backtrack(() => {
+  const groupPlain = p.bt('obj-group', () => {
     p.eat('(');
     const groups = parseOBodyUntil(p, ')');
     p.eat(')');
@@ -503,18 +519,22 @@ function parseOGroup(p) {
   if (groupPlain) return groupPlain;
 
   // O_TERM with possible 'else !' suffix and '?' suffix
-  const strongTerm = p.backtrack(() => {
+  const strongTerm = p.bt('obj-strong-term', () => {
     const term = parseOTerm(p);
     p.eat('else');
     p.eat('!');
     const optional = !!p.backtrack(() => { p.eat('?'); return true; });
-    return OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, true);
+    const result = OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, true);
+    if (term.loc) result.loc = term.loc;  // preserve source location
+    return result;
   });
   if (strongTerm) return strongTerm;
 
   const term = parseOTerm(p);
   const optional = !!p.backtrack(() => { p.eat('?'); return true; });
-  return OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, false);
+  const result = OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, false);
+  if (term.loc) result.loc = term.loc;  // preserve source location
+  return result;
 }
 
 // Helper: parse O_GROUP* until one of stopTokens
@@ -530,28 +550,29 @@ function parseOBodyUntil(p, ...stopTokens) {
 function parseOTerm(p) {
   // O_TERM := KEY BREADCRUMB* ':' VALUE O_KV_QUANT?
   // Note: 'else !' suffix and '?' suffix are handled by parseOGroup
+  return p.span(() => {
+    // Leading ** means "start from root, match at any depth"
+    // Peek only - don't consume **, breadcrumb parser will consume it
+    const key = p.peek('**') ? RootKey() : parseItem(p);
 
-  // Leading ** means "start from root, match at any depth"
-  // Peek only - don't consume **, breadcrumb parser will consume it
-  const key = p.peek('**') ? RootKey() : parseItem(p);
+    // Parse breadcrumbs
+    const breadcrumbs = [];
+    for (let bc; (bc = parseBreadcrumb(p)); ) breadcrumbs.push(bc);
 
-  // Parse breadcrumbs
-  const breadcrumbs = [];
-  for (let bc; (bc = parseBreadcrumb(p)); ) breadcrumbs.push(bc);
+    p.eat(':');
+    const val = parseItem(p);
+    const quant = parseOQuant(p);
 
-  p.eat(':');
-  const val = parseItem(p);
-  const quant = parseOQuant(p);
-
-  return OTerm(key, breadcrumbs, val, quant, false, false);
+    return OTerm(key, breadcrumbs, val, quant, false, false);
+  });
 }
 
 function parseBreadcrumb(p) {
   // BREADCRUMB := '**' ':'? | '**' '.'? KEY | '.' '**' ':'? | '.' '**' '.'? KEY | '.' KEY | '[' KEY ']'
-  return p.backtrack(() => { p.eat('**'); if (p.peek(':')) return Breadcrumb('skip', Any(), null); p.maybe('.'); return Breadcrumb('skip', parseItem(p), null); })
-      || p.backtrack(() => { p.eat('.'); p.eat('**'); if (p.peek(':')) return Breadcrumb('skip', Any(), null); p.maybe('.'); return Breadcrumb('skip', parseItem(p), null); })
-      || p.backtrack(() => { p.eat('.'); return Breadcrumb('dot', parseItem(p), null); })
-      || p.backtrack(() => { p.eat('['); const key = parseItem(p); p.eat(']'); return Breadcrumb('bracket', key, null); });
+  return p.bt('bc-skip', () => { p.eat('**'); if (p.peek(':')) return Breadcrumb('skip', Any(), null); p.maybe('.'); return Breadcrumb('skip', parseItem(p), null); })
+      || p.bt('bc-dot-skip', () => { p.eat('.'); p.eat('**'); if (p.peek(':')) return Breadcrumb('skip', Any(), null); p.maybe('.'); return Breadcrumb('skip', parseItem(p), null); })
+      || p.bt('bc-dot', () => { p.eat('.'); return Breadcrumb('dot', parseItem(p), null); })
+      || p.bt('bc-bracket', () => { p.eat('['); const key = parseItem(p); p.eat(']'); return Breadcrumb('bracket', key, null); });
 }
 
 // parseBQuant removed - breadcrumbs no longer support quantifiers in v5
@@ -579,60 +600,63 @@ function eatNonNegInt(p, context = 'quantifier') {
 // ---------- AST Validation ----------
 
 // Validate that Flow nodes only appear inside Obj or Arr context
-function validateAST(ast) {
-  validateNode(ast, false);
-}
+function validateAST(ast, src = null) {
+  // src is captured in closure - it's constant context for error messages
+  // inContainer changes during traversal - it's structural context
+  function check(node, inContainer) {
+    if (!node || typeof node !== 'object') return;
 
-function validateNode(node, inContainer) {
-  if (!node || typeof node !== 'object') return;
+    if (node.type === 'Flow') {
+      if (!inContainer) {
+        let msg = `Flow operator ->@${node.bucket} can only be used inside an object or array pattern`;
+        if (src && node.loc) {
+          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+    }
 
-  if (node.type === 'Flow') {
-    if (!inContainer) {
-      throw new Error(
-        `Flow operator ->@${node.bucket} can only be used inside an object or array pattern`
-      );
+    // Obj and Arr establish container context
+    const inChild = inContainer || node.type === 'Obj' || node.type === 'Arr';
+
+    // Recurse into children based on node type
+    switch (node.type) {
+      case 'Obj':
+        for (const term of node.terms || []) check(term, inChild);
+        if (node.spread) check(node.spread, inChild);
+        break;
+      case 'Arr':
+        for (const item of node.items || []) check(item, inChild);
+        break;
+      case 'OTerm':
+        check(node.key, inChild);
+        check(node.val, inChild);
+        for (const bc of node.breadcrumbs || []) check(bc.key, inChild);
+        break;
+      case 'Alt':
+        for (const alt of node.alts || []) check(alt, inChild);
+        break;
+      case 'Quant':
+      case 'Look':
+      case 'SBind':
+      case 'GroupBind':
+      case 'Flow':
+      case 'Guarded':
+        check(node.pat || node.sub, inChild);
+        break;
+      case 'Seq':
+        for (const item of node.items || []) check(item, inChild);
+        break;
+      case 'OGroup':
+        for (const g of node.groups || []) check(g, inChild);
+        break;
+      case 'SlicePattern':
+        check(node.content, true); // Slice patterns are container-like
+        break;
     }
   }
 
-  // Obj and Arr establish container context
-  const isContainer = node.type === 'Obj' || node.type === 'Arr';
-  const childContext = inContainer || isContainer;
-
-  // Recurse into children based on node type
-  switch (node.type) {
-    case 'Obj':
-      for (const term of node.terms || []) validateNode(term, childContext);
-      if (node.spread) validateNode(node.spread, childContext);
-      break;
-    case 'Arr':
-      for (const item of node.items || []) validateNode(item, childContext);
-      break;
-    case 'OTerm':
-      validateNode(node.key, childContext);
-      validateNode(node.val, childContext);
-      for (const bc of node.breadcrumbs || []) validateNode(bc.key, childContext);
-      break;
-    case 'Alt':
-      for (const alt of node.alts || []) validateNode(alt, childContext);
-      break;
-    case 'Quant':
-    case 'Look':
-    case 'SBind':
-    case 'GroupBind':
-    case 'Flow':
-    case 'Guarded':
-      validateNode(node.pat || node.sub, childContext);
-      break;
-    case 'Seq':
-      for (const item of node.items || []) validateNode(item, childContext);
-      break;
-    case 'OGroup':
-      for (const g of node.groups || []) validateNode(g, childContext);
-      break;
-    case 'SlicePattern':
-      validateNode(node.content, true); // Slice patterns are container-like
-      break;
-  }
+  check(ast, false);
 }
 
 // ---------- Exports ----------
