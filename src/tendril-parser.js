@@ -29,7 +29,7 @@ export function parsePattern(src, opts = {}) {
     return ast;
   } catch (e) {
     // Attach debug report to error for better diagnostics
-    if (p.farthest && p.farthest.i > 0) {
+    if (p.farthest) {
       e.parseReport = p.formatReport();
     }
     throw e;
@@ -162,21 +162,25 @@ function parseParenWithBindingAndGuard(p, parseInner, stopTokens = []) {
  * @returns {Object} - Original node or Flow-wrapped node
  */
 function withOptionalFlow(p, node) {
-  if (!p.maybe('->')) return node;
+  if (!p.peek('->')) return node;
 
-  p.eat('@');
-  const bucket = eatVarName(p);
+  // Wrap in span to capture source location for validation error messages
+  return p.span(() => {
+    p.eat('->');
+    p.eat('@');
+    const bucket = eatVarName(p);
 
-  // Check for optional <^label> suffix
-  let labelRef = null;
-  if (p.peek('<')) {
-    p.eat('<');
-    p.eat('^');
-    labelRef = eatVarName(p);
-    p.eat('>');
-  }
+    // Check for optional <^label> suffix
+    let labelRef = null;
+    if (p.peek('<')) {
+      p.eat('<');
+      p.eat('^');
+      labelRef = eatVarName(p);
+      p.eat('>');
+    }
 
-  return Flow(node, bucket, labelRef);
+    return Flow(node, bucket, labelRef);
+  });
 }
 
 // ---------- ROOT_PATTERN ----------

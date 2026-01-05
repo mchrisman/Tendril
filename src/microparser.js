@@ -360,14 +360,19 @@ export class Parser {
   }
 
   // Record a backtrack attempt at farthest position
+  // Uses startIdx (where attempt began) to attribute attempts correctly
   recordAttempt(label, startIdx, success) {
     this.debug?.onBacktrack?.(label, startIdx, success);
-    // Only record failed attempts at farthest position (for error reporting)
-    if (!success && this.i >= this.farthest.i) {
-      if (this.i > this.farthest.i) {
+    // Only record failed attempts that reached the farthest position
+    if (!success && startIdx >= this.farthest.i) {
+      if (startIdx > this.farthest.i) {
         this.farthest.attempts = [];
+        this.farthest.i = startIdx;
       }
-      this.farthest.attempts.push(label);
+      // Avoid duplicates
+      if (!this.farthest.attempts.includes(label)) {
+        this.farthest.attempts.push(label);
+      }
     }
   }
 
@@ -379,8 +384,8 @@ export class Parser {
     if (result && typeof result === 'object') {
       const endTok = this.toks[this.i - 1] || startTok;
       result.loc = {
-        start: startTok?.pos ?? 0,
-        end: (endTok?.pos ?? 0) + (endTok?.v?.length ?? 1),
+        start: startTok?.pos ?? this.src.length,
+        end: (endTok?.pos ?? this.src.length) + (endTok?.len ?? 0),
         startTok: startIdx,
         endTok: this.i - 1
       };
