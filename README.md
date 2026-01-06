@@ -1058,7 +1058,7 @@ ARR := LABEL_DECL? '[' A_BODY ']'             # optional label for scope control
 A_BODY := (A_GROUP (','? A_GROUP)*)?           # commas optional
 
 A_GROUP :=
-      '...'                                    # spread token in arrays (three dots)
+      '...'                                    # ellipsis (three dots, or Unicode … U+2026)
     | A_GROUP_BASE A_QUANT?                    # quantifiers bind tight
       ( ('|' (A_GROUP_BASE A_QUANT?))*         # alternation: enumerate all
       | ('else' (A_GROUP_BASE A_QUANT?))*      # prioritized: first match wins
@@ -1149,7 +1149,7 @@ O_KV_OPT :=
 
 BREADCRUMB :=
       '**' KEY                                 # skip any depth (glob-style), then match KEY
-    | '**'                                     # if immediately followed by ':' or '?' then KEY := '_'
+    | '**'                                     # if immediately followed by ':' then KEY := '_'
     | '.' KEY
     | '[' KEY ']'
 

@@ -556,8 +556,12 @@ function parseOTerm(p) {
   // O_TERM := KEY BREADCRUMB* ':' VALUE O_KV_QUANT?
   // Note: 'else !' suffix and '?' suffix are handled by parseOGroup
   return p.span(() => {
-    // Leading ** means "start from root, match at any depth"
-    // Peek only - don't consume **, breadcrumb parser will consume it
+    // Leading ** means "start from root, match at any depth within the object".
+    // Design: We peek (not eat) the ** here to set RootKey, then let parseBreadcrumb
+    // consume it as a 'skip' breadcrumb. This is intentional - RootKey signals "don't
+    // match an initial key", while the breadcrumb does the actual depth navigation.
+    // Example: { **:1 } → key=RootKey, breadcrumbs=[skip:Any], matches {x:{y:1}}.
+    // Note: This does NOT match root-as-leaf (e.g., { **:1 } doesn't match bare 1).
     const key = p.peek('**') ? RootKey() : parseItem(p);
 
     // Parse breadcrumbs
