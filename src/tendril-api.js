@@ -619,21 +619,22 @@ class Occurrence {
 
 class Solution {
   constructor(rawSolution, occ, matchSet) {
-    this._occ = occ;
-    this._matchSet = matchSet;
-    this._raw = rawSolution;
-    this._sites = rawSolution.sites;
+    // Internal properties are non-enumerable to avoid JSON.stringify cycles
+    // and to keep Object.keys() clean (showing only bindings)
+    Object.defineProperties(this, {
+      _occ: {value: occ, enumerable: false},
+      _matchSet: {value: matchSet, enumerable: false},
+      _raw: {value: rawSolution, enumerable: false},
+      _sites: {value: rawSolution.sites, enumerable: false},
+      _bindings: {value: null, writable: true, enumerable: false},
+      toObject: {value: () => ({...this._bindings}), enumerable: false}
+    });
 
     // Public bindings: groups converted to arrays/objects; $0 hidden
     const publicBindings = normalizeBindings(rawSolution.bindings, {includeWhole: false});
     this._bindings = publicBindings;
 
     for (const [k, v] of Object.entries(publicBindings)) this[k] = v;
-
-    Object.defineProperty(this, 'toObject', {
-      value: () => ({...this._bindings}),
-      enumerable: false
-    });
   }
 
   bindings() {

@@ -131,13 +131,13 @@ test('regex as object key', () => {
   assert.deepEqual(kinds, ['{', 're', ':', 'num', '}']);
 });
 
-test('division after value-like token in array - KNOWN LIMITATION', () => {
-  // After a number, the heuristic treats '/' as division, not regex
-  // This is a known limitation - see td-0012
+test('regex after value-like token in array - no longer a limitation', () => {
+  // After a number, '/' is now always regex start since division was removed from EL
+  // (commit 41de539). This limitation no longer exists.
   const tokens = tokenize('[1 2 3 /foo/ 4]');
   const kinds = tokens.map(t => t.k);
-  // LIMITATION: /foo/ is tokenized as division operators, not regex
-  assert.deepEqual(kinds, ['[', 'num', 'num', 'num', '/', 'id', '/', 'num', ']']);
+  // /foo/ is correctly tokenized as regex
+  assert.deepEqual(kinds, ['[', 'num', 'num', 'num', 're', 'num', ']']);
 });
 
 test('regex at array start', () => {

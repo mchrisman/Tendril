@@ -53,6 +53,15 @@ const Guarded = (pat, guard) => ({type: 'Guarded', pat, guard}); // (PATTERN whe
 const SBind = (name, pat, guard = null) => ({type: 'SBind', name, pat, guard});  // $x=(pat) or $x=(pat where expr)
 const GroupBind = (name, pat, sliceKind = 'array') => ({type: 'GroupBind', name, pat, sliceKind});  // @x=(pat) for array, %x for object
 const Flow = (pat, bucket, labelRef = null, sliceKind = 'object') => ({type: 'Flow', pat, bucket, labelRef, sliceKind});  // ->%bucket (k:v pairs) or ->@bucket (values only)
+// <collecting $k:$v in %bucket across ^L> or <collecting $v in @bucket across ^L>
+const Collecting = (pat, collectExpr, bucket, sliceKind, labelRef) => ({
+  type: 'Collecting',
+  pat,           // the pattern this directive is attached to
+  collectExpr,   // {key: varName, value: varName} for k:v or {value: varName} for value-only
+  bucket,        // bucket name
+  sliceKind,     // 'object' or 'array'
+  labelRef       // required label reference
+});
 
 // Containers
 const Arr = (items, label = null) => ({type: 'Arr', items, label});
@@ -81,9 +90,19 @@ const OTerm = (key, breadcrumbs, val, quant, optional = false, strong = false) =
   strong         // true if 'else !' suffix - triggers strong semantics (no bad entries)
 });
 
+// Each clause: 'each' KEY ':' VALUE_CLAUSE ('else' VALUE_CLAUSE)* QUANT?
+// Provides "validate all" semantics: for all k matching KEY, value must match one of the VALUE_CLAUSEs
+const Each = (key, breadcrumbs, valueClauses, quant) => ({
+  type: 'Each',
+  key,            // ITEM - key pattern
+  breadcrumbs,    // Breadcrumb[] - path navigation
+  valueClauses,   // Array of {value, flow?} where flow is {bucket, sliceKind} or null
+  quant           // null or {min, max} - quantifier on count of matching keys
+});
+
 const Spread = (quant) => ({type: 'Spread', quant});  // ... with optional #{...}
 
-// Slice patterns at root level: @{ O_GROUP } or @[ A_BODY ]
+// Slice patterns at root level: %{ O_GROUP } (object) or @[ A_BODY ] (array)
 const SlicePattern = (kind, content) => ({type: 'SlicePattern', kind, content});
 
 const Breadcrumb = (kind, key, quant) => ({
@@ -195,15 +214,93 @@ function withOptionalFlow(p, node) {
   });
 }
 
+/**
+ * Parse optional <collecting> directive suffix:
+ * <collecting COLLECT_EXPR in ('%'|'@') IDENT across '^' IDENT>
+ *
+ * COLLECT_EXPR := '$' IDENT ':' '$' IDENT   (for k:v pairs -> %bucket)
+ *               | '$' IDENT                  (for values only -> @bucket)
+ *
+ * The 'across ^label' clause is required - there is no default scope.
+ *
+ * @param {Parser} p - Parser instance
+ * @param {Object} node - The node to potentially wrap in a Collecting
+ * @returns {Object} - Original node or Collecting-wrapped node
+ */
+function withOptionalCollecting(p, node) {
+  if (!p.peek('<')) return node;
+
+  // Check if it's <collecting (not just any <)
+  const next = p.toks[p.i + 1];
+  if (!next || next.k !== 'id' || next.v !== 'collecting') return node;
+
+  return p.span(() => {
+    p.eat('<');
+    p.eat('id'); // 'collecting'
+
+    // Parse COLLECT_EXPR: either '$key:$val' or just '$val'
+    p.eat('$');
+    const firstVar = eatVarName(p);
+
+    let collectExpr;
+    if (p.peek(':')) {
+      // Key:value form
+      p.eat(':');
+      p.eat('$');
+      const valueVar = eatVarName(p);
+      collectExpr = {key: firstVar, value: valueVar};
+    } else {
+      // Value-only form
+      collectExpr = {value: firstVar};
+    }
+
+    // Parse 'in' ('%'|'@') IDENT
+    if (!p.peek('id') || p.toks[p.i].v !== 'in') {
+      p.fail("expected 'in' after collecting expression");
+    }
+    p.eat('id'); // 'in'
+
+    let sliceKind;
+    if (p.peek('%')) {
+      p.eat('%');
+      sliceKind = 'object';
+    } else if (p.peek('@')) {
+      p.eat('@');
+      sliceKind = 'array';
+    } else {
+      p.fail("expected '%' or '@' after 'in'");
+    }
+    const bucket = eatVarName(p);
+
+    // Parse 'across' '^' IDENT (required)
+    if (!p.peek('id') || p.toks[p.i].v !== 'across') {
+      p.fail("expected 'across ^label' - the across clause is required");
+    }
+    p.eat('id'); // 'across'
+    p.eat('^');
+    const labelRef = eatVarName(p);
+
+    p.eat('>');
+
+    // Type enforcement validation is done in the AST validation phase
+    // (after parsing completes, outside of backtracking context)
+
+    return Collecting(node, collectExpr, bucket, sliceKind, labelRef);
+  });
+}
+
 // ---------- ROOT_PATTERN ----------
 
 function parseRootPattern(p) {
-  // Check for slice patterns: @{ O_GROUP } or @[ A_BODY ]
-  if (p.peek('@')) {
+  // Check for slice patterns: %{ O_GROUP } (object) or @[ A_BODY ] (array)
+  if (p.peek('%')) {
     const next = p.toks[p.i + 1];
     if (next && next.k === '{') {
       return parseObjectSlicePattern(p);
     }
+  }
+  if (p.peek('@')) {
+    const next = p.toks[p.i + 1];
     if (next && next.k === '[') {
       return parseArraySlicePattern(p);
     }
@@ -212,8 +309,8 @@ function parseRootPattern(p) {
 }
 
 function parseObjectSlicePattern(p) {
-  // @{ O_GROUP+ }
-  p.eat('@');
+  // %{ O_GROUP+ }
+  p.eat('%');
   p.eat('{');
   const groups = [];
   while (!p.peek('}')) {
@@ -221,7 +318,7 @@ function parseObjectSlicePattern(p) {
     p.maybe(',');
   }
   if (groups.length === 0) {
-    p.fail('empty object slice pattern @{ } is not allowed');
+    p.fail('empty object slice pattern %{ } is not allowed');
   }
   p.eat('}');
   return SlicePattern('object', {type: 'OGroup', groups});
@@ -291,9 +388,13 @@ function parseItemInner(p) {
 }
 
 function parseItemTerm(p) {
-  // ITEM_TERM := ITEM_TERM_CORE ('->' S_GROUP FLOW_MOD?)?
+  // ITEM_TERM := ITEM_TERM_CORE ('->' S_GROUP FLOW_MOD?)? DIRECTIVE*
+  // DIRECTIVE := '<collecting' COLLECT_EXPR 'in' ('%'|'@') IDENT 'across' '^' IDENT '>'
   const core = parseItemTermCore(p);
-  return withOptionalFlow(p, core);
+  // First check for flow operator (will be deprecated outside 'each' clauses)
+  const withFlow = withOptionalFlow(p, core);
+  // Then check for <collecting> directive
+  return withOptionalCollecting(p, withFlow);
 }
 
 function parseItemTermCore(p) {
@@ -508,8 +609,12 @@ function parseRemainderQuant(p) {
 }
 
 function parseOGroup(p) {
-  // O_GROUP := '(?' O_GROUP ')' | '(!' O_GROUP ')' | '(' O_GROUP* ')' | '(' O_GROUP* 'as' '@' IDENT ')' | O_TERM
+  // O_GROUP := 'each' EACH_CLAUSE | '(?' O_GROUP ')' | '(!' O_GROUP ')' | '(' O_GROUP* ')' | '(' O_GROUP* 'as' '%' IDENT ')' | O_TERM
   // Uses ordered backtracking.
+
+  // 'each' clause - validate all semantics (replaces 'K:V else !')
+  const eachClause = p.bt('each-clause', () => parseEach(p));
+  if (eachClause) return eachClause;
 
   // Lookahead
   const look = p.bt('obj-lookahead', () => parseObjectLookahead(p));
@@ -535,7 +640,7 @@ function parseOGroup(p) {
   });
   if (groupPlain) return groupPlain;
 
-  // O_TERM with possible 'else !' suffix and '?' suffix
+  // O_TERM with possible 'else !' suffix and '?' suffix (legacy - prefer 'each' for new code)
   const strongTerm = p.bt('obj-strong-term', () => {
     const term = parseOTerm(p);
     p.eat('else');
@@ -552,6 +657,63 @@ function parseOGroup(p) {
   const result = OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, false);
   if (term.loc) result.loc = term.loc;  // preserve source location
   return result;
+}
+
+// Parse 'each' clause: 'each' KEY BREADCRUMB* ':' VALUE_CLAUSE ('else' VALUE_CLAUSE)* QUANT?
+// VALUE_CLAUSE := VALUE ('->' ('@'|'%') IDENT)?
+function parseEach(p) {
+  // Check for 'each' keyword
+  if (!p.peek('id') || p.cur().v !== 'each') return null;
+
+  return p.span(() => {
+    p.eat('id'); // 'each'
+
+    // Parse KEY
+    const key = parseItem(p);
+
+    // Parse breadcrumbs
+    const breadcrumbs = [];
+    for (let bc; (bc = parseBreadcrumb(p)); ) breadcrumbs.push(bc);
+
+    p.eat(':');
+
+    // Parse first VALUE_CLAUSE
+    const valueClauses = [parseValueClause(p)];
+
+    // Parse ('else' VALUE_CLAUSE)*
+    while (p.backtrack(() => { p.eat('else'); return true; })) {
+      valueClauses.push(parseValueClause(p));
+    }
+
+    // Parse optional quantifier
+    const quant = parseOQuant(p);
+
+    return Each(key, breadcrumbs, valueClauses, quant);
+  });
+}
+
+// VALUE_CLAUSE := VALUE ('->' ('@'|'%') IDENT)?
+function parseValueClause(p) {
+  const value = parseItem(p);
+
+  // Check for optional flow operator
+  const flow = p.backtrack(() => {
+    p.eat('->');
+    let sliceKind;
+    if (p.peek('%')) {
+      p.eat('%');
+      sliceKind = 'object';
+    } else if (p.peek('@')) {
+      p.eat('@');
+      sliceKind = 'array';
+    } else {
+      p.fail("expected '%' or '@' after '->'");
+    }
+    const bucket = eatVarName(p);
+    return {bucket, sliceKind};
+  });
+
+  return {value, flow};
 }
 
 // Helper: parse O_GROUP* until one of stopTokens
@@ -646,6 +808,35 @@ function validateAST(ast, src = null) {
       checkSliceConflict(node.bucket, node.sliceKind || 'object', node.loc);
     }
 
+    // Check Collecting directive nodes are inside containers and validate type enforcement
+    if (node.type === 'Collecting') {
+      if (!inContainer) {
+        const sigil = node.sliceKind === 'object' ? '%' : '@';
+        let msg = `<collecting> directive can only be used inside an object or array pattern`;
+        if (src && node.loc) {
+          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+      // Type enforcement: k:v form requires %bucket, value-only form requires @bucket
+      if (node.collectExpr.key !== undefined && node.sliceKind !== 'object') {
+        let msg = `key:value collection requires %bucket (object slice), not @bucket`;
+        if (src && node.loc) {
+          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+      if (node.collectExpr.key === undefined && node.sliceKind !== 'array') {
+        let msg = `value-only collection requires @bucket (array slice), not %bucket`;
+        if (src && node.loc) {
+          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+      // Track bucket slice kind
+      checkSliceConflict(node.bucket, node.sliceKind, node.loc);
+    }
+
     // Check GroupBind slice kinds
     if (node.type === 'GroupBind') {
       checkSliceConflict(node.name, node.sliceKind || 'array', node.loc);
@@ -668,6 +859,17 @@ function validateAST(ast, src = null) {
         check(node.val, inChild);
         for (const bc of node.breadcrumbs || []) check(bc.key, inChild);
         break;
+      case 'Each':
+        check(node.key, inChild);
+        for (const bc of node.breadcrumbs || []) check(bc.key, inChild);
+        for (const clause of node.valueClauses || []) {
+          check(clause.value, inChild);
+          // Track bucket slice kind if flow is present
+          if (clause.flow) {
+            checkSliceConflict(clause.flow.bucket, clause.flow.sliceKind, node.loc);
+          }
+        }
+        break;
       case 'Alt':
         for (const alt of node.alts || []) check(alt, inChild);
         break;
@@ -676,6 +878,7 @@ function validateAST(ast, src = null) {
       case 'SBind':
       case 'GroupBind':
       case 'Flow':
+      case 'Collecting':
       case 'Guarded':
         check(node.pat || node.sub, inChild);
         break;

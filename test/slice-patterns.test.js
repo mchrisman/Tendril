@@ -1,4 +1,4 @@
-// slice-patterns.test.js — Tests for @{ } and @[ ] slice pattern syntax
+// slice-patterns.test.js — Tests for %{ } and @[ ] slice pattern syntax
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,35 +8,35 @@ console.log('\n✓ All slice pattern tests defined\n');
 
 // ==================== Object Slice Patterns ====================
 
-test('@{ } - object slice find and replace', () => {
+test('%{ } - object slice find and replace', () => {
   const data = {a: 1, b: 2, c: 3};
-  const result = Tendril('@{ a:1 }').find(data).replaceAll({x: 99});
+  const result = Tendril('%{ a:1 }').find(data).replaceAll({x: 99});
   assert.deepEqual(result, {x: 99, b: 2, c: 3});
 });
 
-test('@{ } - object slice with multiple fields', () => {
+test('%{ } - object slice with multiple fields', () => {
   const data = {a: 1, b: 2, c: 3, d: 4};
-  const result = Tendril('@{ a:1 b:2 }').find(data).replaceAll({replaced: true});
+  const result = Tendril('%{ a:1 b:2 }').find(data).replaceAll({replaced: true});
   assert.deepEqual(result, {replaced: true, c: 3, d: 4});
 });
 
-test('@{ } - object slice with regex key', () => {
+test('%{ } - object slice with regex key', () => {
   const data = {foo_1: 'a', foo_2: 'b', bar: 'c'};
-  const result = Tendril('@{ /^foo/:_ }').find(data).replaceAll({foos: 'gone'});
+  const result = Tendril('%{ /^foo/:_ }').find(data).replaceAll({foos: 'gone'});
   assert.deepEqual(result, {foos: 'gone', bar: 'c'});
 });
 
-test('@{ } - object slice with binding', () => {
+test('%{ } - object slice with binding', () => {
   const data = [{name: 'Alice', age: 30}, {name: 'Bob', age: 25}];
-  const solutions = Tendril('@{ name:$n }').find(data).solutions().toArray();
+  const solutions = Tendril('%{ name:$n }').find(data).solutions().toArray();
   assert.equal(solutions.length, 2);
   assert.equal(solutions[0].n, 'Alice');
   assert.equal(solutions[1].n, 'Bob');
 });
 
-test('@{ } - object slice nested', () => {
+test('%{ } - object slice nested', () => {
   const data = {outer: {inner: {target: 1, keep: 2}}};
-  const result = Tendril('@{ target:_ }').find(data).replaceAll({replaced: true});
+  const result = Tendril('%{ target:_ }').find(data).replaceAll({replaced: true});
   assert.deepEqual(result, {outer: {inner: {replaced: true, keep: 2}}});
 });
 
@@ -76,9 +76,9 @@ test('@[ ] - array slice with pattern', () => {
 
 // ==================== Error Cases ====================
 
-test('@{ } with match() throws error', () => {
+test('%{ } with match() throws error', () => {
   assert.throws(
-    () => Tendril('@{ a:1 }').match({a: 1}),
+    () => Tendril('%{ a:1 }').match({a: 1}),
     /Slice patterns.*require find\(\) or first\(\)/
   );
 });
@@ -90,16 +90,16 @@ test('@[ ] with match() throws error', () => {
   );
 });
 
-test('@{ } with hasMatch() throws error', () => {
+test('%{ } with hasMatch() throws error', () => {
   assert.throws(
-    () => Tendril('@{ a:1 }').hasMatch({a: 1}),
+    () => Tendril('%{ a:1 }').hasMatch({a: 1}),
     /Slice patterns.*require find\(\) or first\(\)/
   );
 });
 
-test('@{ } empty is parse error', () => {
+test('%{ } empty is parse error', () => {
   assert.throws(
-    () => Tendril('@{ }').find({}),  // Trigger parsing
+    () => Tendril('%{ }').find({}),  // Trigger parsing
     /empty object slice pattern/
   );
 });
@@ -113,9 +113,9 @@ test('@[ ] empty is parse error', () => {
 
 // ==================== first() works with slice patterns ====================
 
-test('@{ } with first() works', () => {
+test('%{ } with first() works', () => {
   const data = [{a: 1}, {a: 2}];
-  const occ = Tendril('@{ a:$x }').first(data);
+  const occ = Tendril('%{ a:$x }').first(data);
   assert.equal(occ.count(), 1);
   const sol = occ.solutions().first();
   assert.ok(sol.x === 1 || sol.x === 2);
@@ -129,10 +129,10 @@ test('@[ ] with first() works', () => {
 
 // ==================== hasAnyMatch works with slice patterns ====================
 
-test('@{ } with hasAnyMatch() works', () => {
+test('%{ } with hasAnyMatch() works', () => {
   const data = {nested: {a: 1}};
-  assert.ok(Tendril('@{ a:1 }').hasAnyMatch(data));
-  assert.ok(!Tendril('@{ a:2 }').hasAnyMatch(data));
+  assert.ok(Tendril('%{ a:1 }').hasAnyMatch(data));
+  assert.ok(!Tendril('%{ a:2 }').hasAnyMatch(data));
 });
 
 test('@[ ] with hasAnyMatch() works', () => {

@@ -88,10 +88,6 @@ The `->` flow operator is retained *only* within `each` clauses. For `->%bucket`
 
 Quantifiers compose with `each`: `each K:V #{2,5}` means "for all k~K, v~V must hold, AND there must be 2-5 such k." 
 
-4. Document the contract for <directives> generally.
-* It should be **zero-width** (doesn’t consume / doesn’t affect matching).
-* It should run **only on successful branches** (your rollback property).
-* It should be allowed after any ITEM, not just scalar bindings, if you want to collect derived values.
 
 5. Currently `K:V` means "There must be at least one matching field." `K:V#{m,n}` adds an additional condition: There must be between m and n matching fields.  Therefore `K:V#{0,}` has the surprising meaning "There must be at least one, and there must be at least zero."
 
@@ -99,6 +95,4 @@ Fix this by saying that the quantifier is not an *additional condition*, it is m
 
 Ditto for `each K:V`, with 'each' signifying (for all k in the object, k~K implies v~V).
 
-In the case of the object validation idiom `K:V1 else V2`, illustrate in the documentation that the quantifier must go at the end. Add a unit test to prove that `K:V1#{1} else V2` is a syntax error.
-
-6. Eliminate the '?' forms `K:V?` and `K:V else !?`, as they are confusing and redundant. Use `K:V#{0,}` or `each K:V#{0,}` instead.
+In the case of the object validation idiom `each K:V1 else V2`, illustrate in the documentation that the quantifier must go at the end. Add a unit test to prove that `K:V1#{1} else V2` is a syntax error. Support for clarity `(K:V)#{m,n}.

@@ -50,16 +50,16 @@ test('tokenizer - bareword without /i is normal id', () => {
   assert.equal(toks[0].v, 'foo');
 });
 
-test('tokenizer - /i requires no space (with space, becomes division)', () => {
-  // With a space, 'foo' is a normal id, and '/i' is now division by 'i' (not regex)
-  // This is valid tokenization in expression context
-  const toks = tokenize('foo /i');
-  assert.equal(toks.length, 3);
+test('tokenizer - /i requires no space (with space, starts new regex)', () => {
+  // With a space, 'foo' is a normal id, and '/' starts a new regex
+  // Division was removed from EL (commit 41de539), so '/' is always regex start
+  const toks = tokenize('foo /i/');  // Complete regex /i/
+  assert.equal(toks.length, 2);
   assert.equal(toks[0].k, 'id');
   assert.equal(toks[0].v, 'foo');
-  assert.equal(toks[1].k, '/');
-  assert.equal(toks[2].k, 'id');
-  assert.equal(toks[2].v, 'i');
+  assert.equal(toks[1].k, 're');
+  assert.equal(toks[1].v.source, 'i');
+  assert.equal(toks[1].v.flags, '');
 });
 
 // ============ Matching Tests ============

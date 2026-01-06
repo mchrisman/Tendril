@@ -96,21 +96,38 @@ Tendril("{/a.*/: $x}").match({ab: 1, xyz: 2}).solutions().first()
 // => {x: 1}
 ```
 
-### Object Implication (`: else !`)
+### Each Clause (validate all)
 
 ```javascript
-Tendril("{/a.*/: 1 else !}").match({ab: 1, ac: 1}).hasMatch()
+// each K: V - for all keys matching K, value must match V
+Tendril("{ each /a.*/: 1 }").match({ab: 1, ac: 1}).hasMatch()
 // => true (all /a.*/ keys have value 1)
 
-Tendril("{/a.*/: 1 else !}").match({ab: 1, ac: 2}).hasMatch()
-// => false (ac:2 is a "bad entry" - key matches but value doesn't)
+Tendril("{ each /a.*/: 1 }").match({ab: 1, ac: 2}).hasMatch()
+// => false (ac:2 fails validation)
 
-// Universal equality idiom
-Tendril("{/a.*/: $x, /a.*/: $x else !}").match({ab: 1, ac: 1}).hasMatch()
-// => true (all /a.*/ values equal)
+// each with else chain - value must match one of the clauses
+Tendril("{ each /a.*/: 1 else 2 }").match({ab: 1, ac: 2}).hasMatch()
+// => true (values are 1 or 2)
 
-Tendril("{/a.*/: $x, /a.*/: $x else !}").match({ab: 1, ac: 2}).hasMatch()
-// => false (values differ)
+// each with flow operator - collect validated pairs
+Tendril("{ each /val.*/: $v -> %results }").match({val1: 10, val2: 10}).solutions().first()
+// => {v: 10, results: {val1: 10, val2: 10}}
+
+// each with quantifier - validate all AND require count
+Tendril("{ each /a.*/: 1 #{2} }").match({a1: 1, a2: 1}).hasMatch()
+// => true (exactly 2 matching keys, all have value 1)
+
+// Universal equality - all matching values must be the same
+Tendril("{ each /a.*/: $x }").match({ab: 1, ac: 1}).hasMatch()
+// => true ($x unifies across all matches)
+
+Tendril("{ each /a.*/: $x }").match({ab: 1, ac: 2}).hasMatch()
+// => false (values differ, can't unify)
+
+// Legacy syntax still supported: "else !" is equivalent to "each"
+Tendril("{/a.*/: 1 else !}").match({ab: 1, ac: 1}).hasMatch()
+// => true (same as each /a.*/: 1)
 ```
 
 ### Object Remainder
@@ -266,8 +283,8 @@ Tendril("[@x ...]").find([1, 2]).editAll({x: [9, 9]})
 ### Slice Patterns
 
 ```javascript
-// @{ } finds and replaces object slices (not the whole object)
-Tendril("@{ foo: 1 }").find({foo: 1, bar: 2}).replaceAll({baz: 3})
+// %{ } finds and replaces object slices (not the whole object)
+Tendril("%{ foo: 1 }").find({foo: 1, bar: 2}).replaceAll({baz: 3})
 // => {baz: 3, bar: 2} (only foo:1 replaced, bar kept)
 
 // @[ ] finds and replaces array slices (subsequences)
@@ -275,12 +292,40 @@ Tendril("@[ 2 3 ]").find([1, 2, 3, 4]).replaceAll([20, 30])
 // => [1, 20, 30, 4] (only [2,3] replaced)
 
 // Works with bindings
-Tendril("@{ name: $n }").find([{name: "Alice"}, {name: "Bob"}]).solutions().toArray()
+Tendril("%{ name: $n }").find([{name: "Alice"}, {name: "Bob"}]).solutions().toArray()
 // => [{n: "Alice"}, {n: "Bob"}]
 
 // Slice patterns require find() or first(), not match()
-Tendril("@{ a: 1 }").match({a: 1})  // Error!
-Tendril("@{ a: 1 }").find({a: 1})   // OK
+Tendril("%{ a: 1 }").match({a: 1})  // Error!
+Tendril("%{ a: 1 }").find({a: 1})   // OK
+```
+
+### Collecting Directive
+
+```javascript
+// <collecting> explicitly collects values from iterations into buckets
+// Syntax: <collecting $val in @bucket across ^label> (values into array)
+//         <collecting $key:$val in %bucket across ^label> (k:v pairs into object)
+
+// Collect k:v pairs across labeled iteration
+const data = {a: {name: "alice"}, b: {name: "bob"}};
+Tendril('§L { $key: { name: $n <collecting $key:$n in %names across ^L> }}')
+  .match(data).solutions().first()
+// => {key: "b", n: "bob", names: {a: "alice", b: "bob"}}
+//    (names contains ALL k:v pairs collected across the §L iteration)
+
+// Collect values only (into array)
+Tendril('§L { $key: { name: $n <collecting $n in @names across ^L> }}')
+  .match(data).solutions().first()
+// => {key: "b", n: "bob", names: ["alice", "bob"]}
+
+// The `across ^label` clause is required — there is no default scope
+// The label marks where separate buckets are created
+// Values are collected across all sub-branches beneath that label
+
+// Type enforcement:
+// - k:v form ($key:$val) requires %bucket (object slice)
+// - value-only form ($val) requires @bucket (array slice)
 ```
 
 ### Primitives and Literals

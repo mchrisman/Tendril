@@ -58,16 +58,9 @@ export function tokenize(src) {
     }
 
     // regex literal: /.../flags
-    // Disambiguate from division: / is division only when:
-    // 1. Previous token is a "value" token (num, id, ), ], any), AND
-    // 2. Token before that is NOT ':' (which would mean we just finished a k:v value, not mid-expression)
-    // This handles: {/a/:1 /b/:2} (regex keys) vs ($x / 2) (division in expression)
-    const lastTok = toks[toks.length - 1];
-    const prevPrevTok = toks[toks.length - 2];
-    const afterValue = lastTok && ['num', 'id', ')', ']', 'any'].includes(lastTok.k);
-    const afterKVValue = prevPrevTok && prevPrevTok.k === ':';
-    const isDivision = afterValue && !afterKVValue;
-    if (c === '/' && src[i + 1] !== '/' && !isDivision) {
+    // Division was removed from the expression language (see commit 41de539),
+    // so `/` is always a regex start (except `//` which is a comment)
+    if (c === '/' && src[i + 1] !== '/') {
       // Single-pass scan: handle escapes and character classes
       let j = i + 1, inClass = false;
       while (j < src.length) {
@@ -172,7 +165,8 @@ export function tokenize(src) {
 
     // one-character punctuation/operators
     // § (U+00A7) is for label declarations, ^ is for label references
-    const single = '()[]{}<>:,.$@=|*+?!-#%&/§^'.includes(c) ? c : null;
+    // Note: / is NOT here - it's always a regex start (division was removed from EL)
+    const single = '()[]{}<>:,.$@=|*+?!-#%&§^'.includes(c) ? c : null;
     if (single) { push(single, single, 1); continue; }
 
     throw syntax(`unexpected character '${c}'`, src, i);

@@ -626,6 +626,72 @@ function matchItem(item, node, path, sol, emit, ctx) {
         return;
       }
 
+      case 'Collecting': {
+        // <collecting $key:$val in %bucket across ^label> or <collecting $val in @bucket across ^label>
+        // Match the inner pattern; if successful, collect the specified variables into the bucket
+        // The collectExpr specifies WHICH bound variables to collect:
+        // - {key: varName, value: varName} for k:v pairs (%bucket)
+        // - {value: varName} for values only (@bucket)
+        // The labelRef specifies the bucket level (required, no default scope)
+
+        const sliceKind = item.sliceKind;
+        const sigil = sliceKind === 'object' ? '%' : '@';
+
+        matchItem(item.pat, node, path, sol, (s2) => {
+          // The <collecting> directive collects values ONLY when all referenced variables are bound
+          // and the label is available. This allows the test phase (which doesn't have key bindings)
+          // to succeed without collecting anything.
+
+          // Check if label is available
+          if (!s2.labels.has(item.labelRef)) {
+            // Label not set - we're likely in a test phase or not inside a labeled scope
+            // Just emit the solution without collecting
+            emit(s2);
+            return;
+          }
+
+          const labelInfo = s2.labels.get(item.labelRef);
+          const bucketLevel = labelInfo.bucketLevel;
+
+          // Get values from collectExpr by looking up bound variables
+          const collectExpr = item.collectExpr;
+          let collectKey, collectValue;
+
+          // Check if all referenced variables are bound
+          if (collectExpr.key !== undefined && !s2.env.has(collectExpr.key)) {
+            // Key variable not bound - skip collection (likely test phase)
+            emit(s2);
+            return;
+          }
+          if (!s2.env.has(collectExpr.value)) {
+            // Value variable not bound - skip collection (likely test phase)
+            emit(s2);
+            return;
+          }
+
+          if (collectExpr.key !== undefined) {
+            const keyBinding = s2.env.get(collectExpr.key);
+            collectKey = keyBinding.kind === 'scalar' ? keyBinding.value : keyBinding;
+          }
+          const valueBinding = s2.env.get(collectExpr.value);
+          collectValue = valueBinding.kind === 'scalar' ? valueBinding.value : valueBinding;
+
+          if (sliceKind === 'object') {
+            // Object bucket: collect {key: value}
+            if (!addToBucket(s2, item.bucket, collectKey, collectValue, bucketLevel, 'object')) {
+              return; // Collision - don't emit this solution
+            }
+          } else {
+            // Array bucket: collect values only
+            if (!addToBucket(s2, item.bucket, null, collectValue, bucketLevel, 'array')) {
+              return; // Shouldn't happen for array buckets, but be safe
+            }
+          }
+          emit(s2);
+        }, ctx);
+        return;
+      }
+
       case 'Alt': {
         if (item.prioritized) {
           // Prioritized alternation (else semantics): try each alternative in order,
@@ -1255,8 +1321,151 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       continue;
     }
 
+    // Handle 'each' clause: validate-all semantics
+    if (term.type === 'Each') {
+      let next = [];
+      for (const state of solutions) {
+        const {sol: s0, testedKeys, coveredKeys = new Set()} = state;
+
+        // Find all keys matching the key pattern K
+        const matchingKeys = objectKeysMatching(obj, term.key, s0.env);
+        if (DEBUG) console.log(`[matchObject:Each] key:`, term.key, `matched keys:`, matchingKeys);
+
+        // All matching keys are "covered" for remainder purposes
+        const newCoveredKeys = new Set(coveredKeys);
+        for (const k of matchingKeys) {
+          newCoveredKeys.add(k);
+        }
+
+        // Check quantifier constraints on count of matching keys
+        const quant = term.quant;
+        const minCount = quant ? quant.min : 0;
+        const maxCount = quant ? quant.max : Infinity;
+
+        if (matchingKeys.length < minCount) {
+          if (DEBUG) console.log(`[matchObject:Each] failed: matching count ${matchingKeys.length} < min ${minCount}`);
+          continue;
+        }
+        if (matchingKeys.length > maxCount) {
+          if (DEBUG) console.log(`[matchObject:Each] failed: matching count ${matchingKeys.length} > max ${maxCount}`);
+          continue;
+        }
+
+        // For EACH matching key, the value must match one of the VALUE_CLAUSEs
+        // All keys must pass for the solution to succeed
+        let allKeysValid = true;
+        let s1 = cloneSolution(s0);
+        const newTestedKeys = new Set(testedKeys);
+
+        for (const k of matchingKeys) {
+          newTestedKeys.add(k);
+
+          // Navigate breadcrumbs to get the value
+          let targetValue = obj[k];
+          let targetPath = [...path, k];
+
+          if (term.breadcrumbs && term.breadcrumbs.length > 0) {
+            // Navigate breadcrumbs first
+            let foundValue = false;
+            navigateBreadcrumbs(
+              term.breadcrumbs,
+              obj[k],
+              [...path, k],
+              cloneSolution(s1),
+              (finalNode, finalPath, s2) => {
+                targetValue = finalNode;
+                targetPath = finalPath;
+                foundValue = true;
+              },
+              ctx
+            );
+            if (!foundValue) {
+              allKeysValid = false;
+              break;
+            }
+          }
+
+          // Try each VALUE_CLAUSE until one matches
+          let keyMatched = false;
+          for (const clause of term.valueClauses) {
+            const s2 = cloneSolution(s1);
+
+            // If this object has a label, record the current iteration key
+            if (objLabel) {
+              s2.labels.set(objLabel, {key: k, bucketLevel: s2.bucketStack.length - 1});
+            }
+
+            // Bind key variables
+            if (!bindKeyVariables(term.key, k, s2, path)) {
+              continue; // Binding failed, try next clause
+            }
+
+            // Set flowKey for flow operator collection
+            const savedFlowKey = ctx.flowKey;
+            ctx.flowKey = k;
+
+            let clauseMatched = false;
+            matchItem(clause.value, targetValue, targetPath, s2, (s3) => {
+              clauseMatched = true;
+
+              // Handle flow operator if present
+              if (clause.flow) {
+                const bucket = clause.flow.bucket;
+                const sliceKind = clause.flow.sliceKind;
+                const bucketLevel = s3.bucketStack.length - 1;
+
+                if (bucketLevel >= 0) {
+                  const buckets = s3.bucketStack[bucketLevel];
+                  if (!buckets.has(bucket)) {
+                    buckets.set(bucket, sliceKind === 'object' ? {} : []);
+                  }
+                  const bucketVal = buckets.get(bucket);
+
+                  // Get the value to collect (the matched value from the clause)
+                  let collectedValue = targetValue;
+                  // If the clause value is a binding, get that value
+                  if (clause.value.type === 'SBind') {
+                    collectedValue = s3.env.get(clause.value.name);
+                  }
+
+                  if (sliceKind === 'object') {
+                    // Collect k:v pair using the iteration key
+                    bucketVal[k] = collectedValue;
+                  } else {
+                    // Collect value only
+                    bucketVal.push(collectedValue);
+                  }
+                }
+              }
+
+              s1 = s3; // Update solution with bindings from this key
+            }, ctx);
+
+            ctx.flowKey = savedFlowKey;
+
+            if (clauseMatched) {
+              keyMatched = true;
+              break; // This key matched, move to next key
+            }
+          }
+
+          if (!keyMatched) {
+            if (DEBUG) console.log(`[matchObject:Each] key '${k}' did not match any VALUE_CLAUSE`);
+            allKeysValid = false;
+            break;
+          }
+        }
+
+        if (allKeysValid) {
+          next.push({sol: s1, testedKeys: newTestedKeys, coveredKeys: newCoveredKeys});
+        }
+      }
+      solutions = next;
+      continue;
+    }
+
     if (term.type !== 'OTerm') {
-      throw new Error(`Expected OTerm, GroupBind, OLook, or OGroup, got ${term.type}`);
+      throw new Error(`Expected OTerm, GroupBind, OLook, OGroup, or Each, got ${term.type}`);
     }
 
     // Bucket level is pushed once at object start, shared by all terms

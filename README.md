@@ -93,7 +93,7 @@ regardless of how distant the two nodes are in the tree.
 
 ```js
 Tendril(`{
-  ** ({ tag:'label', props:{for:$id}, children:[$text]   } as $L)
+  ** ({ tag:'label', props:{for:$id}, children:[(_string as $text)]   } as $L)
   **  { tag:'input', props:{id:$id (placeholder:_? as %p) } }
 }`)
 .match(vdom)
@@ -643,6 +643,7 @@ Both forms may be considered good idiomatic Tendril. But beware of mixing them, 
 To demonstrate with our "Hello worlds" example:
 
 ```
+// Hello, worlds
 const data = {
   planets: {
     Jupiter: {size: "big"},
@@ -670,11 +671,15 @@ const pattern = `{
 }`
 
 // Propositional idiom (like a list of propositions).
-{
+const pattern2 = `{
     planets.$name.size: $size
     aka[$i][0]: $name
     aka[$i][_]: $alias
-}
+}`
+
+Tendril(pattern).match(data).solutions().toArray()
+.map(({size,alias})=>`Hello, ${size} world ${alias}!`)
+
 ```
 
 The propositional idiom feels like a completely different language, but if you look carefully, you can see that it's just an object pattern `{ K1:V1 K2:V2 ... }` with some breadcrumbs thrown in.
@@ -762,6 +767,11 @@ Note: `|` and `else` have the same precedence but cannot be mixed without parent
  Tendril is a concise punctuation-heavy language for power users, but wants to stay readable. We distinguish between "Core", "Advanced", and "Arcane" idioms.  ("idiom" = semantic intent + syntax + behavior features.) The 'core' language includes idioms that can be learned in an hour and provides 80% of the utility, including simple regex-inspired operators, basic joins, scalar variables, simple extraction and replacement. 'Advanced' would be documented separately and would include things like slices, 'else', object quantifiers, etc.; things that are not uncommon, but which you don't need to learn right away. 'Arcane' would be the difficult stuff.
 
 Core idioms should be succinct and punctuation-heavy. More advanced idioms can employ more or longer keywords as needed to remain readable. The idioms with keywords would be carefully constructed so that use of the language keywords does not interfere with the ability to use bare words as string literals.
+
+`<directives>`
+
+    * It should be **zero-width** (doesn’t consume / doesn’t affect matching).
+    * It should run **only on successful branches** (your rollback property).
 
 ---
 
