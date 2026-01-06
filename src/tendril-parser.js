@@ -487,8 +487,9 @@ function parseORemnant(p) {
 }
 
 function parseRemainderQuant(p) {
-  // QUANT := '#?' | '#{' INTEGER '}' | '#{' INTEGER ',' INTEGER? '}'
+  // QUANT := '#?' | '#{' ',' INTEGER '}' | '#{' INTEGER '}' | '#{' INTEGER ',' INTEGER? '}'
   return p.backtrack(() => { p.eat('#'); p.eat('?'); return {min: 0, max: Infinity}; })
+      || p.backtrack(() => { p.eat('#'); p.eat('{'); p.eat(','); const max = eatNonNegInt(p, '%'); p.eat('}'); return {min: 0, max}; })
       || p.backtrack(() => { p.eat('#'); p.eat('{'); const min = eatNonNegInt(p, '%'); p.eat(','); const max = eatNonNegInt(p, '%'); p.eat('}'); if (max < min) p.fail('% quantifier upper < lower'); return {min, max}; })
       || p.backtrack(() => { p.eat('#'); p.eat('{'); const min = eatNonNegInt(p, '%'); p.eat(','); p.eat('}'); return {min, max: Infinity}; })
       || p.backtrack(() => { p.eat('#'); p.eat('{'); const n = eatNonNegInt(p, '%'); p.eat('}'); return {min: n, max: n}; });
@@ -582,8 +583,9 @@ function parseBreadcrumb(p) {
 // parseBQuant removed - breadcrumbs no longer support quantifiers in v5
 
 function parseOQuant(p) {
-  // O_QUANT := '#?' | '#{' INTEGER '}' | '#{' INTEGER ',' INTEGER? '}'
+  // O_QUANT := '#?' | '#{' ',' INTEGER '}' | '#{' INTEGER '}' | '#{' INTEGER ',' INTEGER? '}'
   return p.backtrack(() => { p.eat('#'); p.eat('?'); return {min: 0, max: Infinity}; })
+      || p.backtrack(() => { p.eat('#'); p.eat('{'); p.eat(','); const max = eatNonNegInt(p, 'O_QUANT'); p.eat('}'); return {min: 0, max}; })
       || p.backtrack(() => { p.eat('#'); p.eat('{'); const min = eatNonNegInt(p, 'O_QUANT'); p.eat(','); const max = eatNonNegInt(p, 'O_QUANT'); p.eat('}'); if (max < min) p.fail('O_QUANT upper < lower'); return {min, max}; })
       || p.backtrack(() => { p.eat('#'); p.eat('{'); const min = eatNonNegInt(p, 'O_QUANT'); p.eat(','); p.eat('}'); return {min, max: Infinity}; })
       || p.backtrack(() => { p.eat('#'); p.eat('{'); const n = eatNonNegInt(p, 'O_QUANT'); p.eat('}'); return {min: n, max: n}; });

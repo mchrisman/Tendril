@@ -47,6 +47,13 @@ test('object quantifier - valid range', () => {
   assert.equal(ast.type, 'Obj');
 });
 
+test('object quantifier - valid upper bound only #{,n}', () => {
+  const ast = parsePattern('{ a:b #{,3} }');
+  assert.equal(ast.type, 'Obj');
+  assert.equal(ast.terms[0].quant.min, 0);
+  assert.equal(ast.terms[0].quant.max, 3);
+});
+
 test('object quantifier - decimal should throw', () => {
   assert.throws(() => parsePattern('{ a:b #{1.5} }'));
 });
@@ -58,6 +65,13 @@ test('object quantifier - negative should throw', () => {
 test('% quantifier - valid integer', () => {
   const ast = parsePattern('{ a:b %#{2} }');
   assert.equal(ast.type, 'Obj');
+});
+
+test('% quantifier - valid upper bound only #{,n}', () => {
+  const ast = parsePattern('{ a:b %#{,3} }');
+  assert.equal(ast.type, 'Obj');
+  assert.equal(ast.spread.quant.min, 0);
+  assert.equal(ast.spread.quant.max, 3);
 });
 
 test('% quantifier - decimal should throw', () => {
