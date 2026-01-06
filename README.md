@@ -1018,7 +1018,8 @@ ITEM :=
       ITEM_TERM ('|' ITEM_TERM)*              # alternation: enumerate all matches
     | ITEM_TERM ('else' ITEM_TERM)*           # prioritized: first match wins
 
-# The '->' suffix flows matching k:v pairs into a bucket during object iteration.
+# The '->' suffix flows matching k:v pairs into a bucket during object iteration,
+# but may also appear elsewhere.
 # Precedence: 'as' (tightest) > '->' > 'else' (loosest)
 # So: K:V -> @x else W -> @y  parses as  K:((V -> @x) else (W -> @y))
 ITEM_TERM :=
@@ -1057,7 +1058,7 @@ ARR := LABEL_DECL? '[' A_BODY ']'             # optional label for scope control
 A_BODY := (A_GROUP (','? A_GROUP)*)?           # commas optional
 
 A_GROUP :=
-      '...' A_QUANT?                           # spread token in arrays (three dots)
+      '...'                                    # spread token in arrays (three dots)
     | A_GROUP_BASE A_QUANT?                    # quantifiers bind tight
       ( ('|' (A_GROUP_BASE A_QUANT?))*         # alternation: enumerate all
       | ('else' (A_GROUP_BASE A_QUANT?))*      # prioritized: first match wins
