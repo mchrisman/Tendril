@@ -114,4 +114,44 @@ test('multi-character operators', () => {
   assert.equal(tokens[4].k, '(!');
 });
 
+// ==================== Regex vs Division Ambiguity (td-0012) ====================
+// These tests document the current heuristic behavior and known limitations.
+
+test('regex after colon (object value context)', () => {
+  // After ':', '/' should be regex - this is the common case
+  const tokens = tokenize('{ a: /foo/ }');
+  const kinds = tokens.map(t => t.k);
+  assert.deepEqual(kinds, ['{', 'id', ':', 're', '}']);
+});
+
+test('regex as object key', () => {
+  // At start of key position, '/' should be regex
+  const tokens = tokenize('{ /foo/: 1 }');
+  const kinds = tokens.map(t => t.k);
+  assert.deepEqual(kinds, ['{', 're', ':', 'num', '}']);
+});
+
+test('division after value-like token in array - KNOWN LIMITATION', () => {
+  // After a number, the heuristic treats '/' as division, not regex
+  // This is a known limitation - see td-0012
+  const tokens = tokenize('[1 2 3 /foo/ 4]');
+  const kinds = tokens.map(t => t.k);
+  // LIMITATION: /foo/ is tokenized as division operators, not regex
+  assert.deepEqual(kinds, ['[', 'num', 'num', 'num', '/', 'id', '/', 'num', ']']);
+});
+
+test('regex at array start', () => {
+  // At start of array, '/' should be regex
+  const tokens = tokenize('[/foo/ 1 2]');
+  const kinds = tokens.map(t => t.k);
+  assert.deepEqual(kinds, ['[', 're', 'num', 'num', ']']);
+});
+
+test('regex after comma in array', () => {
+  // After comma, '/' should be regex (not after value-like token)
+  const tokens = tokenize('[1, /foo/, 2]');
+  const kinds = tokens.map(t => t.k);
+  assert.deepEqual(kinds, ['[', 'num', ',', 're', ',', 'num', ']']);
+});
+
 console.log('\n✓ All tokenizer tests defined\n');

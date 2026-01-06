@@ -2,7 +2,8 @@
 //
 // Syntax: (PATTERN where $x > 100)
 //
-// Operators: < > <= >= == != && || ! + - * / %
+// Operators: < > <= >= == != && || ! + - * %
+// Note: Division (/) excluded due to regex ambiguity; will be revisited (td-0012).
 // Functions: number($x), string($x), boolean($x), size($x)
 //
 // Uses SameValueZero for equality comparisons.
@@ -29,7 +30,7 @@ const PRECEDENCE = {
   '==': 3, '!=': 3,
   '<': 4, '>': 4, '<=': 4, '>=': 4,
   '+': 5, '-': 5,
-  '*': 6, '/': 6, '%': 6,
+  '*': 6, '%': 6,
 };
 
 /**
@@ -216,14 +217,6 @@ export function evaluateExpr(ast, bindings) {
               throw new Error(`Cannot multiply ${typeof left} and ${typeof right}`);
             }
             return left * right;
-          case '/':
-            if (typeof left !== 'number' || typeof right !== 'number') {
-              throw new Error(`Cannot divide ${typeof left} and ${typeof right}`);
-            }
-            if (right === 0) {
-              throw new Error(`Division by zero`);
-            }
-            return left / right;
           case '%':
             if (typeof left !== 'number' || typeof right !== 'number') {
               throw new Error(`Cannot modulo ${typeof left} and ${typeof right}`);

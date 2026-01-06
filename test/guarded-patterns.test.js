@@ -144,8 +144,8 @@ test('guarded: pattern bindings still work', () => {
 // ==================== Error Cases ====================
 
 test('guarded: invalid guard expression fails gracefully', () => {
-  // Division by zero in guard should not match (not throw)
-  assert.ok(!Tendril('(_ where _ / 0 > 0)').match(5).hasMatch());
+  // Modulo by zero in guard should not match (not throw)
+  assert.ok(!Tendril('(_ where _ % 0 > 0)').match(5).hasMatch());
 });
 
 test('guarded: guard with unbound variable fails', () => {

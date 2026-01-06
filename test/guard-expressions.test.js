@@ -82,7 +82,7 @@ test('guard: short-circuit && (false && X does not evaluate X)', () => {
 
 test('guard: short-circuit || (true || X does not evaluate X)', () => {
   // This tests that true || error-inducing-expr doesn't throw
-  assert.ok(Tendril('(_number as $x where true || $x / 0 > 0)').match(5).hasMatch());
+  assert.ok(Tendril('(_number as $x where true || $x % 0 > 0)').match(5).hasMatch());
 });
 
 // ==================== Arithmetic Operators ====================
@@ -99,18 +99,12 @@ test('guard: multiplication', () => {
   assert.ok(Tendril('(_number as $x where $x * 2 == 10)').match(5).hasMatch());
 });
 
-test('guard: division', () => {
-  assert.ok(Tendril('(_number as $x where $x / 2 == 5)').match(10).hasMatch());
-});
+// Division (/) removed from EL due to regex ambiguity - see td-0012
 
 test('guard: modulo', () => {
   // x must be even
   assert.ok(Tendril('(_number as $x where $x % 2 == 0)').match(4).hasMatch());
   assert.ok(!Tendril('(_number as $x where $x % 2 == 0)').match(3).hasMatch());
-});
-
-test('guard: division by zero fails match', () => {
-  assert.ok(!Tendril('(_number as $x where $x / 0 > 0)').match(5).hasMatch());
 });
 
 test('guard: modulo by zero fails match', () => {
