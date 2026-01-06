@@ -94,7 +94,7 @@ regardless of how distant the two nodes are in the tree.
 ```js
 Tendril(`{
   ** ({ tag:'label', props:{for:$id}, children:[$text]   } as $L)
-  **  { tag:'input', props:{id:$id (placeholder:_? as @p) } }
+  **  { tag:'input', props:{id:$id (placeholder:_? as %p) } }
 }`)
 .match(vdom)
 .editAll({
@@ -296,8 +296,8 @@ const inventory = {
 };
 
 Tendril(`{
-  $item: {type: fruit}    -> @fruits
-    else {type: vegetable} -> @veggies
+  $item: {type: fruit}    -> %fruits
+    else {type: vegetable} -> %veggies
 }`)
 .match(inventory)
 .solutions()
@@ -334,10 +334,10 @@ The **remainder** (spelled `%`, pronounced "remainder") is a special clause repr
 Bind the remainder to capture it:
 
 ```
-{ a:b (% as @rest) }    // matches {"a":"b", "c":"d"}, binds {"c":"d"} to @rest
+{ a:b (% as %rest) }    // matches {"a":"b", "c":"d"}, binds {"c":"d"} to %rest
                         // Note: requires nonempty remainder
 
-{ a:b (%? as @rest) }   // also matches {"a":"b"}, binds {} to @rest
+{ a:b (%? as %rest) }   // also matches {"a":"b"}, binds {} to %rest
                         // %? allows empty remainder
 ```
 
@@ -362,7 +362,7 @@ Negation uses lookahead syntax:
 
 ## Binding Variables
 
-Tendril has two kinds of variables. **Scalar variables** (prefix `$`) capture single values.  **Group variables** (prefix `@`) capture contiguous subsequences in arrays (**array slices**), or subsets of properties of objects (**object slices**). 
+Tendril has two kinds of variables. **Scalar variables** (prefix `$`) capture single values. **Group variables** capture contiguous subsequences or subsets: `@` prefix for **array slices** (subsequences), `%` prefix for **object slices** (key-value subsets). 
 
 The syntax for variable binding is `(pattern as $x)` or `(pattern as @x)`. **Parentheses are mandatory**.
 ```
@@ -395,8 +395,8 @@ Tendril("[@x @x]").find([1, [2, 2]]).editAll({x: _ => ['the','replacement']})  /
 
 To capture a set of matching key-value pairs, use a group variable with one or more field clauses. (Scalar variables work normally within K or V positions, but capturing entire field clauses requires a group.)
 ```
-Tendril("{ (/a/:_, /b/:_ as @x) /c/:_ }").match({Big:1, Cute:2, Alice:3}) // matches with binding {x:{Big:1, Alice:3}}
-Tendril("{ (/a/:_, /b/:_ as @x) /c/:_ }").match({Big:1, Cute:2, Alice:3}).edit({x:_=>{foo:"bar"}}) // -> {foo:"bar",Cute:2}
+Tendril("{ (/a/:_, /b/:_ as %x) /c/:_ }").match({Big:1, Cute:2, Alice:3}) // matches with binding {x:{Big:1, Alice:3}}
+Tendril("{ (/a/:_, /b/:_ as %x) /c/:_ }").match({Big:1, Cute:2, Alice:3}).edit({x:_=>{foo:"bar"}}) // -> {foo:"bar",Cute:2}
 ```
 
 ### Scalars
@@ -572,13 +572,13 @@ The `_` variable is only available within the guard expression—it doesn't bind
 The `->` operator collects matching key-value pairs into **buckets** during object iteration. This enables categorization and partitioning of object properties.
 
 ```javascript
-{ $k: 1 -> @ones }              // collect all k:v where value is 1 into @ones
-{ $k: 1 -> @ones else 2 -> @twos }  // partition by value: 1s and 2s into separate buckets
-{ $k: 1 -> @ones else _ -> @rest }  // collect 1s; everything else goes to @rest
+{ $k: 1 -> %ones }              // collect all k:v where value is 1 into %ones
+{ $k: 1 -> %ones else 2 -> %twos }  // partition by value: 1s and 2s into separate buckets
+{ $k: 1 -> %ones else _ -> %rest }  // collect 1s; everything else goes to %rest
 ```
 
 **Key semantics:**
-- The bucket receives `{key: value}` pairs, where the key comes from the enclosing K:V pattern
+- Object buckets (`%bucket`) receive `{key: value}` pairs; array buckets (`@bucket`) receive values only
 - The value captured is from the **match point** of the `->`, not necessarily the full K:V value
 - Buckets accumulate entries (unlike regular binding which unifies)
 - Unpopulated buckets are `undefined`, not empty `{}`
@@ -587,19 +587,19 @@ The `->` operator collects matching key-value pairs into **buckets** during obje
 
 ```javascript
 // The -> captures the FIRST element (match point), not the whole array
-{ $k: [/a/ -> @captured, b] }
+{ $k: [/a/ -> %captured, b] }
 // On {x: ['apple', 'b'], y: ['avocado', 'b']}
-// @captured = {x: 'apple', y: 'avocado'}
+// %captured = {x: 'apple', y: 'avocado'}
 
 // To capture the full value, place -> at outer level
-{ $k: ([/a/, b] -> @captured) }
-// @captured = {x: ['apple', 'b'], y: ['avocado', 'b']}
+{ $k: ([/a/, b] -> %captured) }
+// %captured = {x: ['apple', 'b'], y: ['avocado', 'b']}
 ```
 
 **Strong semantics with `else !`:**
 
 ```javascript
-{ $k: 1 -> @ones else 2 -> @twos else ! }  // FAIL if any value is neither 1 nor 2
+{ $k: 1 -> %ones else 2 -> %twos else ! }  // FAIL if any value is neither 1 nor 2
 ```
 
 The `else !` triggers **strong semantics**: every key must match one of the preceding branches, or the pattern fails.
@@ -851,12 +851,12 @@ Tendril("[@x ...]").find([1, 2, 3]).editAll({x: [9,9]})
 // → [9, 9, 3]  (spliced two elements where @x was)
 
 // Replace an object slice: collapse any pw_* properties into one marker.
-Tendril("{ @slice=(/^pw_/:_) }")        // K:V implies “at least one” matching kv-pair.
+Tendril("{ (/^pw_/:_ as %slice) }")     // K:V implies "at least one" matching kv-pair.
 .find(data)
 .editAll({slice: {sanitized: true}});
 
 // Variant: allow zero matches. (`?` removes the nonempty requirement for the slice.)
-Tendril("{ @slice=(/^pw_/:_?) }")       // Always matches; slice may be empty.
+Tendril("{ (/^pw_/:_? as %slice) }")    // Always matches; slice may be empty.
 .find(data)
 .editAll({slice: {sanitized: true}});  // Adds sanitized:true everywhere.
 
@@ -1021,9 +1021,13 @@ ITEM :=
 # The '->' suffix flows matching k:v pairs into a bucket during object iteration,
 # but may also appear elsewhere.
 # Precedence: 'as' (tightest) > '->' > 'else' (loosest)
-# So: K:V -> @x else W -> @y  parses as  K:((V -> @x) else (W -> @y))
+# So: K:V -> %x else W -> %y  parses as  K:((V -> %x) else (W -> %y))
 ITEM_TERM :=
-      ITEM_TERM_CORE ('->' S_GROUP FLOW_MOD?)?   # optional flow-into-bucket suffix
+      ITEM_TERM_CORE ('->' BUCKET_REF FLOW_MOD?)?   # optional flow-into-bucket suffix
+
+BUCKET_REF :=
+      '%' IDENT                                  # object bucket (collects k:v pairs)
+    | '@' IDENT                                  # array bucket (collects values only)
 
 FLOW_MOD :=
       '<' LABEL_REF '>'                       # label reference modifier: <^label>
@@ -1092,8 +1096,10 @@ OBJ := LABEL_DECL? '{' O_GROUP* O_REMNANT? '}'   # optional label for scope cont
 # Global remainder ("unmatched entries") is a special tail clause, only once, only at end.
 # Spelled '%', pronounced "remainder".
 
+S_OBJGROUP := '%' IDENT                          # object group variable
+
 O_REMNANT :=
-      '(' '%' O_REM_QUANT? 'as' S_GROUP ')' ','?
+      '(' '%' O_REM_QUANT? 'as' S_OBJGROUP ')' ','?
     | '%' O_REM_QUANT? ','?
     | '(!' '%' ')' ','?                        # closed-object assertion (equiv to %#{0})
 
@@ -1110,7 +1116,7 @@ O_REM_QUANT :=
 O_GROUP :=
       O_LOOKAHEAD
     | '(' O_GROUP* ')'                         # OGroup node
-    | '(' O_GROUP* 'as' S_GROUP ')'            # group binding in object context
+    | '(' O_GROUP* 'as' S_OBJGROUP ')'         # group binding in object context (uses %)
     | STRONG_O_TERM O_KV_OPT?                  # try strong first (with 'else !')
     | O_TERM O_KV_OPT?                         # then weak
 
@@ -1135,7 +1141,7 @@ VALUE := ITEM
 # K:V else !   = strong: at least one k~K with v~V; bad entries forbidden
 # K:V?         = weak + optional: no existence requirement
 # K:V else !?  = strong + optional: no existence requirement, but bad entries forbidden
-# V -> @bucket = flow matching k:v pairs into bucket (accumulates, does not unify)
+# V -> %bucket = flow k:v pairs into bucket; V -> @bucket = flow values only (accumulates, does not unify)
 
 # KV quantifier counts the slice (not the bad set). Defaults are semantic, not syntactic.
 O_KV_QUANT :=
@@ -1211,9 +1217,9 @@ Binding keys or values:
 
 Binding slices:
 ```
-{ (K1:V1 as @slice1)       }   # bind one slice
-{ (K2:V2 K3:V3 as @slice2) }   # bind a union of slices
-{ (K1:V1 as @x) (K2:V2 as @x) }   # asserting two slices are the same
+{ (K1:V1 as %slice1)       }   # bind one slice
+{ (K2:V2 K3:V3 as %slice2) }   # bind a union of slices
+{ (K1:V1 as %x) (K2:V2 as %x) }   # asserting two slices are the same
 ```
 
 `%` (pronounced "remainder") defines the slice of fields that didn't fall into any of the declared slices or bad sets; in other words, the **entries whose keys did not match any of the field clauses, regardless of whether the values matched.**  (The predominant use case is the fall-through of unrecognized fields, not the fall-through of invalid values.)
@@ -1225,7 +1231,7 @@ It may appear only once in the object pattern, only at the end. You can bind it 
 { K1:V1 K2:V2 % }           # Remainder is nonempty
 { K1:V1 K2:V2 %#{0} }       # Remainder is empty (closed object)
 { K1:V1 K2:V2 %#{3,4} }     # Remainder is of size 3-4
-{ K1:V1 K2:V2 (% as @rest) }   # Bind it
+{ K1:V1 K2:V2 (% as %rest) }   # Bind it
 ```
 
 Field clauses are evaluated non-exclusively: a single key-value pair may satisfy multiple clauses.
@@ -1300,26 +1306,27 @@ The `->` operator collects matching k:v pairs into buckets during object iterati
 
 | Syntax | Meaning | On repetition |
 |--------|---------|---------------|
-| `(P as @x)` | bind | unify |
-| `P -> @x` | flow into | accumulate |
+| `(P as %x)` | bind (object slice) | unify |
+| `(P as @x)` | bind (array slice) | unify |
+| `P -> %x` | flow k:v pairs into | accumulate |
+| `P -> @x` | flow values into | accumulate |
 
 The arrow visually suggests "pour into a bucket." Users won't confuse it with binding because it doesn't look like binding.
 
 ### Semantics
 
-`(S -> @foo)` succeeds iff `S` succeeds at that value. On success, it records the current key:value pair into bucket `@foo`.
+`(S -> %foo)` succeeds iff `S` succeeds at that value. On success, it records the current key:value pair into bucket `%foo`. Use `-> @foo` to collect values only (no keys).
 
 **Aggregation target:**
 
 - Default: nearest enclosing OBJ or ARR in the AST (lexically obvious)
-- With label: `->@foo<^L>` targets the scope labeled `§L`
+- With label: `->%foo<^L>` targets the scope labeled `§L`
 - See CW 16 for the full label design
 
-**Bucket keys:**
+**Bucket types:**
 
-- Object context: key is the concrete data key from K:V iteration
-- Array context: key is the array index
-- Buckets are always object slices: `{key: value, ...}`
+- Object buckets (`%name`): collect `{key: value, ...}` pairs
+- Array buckets (`@name`): collect `[value, ...]` (values only, no keys)
 
 **Collision handling:**
 
@@ -1334,7 +1341,7 @@ The arrow visually suggests "pour into a bucket." Users won't confuse it with bi
 - Failed branches do not contribute to buckets
 - Only successful branches accumulate into the final bucket
 
-If the same @foo collector appears in multiple arms/places within the same enclosing scope, they accumulate into the same bucket (subject to collision rules).
+If the same bucket appears in multiple arms/places within the same enclosing scope, they accumulate into the same bucket (subject to collision rules). You cannot use both `%foo` and `@foo` in the same pattern—they are distinct bucket types.
 
 ### Composition with `else`
 
@@ -1364,12 +1371,12 @@ This allows retiring the `:>` operator while preserving its semantics in a more 
 
 | Pattern | Meaning |
 |---------|---------|
-| `K: V1->@a else V2->@b` | Collect matching k:v's into buckets; non-matching k's ignored; require at least one match |
-| `K: V1->@a else V2->@b else !` | Collect matching k:v's; **fail** if any k doesn't match V1 or V2 |
-| `K: V1->@a else V2->@b else _->@rest` | Collect **all** k:v's (complete coverage) |
+| `K: V1->%a else V2->%b` | Collect matching k:v's into buckets; non-matching k's ignored; require at least one match |
+| `K: V1->%a else V2->%b else !` | Collect matching k:v's; **fail** if any k doesn't match V1 or V2 |
+| `K: V1->%a else V2->%b else _->%rest` | Collect **all** k:v's (complete coverage) |
 | `K: V else _` | At least one match; silently ignore non-matching k's (no collection) |
 
-**Note:** `{ K:V else _->@bad }` collects non-matching values but never fails. Use `else !` if you want validation.
+**Note:** `{ K:V else _->%bad }` collects non-matching values but never fails. Use `else !` if you want validation.
 
 ### Unpopulated buckets
 
@@ -1386,17 +1393,22 @@ const good = solution.good ?? {};
 From strongest to weakest:
 
 ```
-@foo=    // binding, unary
-->       // binary
-else     // binary
+%foo=, @foo=   // binding, unary
+->             // binary
+else           // binary
 ```
 
-So `K:V -> @x else W -> @y` parses as `K:((V -> @x) else (W -> @y))`. Parentheses are redundant but recommended for legibility; use multiple lines for complex categorizations.
+So `K:V -> %x else W -> %y` parses as `K:((V -> %x) else (W -> %y))`. Parentheses are redundant but recommended for legibility; use multiple lines for complex categorizations.
 
 ### Implementation notes
 
 - `S` is not a backtracking point, but may fail early (empty quantifier on slice) or late (non-empty quantifier checked after iteration).
 - Although `K:V` normally asserts only one-or-more witnesses, presence of `->` requires the engine to iterate all matching witnesses (to collect them all). This is inherent to categorization/validation, not a hidden cost.
+
+**Bucket type semantics:**
+- `-> %bucket` in object context: collects `{key: value}` pairs
+- `-> %bucket` in array context: collects `{index: value}` pairs
+- `-> @bucket` in any context: collects values only (into an array)
 
 ### Test case 1
 
@@ -1408,8 +1420,8 @@ data = {a:[
     { b4:'d34', x:'d25' },
 ]}
 pattern = {
-    a[$i]:({/b.*/:((/d1.*/ as $x) -> @foo)
-                  else (/d3.*/->@bar)}
+    a[$i]:({/b.*/:((/d1.*/ as $x) -> %foo)
+                  else (/d3.*/->%bar)}
           | _)   // fallback to show non-matching $i's
 }
 // solutions:
@@ -1423,10 +1435,10 @@ pattern = {
 ### Test Case 2
 
 ```
-pattern = { $k: {/a/:_->@a }->@y else {/b/:_->@b}->@z }
+pattern = { $k: {/a/:_->%a }->%y else {/b/:_->%b}->%z }
 data = { foo: {a1:1, a2:2, b1:3}, bar: {a3:4, a4:5} }
 // The 'y' branch is always taken because both of the outer values contain an object with at least
-// one /a/ key. The 'z' branch is never taken. Therefore @b is never populated
+// one /a/ key. The 'z' branch is never taken. Therefore %b is never populated
 // Solutions:
 {k:'foo', a:{a1:1, a2:2}, y:{ foo: {a1:1, a2:2, b1:3}, bar: {a3:4, a4:5} }}
 {k:'bar', a:{a3:4, a4:5}, y:{ foo: {a1:1, a2:2, b1:3}, bar: {a3:4, a4:5} }}
@@ -1438,37 +1450,32 @@ Labels allow explicit control over aggregation scope.
 
 - `§label` — declare a label (attaches to OBJ or ARR node)
 - `^label` — reference a label (in flow operator)
-- `->@bucket/^L` — flow to @bucket, keyed by iteration at scope §L
+- `->%bucket<^L>` — flow to %bucket, keyed by iteration at scope §L
 
 **Example:**
 
 ```
-§L { $key: { name: ($n -> @names/^L) } }
+§L { $key: { name: ($n -> %names<^L>) } }
 // data: {a: {name: "alice"}, b: {name: "bob"}}
-// result: @names = {a: "alice", b: "bob"}
+// result: %names = {a: "alice", b: "bob"}
 ```
 
-Without the label, @names would be keyed by `name` (inner scope), giving `{name: "alice"}` then `{name: "bob"}` — overwriting.
+Without the label, %names would be keyed by `name` (inner scope), giving `{name: "alice"}` then `{name: "bob"}` — overwriting.
 
 ### Semantics
 
 **Target resolution:**
 
-- `->@bucket/^L` — aggregation target is the OBJ or ARR node labeled §L
-- `->@bucket` (no label) — aggregation target is nearest ancestor OBJ or ARR
+- `->%bucket<^L>` — aggregation target is the OBJ or ARR node labeled §L
+- `->%bucket` (no label) — aggregation target is nearest ancestor OBJ or ARR
 - The target must be an ancestor of the flow operator (compile-time check)
 
-**Bucket keys:**
+**Bucket types:**
 
-- **Object target**: key is the concrete data key from K:V iteration
-- **Array target**: key is the array index
+- Object buckets (`%name`): collect `{key: value, ...}` pairs
+- Array buckets (`@name`): collect `[value, ...]` (values only)
 
-**Buckets are always object slices:**
-
-- Object: `{k1: v1, k2: v2, ...}`
-- Array: `{0: v0, 1: v1, 2: v2, ...}` (indices as keys)
-
-This is consistent — no special cases for "array buckets vs object buckets."
+In object context, the key comes from K:V iteration. In array context with `%bucket`, indices become keys (`{0: v0, 1: v1, ...}`).
 
 **Collision handling:**
 
@@ -1489,9 +1496,9 @@ This is consistent — no special cases for "array buckets vs object buckets."
 Flow is now allowed inside arrays:
 
 ```
-§L { $k: [ (X->@items/^L)* ] }
+§L { $k: [ (X->%items<^L>)* ] }
 // data: {a: [1,2,3], b: [4,5]}
-// result: @items = {a: {0:1, 1:2, 2:3}, b: {0:4, 1:5}}
+// result: %items = {a: {0:1, 1:2, 2:3}, b: {0:4, 1:5}}
 ```
 
 Without a label, Flow uses the nearest scope. If that's an array, indices become keys.
@@ -1499,9 +1506,9 @@ Without a label, Flow uses the nearest scope. If that's an array, indices become
 ### Categorization in arrays
 
 ```
-[ ({type:cat}->@cats else {type:dog}->@dogs else _->@other)* ]
+[ ({type:cat}->%cats else {type:dog}->%dogs else _->%other)* ]
 // data: [{type:cat, name:"fluffy"}, {type:dog, name:"spot"}, {type:fish}]
-// result: @cats = {0: {...fluffy}}, @dogs = {1: {...spot}}, @other = {2: {...fish}}
+// result: %cats = {0: {...fluffy}}, %dogs = {1: {...spot}}, %other = {2: {...fish}}
 ```
 
 ### Grammar additions
@@ -1515,7 +1522,9 @@ OBJ := LABEL_DECL? '{' O_BODY '}'
 ARR := LABEL_DECL? '[' A_BODY ']'
 
 // Flow operator with optional label reference:
-FLOW := ITEM_TERM '->' S_GROUP ('/' LABEL_REF)?
+FLOW := ITEM_TERM '->' BUCKET_REF ('<' LABEL_REF '>')?
+
+BUCKET_REF := '%' IDENT | '@' IDENT
 ```
 
 ### Implementation notes
@@ -1580,11 +1589,11 @@ Tendril(`{
     tag: label,
     props: {for: $id},
     children: [(/.*/ as $labelText)]
-  } as @label)
+  } as %label)
   **:{
     tag: input,
     props: {id: $id, type: text},
-    (placeholder:_? as @placeholder)
+    (placeholder:_? as %placeholder)
   }
 }`).match(data).editAll({
   label: undefined,  // delete it

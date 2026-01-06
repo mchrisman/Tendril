@@ -51,8 +51,8 @@ const Guarded = (pat, guard) => ({type: 'Guarded', pat, guard}); // (PATTERN whe
 
 // Bindings
 const SBind = (name, pat, guard = null) => ({type: 'SBind', name, pat, guard});  // $x=(pat) or $x=(pat where expr)
-const GroupBind = (name, pat) => ({type: 'GroupBind', name, pat});  // @x=(pat)
-const Flow = (pat, bucket, labelRef = null) => ({type: 'Flow', pat, bucket, labelRef});  // pat -> @bucket/^label (collect k:v into bucket)
+const GroupBind = (name, pat, sliceKind = 'array') => ({type: 'GroupBind', name, pat, sliceKind});  // @x=(pat) for array, %x for object
+const Flow = (pat, bucket, labelRef = null, sliceKind = 'object') => ({type: 'Flow', pat, bucket, labelRef, sliceKind});  // ->%bucket (k:v pairs) or ->@bucket (values only)
 
 // Containers
 const Arr = (items, label = null) => ({type: 'Arr', items, label});
@@ -156,7 +156,9 @@ function parseParenWithBindingAndGuard(p, parseInner, stopTokens = []) {
 }
 
 /**
- * Parse optional flow suffix: '->' '@' IDENT ('<^' IDENT '>')?
+ * Parse optional flow suffix: '->' ('@'|'%') IDENT ('<^' IDENT '>')?
+ * - ->%bucket collects key:value pairs (object slice)
+ * - ->@bucket collects values only (array slice)
  * @param {Parser} p - Parser instance
  * @param {Object} node - The node to potentially wrap in a Flow
  * @returns {Object} - Original node or Flow-wrapped node
@@ -167,7 +169,17 @@ function withOptionalFlow(p, node) {
   // Wrap in span to capture source location for validation error messages
   return p.span(() => {
     p.eat('->');
-    p.eat('@');
+
+    // Determine slice kind: % for object (k:v pairs), @ for array (values only)
+    let sliceKind;
+    if (p.peek('%')) {
+      p.eat('%');
+      sliceKind = 'object';
+    } else {
+      p.eat('@');
+      sliceKind = 'array';
+    }
+
     const bucket = eatVarName(p);
 
     // Check for optional <^label> suffix
@@ -179,7 +191,7 @@ function withOptionalFlow(p, node) {
       p.eat('>');
     }
 
-    return Flow(node, bucket, labelRef);
+    return Flow(node, bucket, labelRef, sliceKind);
   });
 }
 
@@ -467,15 +479,15 @@ function parseObj(p, label = null) {
 }
 
 function parseORemnant(p) {
-  // O_REMNANT := '(' '%' QUANT? 'as' '@' IDENT ')' | '%' QUANT? | '(!' '%' ')'
+  // O_REMNANT := '(' '%' QUANT? 'as' '%' IDENT ')' | '%' QUANT? | '(!' '%' ')'
   // Uses ordered backtracking.
   return p.bt('remainder-bind', () => {
            p.eat('('); p.eat('%');
            const q = p.backtrack(() => { p.eat('?'); return {min: 0, max: Infinity}; }) || parseRemainderQuant(p);
-           p.eat('as'); p.eat('@');
+           p.eat('as'); p.eat('%');
            const name = eatVarName(p);
            p.eat(')'); p.maybe(',');
-           return GroupBind(name, Spread(q));
+           return GroupBind(name, Spread(q), 'object');
          })
       || p.bt('remainder', () => {
            p.eat('%');
@@ -503,15 +515,15 @@ function parseOGroup(p) {
   const look = p.bt('obj-lookahead', () => parseObjectLookahead(p));
   if (look) return look;
 
-  // Parenthesized grouping with optional 'as @x' binding
+  // Parenthesized grouping with optional 'as %x' binding (object slice)
   const groupWithBind = p.bt('obj-group-bind', () => {
     p.eat('(');
     const groups = parseOBodyUntil(p, ')', 'as');
     p.eat('as');
-    p.eat('@');
+    p.eat('%');
     const name = eatVarName(p);
     p.eat(')');
-    return GroupBind(name, {type: 'OGroup', groups});
+    return GroupBind(name, {type: 'OGroup', groups}, 'object');
   });
   if (groupWithBind) return groupWithBind;
 
@@ -609,21 +621,34 @@ function eatNonNegInt(p, context = 'quantifier') {
 
 // ---------- AST Validation ----------
 
-// Validate that Flow nodes only appear inside Obj or Arr context
+// Validate AST: Flow node placement and slice name conflicts
 function validateAST(ast, src = null) {
+  // Track slice names and their kinds to detect conflicts
+  // Map: name -> {kind: 'array'|'object', loc: {start, end}}
+  const sliceBindings = new Map();
+
   // src is captured in closure - it's constant context for error messages
   // inContainer changes during traversal - it's structural context
   function check(node, inContainer) {
     if (!node || typeof node !== 'object') return;
 
+    // Check Flow nodes are inside containers and track their bucket kinds
     if (node.type === 'Flow') {
       if (!inContainer) {
-        let msg = `Flow operator ->@${node.bucket} can only be used inside an object or array pattern`;
+        const sigil = node.sliceKind === 'object' ? '%' : '@';
+        let msg = `Flow operator ->${sigil}${node.bucket} can only be used inside an object or array pattern`;
         if (src && node.loc) {
           msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
         }
         throw new Error(msg);
       }
+      // Track bucket slice kind
+      checkSliceConflict(node.bucket, node.sliceKind || 'object', node.loc);
+    }
+
+    // Check GroupBind slice kinds
+    if (node.type === 'GroupBind') {
+      checkSliceConflict(node.name, node.sliceKind || 'array', node.loc);
     }
 
     // Obj and Arr establish container context
@@ -663,6 +688,24 @@ function validateAST(ast, src = null) {
       case 'SlicePattern':
         check(node.content, true); // Slice patterns are container-like
         break;
+    }
+  }
+
+  // Check for slice name conflicts (same name with different kinds)
+  function checkSliceConflict(name, kind, loc) {
+    const existing = sliceBindings.get(name);
+    if (existing) {
+      if (existing.kind !== kind) {
+        const existingSigil = existing.kind === 'object' ? '%' : '@';
+        const newSigil = kind === 'object' ? '%' : '@';
+        let msg = `Slice name conflict: '${name}' used as both ${existingSigil}${name} and ${newSigil}${name}`;
+        if (src && loc) {
+          msg += `\n  at: ${src.slice(loc.start, loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+    } else {
+      sliceBindings.set(name, {kind, loc});
     }
   }
 

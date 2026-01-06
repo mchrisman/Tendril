@@ -161,8 +161,8 @@ test('%#{0} - empty % (explicit closed object)', () => {
   assert.ok(!matches('{a:1 %#{0}}', {a: 1, b: 2}));
 });
 
-test('(% as @rest) - bind %', () => {
-  const result = extract('{a:1 (% as @rest)}', {a: 1, b: 2, c: 3});
+test('(% as %rest) - bind %', () => {
+  const result = extract('{a:1 (% as %rest)}', {a: 1, b: 2, c: 3});
   assert.ok(result);
   assert.deepEqual(result.rest, {b: 2, c: 3});
 });
@@ -187,7 +187,7 @@ test('% excludes keys covered by key patterns', () => {
   // So % = keys NOT matching /a.*/
 
   // {ab:1, xyz:99} - 'ab' covered by /a.*/, 'xyz' is %
-  const result = extract('{/a.*/:1 (% as @rest)}', {ab: 1, xyz: 99});
+  const result = extract('{/a.*/:1 (% as %rest)}', {ab: 1, xyz: 99});
   assert.ok(result);
   assert.deepEqual(result.rest, {xyz: 99}, 'xyz should be in %');
 });
@@ -198,7 +198,7 @@ test('bad entries are covered (not in %)', () => {
   // ab:1 is in slice, ac:2 is in bad set
   // Neither is in %
 
-  const result = extract('{/a.*/:1 (%? as @rest)}', {ab: 1, ac: 2});
+  const result = extract('{/a.*/:1 (%? as %rest)}', {ab: 1, ac: 2});
   assert.ok(result);
   assert.deepEqual(result.rest, {}, 'ac:2 should be covered, not %');
 });
@@ -208,7 +208,7 @@ test('bad entries are covered (not in %)', () => {
 test('multiple terms - each defines its coverage', () => {
   // {a:1 b:2} - 'a' covered by first, 'b' covered by second
   // Remainder = everything else
-  const result = extract('{a:1 b:2 (%? as @rest)}', {a: 1, b: 2, c: 3});
+  const result = extract('{a:1 b:2 (%? as %rest)}', {a: 1, b: 2, c: 3});
   assert.ok(result);
   assert.deepEqual(result.rest, {c: 3});
 });

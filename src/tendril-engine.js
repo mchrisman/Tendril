@@ -62,10 +62,11 @@ function pushBucketLevel(sol) {
 
 // Add an entry to a bucket level
 // If bucketLevel is provided, add to that level; otherwise add to current (top) level
-// Returns true on success, false on collision (same key already exists)
-function addToBucket(sol, bucketName, key, value, bucketLevel = null) {
+// sliceKind: 'object' collects {key: value}, 'array' collects [value, ...]
+// Returns true on success, false on collision (same key already exists for object buckets)
+function addToBucket(sol, bucketName, key, value, bucketLevel = null, sliceKind = 'object') {
   if (sol.bucketStack.length === 0) {
-    throw new Error(`Flow ->@${bucketName} used outside of K:V context`);
+    throw new Error(`Flow ->${sliceKind === 'object' ? '%' : '@'}${bucketName} used outside of K:V context`);
   }
 
   const levelIndex = bucketLevel !== null ? bucketLevel : sol.bucketStack.length - 1;
@@ -75,14 +76,27 @@ function addToBucket(sol, bucketName, key, value, bucketLevel = null) {
 
   const level = sol.bucketStack[levelIndex];
   if (!level.has(bucketName)) {
-    level.set(bucketName, {});
+    // Initialize bucket with kind tracking
+    level.set(bucketName, {kind: sliceKind, entries: sliceKind === 'object' ? {} : []});
   }
   const bucket = level.get(bucketName);
-  if (Object.prototype.hasOwnProperty.call(bucket, key)) {
-    // Collision: same key already in bucket - fail this branch
-    return false;
+
+  // Check for kind mismatch (same bucket used with both % and @)
+  if (bucket.kind !== sliceKind) {
+    throw new Error(`Bucket '${bucketName}' used with both % and @ sigils - pick one`);
   }
-  bucket[key] = value;
+
+  if (sliceKind === 'object') {
+    // Object bucket: {key: value, ...}
+    if (Object.prototype.hasOwnProperty.call(bucket.entries, key)) {
+      // Collision: same key already in bucket - fail this branch
+      return false;
+    }
+    bucket.entries[key] = value;
+  } else {
+    // Array bucket: [value, ...]
+    bucket.entries.push(value);
+  }
   return true;
 }
 
@@ -93,31 +107,38 @@ function finalizeBucketLevel(solutions) {
   if (solutions.length === 0) return solutions;
 
   // Collect and merge from top level of all solutions
-  // Also detect collisions: same key appearing in multiple solutions with different values
-  const merged = new Map(); // bucketName -> {key: value, ...}
+  // Also detect collisions: same key appearing in multiple solutions with different values (object buckets only)
+  const merged = new Map(); // bucketName -> {kind: 'object'|'array', entries: {...}|[...]}
   let hasCollision = false;
 
   for (const state of solutions) {
     const sol = state.sol || state;
     if (sol.bucketStack.length === 0) continue;
     const top = sol.bucketStack[sol.bucketStack.length - 1];
-    for (const [name, entries] of top) {
+    for (const [name, bucket] of top) {
       if (!merged.has(name)) {
-        merged.set(name, {});
+        merged.set(name, {kind: bucket.kind, entries: bucket.kind === 'object' ? {} : []});
       }
-      const bucket = merged.get(name);
-      for (const [key, value] of Object.entries(entries)) {
-        if (Object.prototype.hasOwnProperty.call(bucket, key)) {
-          // Same key already exists - only a collision if values differ
-          const existing = bucket[key];
-          if (!sameValueZero(existing, value) && JSON.stringify(existing) !== JSON.stringify(value)) {
-            // Collision: same key with different values
-            hasCollision = true;
+      const mergedBucket = merged.get(name);
+
+      if (bucket.kind === 'object') {
+        // Object bucket: merge k:v pairs, detect collisions
+        for (const [key, value] of Object.entries(bucket.entries)) {
+          if (Object.prototype.hasOwnProperty.call(mergedBucket.entries, key)) {
+            // Same key already exists - only a collision if values differ
+            const existing = mergedBucket.entries[key];
+            if (!sameValueZero(existing, value) && JSON.stringify(existing) !== JSON.stringify(value)) {
+              // Collision: same key with different values
+              hasCollision = true;
+            }
+            // If same value, just keep the existing (they're duplicates)
+          } else {
+            mergedBucket.entries[key] = value;
           }
-          // If same value, just keep the existing (they're duplicates)
-        } else {
-          bucket[key] = value;
         }
+      } else {
+        // Array bucket: concatenate values (no collision detection)
+        mergedBucket.entries.push(...bucket.entries);
       }
     }
   }
@@ -143,8 +164,10 @@ function finalizeBucketLevel(solutions) {
     }
     // Bind each merged bucket as a group variable
     let bindOk = true;
-    for (const [name, entries] of merged) {
-      const groupValue = Group.object(entries);
+    for (const [name, bucket] of merged) {
+      const groupValue = bucket.kind === 'object'
+        ? Group.object(bucket.entries)
+        : Group.array(...bucket.entries);
       if (!bindGroup(sol.env, name, groupValue)) {
         bindOk = false;
         break;
@@ -553,14 +576,19 @@ function matchItem(item, node, path, sol, emit, ctx) {
         return;
 
       case 'Flow': {
-        // Flow operator: P -> @bucket or P -> @bucket<^label>
-        // Match the inner pattern; if successful, record {flowKey: matchedValue} in bucket
+        // Flow operator: P -> %bucket (k:v pairs) or P -> @bucket (values only)
+        // Match the inner pattern; if successful, record entry in bucket
+        // - sliceKind='object' (%bucket): collect {flowKey: matchedValue}
+        // - sliceKind='array' (@bucket): collect [matchedValue, ...]
         // ctx.flowKey is set by the enclosing K:V iteration
         // If labelRef is specified, use the key from that labeled scope instead
 
         // Note: Flow inside arrays under K:V uses the outer flowKey for all elements.
-        // If multiple elements match and flow DIFFERENT values, that's a collision.
-        // If they flow the SAME value, deduplication handles it.
+        // For object buckets: multiple elements flowing DIFFERENT values cause collision.
+        // For array buckets: all values are collected (no collision).
+
+        const sliceKind = item.sliceKind || 'object'; // default to object for backward compat
+        const sigil = sliceKind === 'object' ? '%' : '@';
 
         matchItem(item.pat, node, path, sol, (s2) => {
           // Determine which key and bucket level to use
@@ -571,13 +599,13 @@ function matchItem(item, node, path, sol, emit, ctx) {
             // Use key and bucket level from labeled scope
             if (!s2.labels.has(item.labelRef)) {
               throw new Error(
-                `Flow operator ->@${item.bucket}<^${item.labelRef}> references unknown label '${item.labelRef}'`
+                `Flow operator ->${sigil}${item.bucket}<^${item.labelRef}> references unknown label '${item.labelRef}'`
               );
             }
             const labelInfo = s2.labels.get(item.labelRef);
             if (labelInfo.key === undefined) {
               throw new Error(
-                `Flow operator ->@${item.bucket}<^${item.labelRef}> references label '${item.labelRef}' ` +
+                `Flow operator ->${sigil}${item.bucket}<^${item.labelRef}> references label '${item.labelRef}' ` +
                 `which was not in a K:V iteration context`
               );
             }
@@ -588,8 +616,8 @@ function matchItem(item, node, path, sol, emit, ctx) {
           }
 
           if (flowKey !== undefined) {
-            // addToBucket returns false on collision - fail this branch
-            if (!addToBucket(s2, item.bucket, flowKey, node, bucketLevel)) {
+            // addToBucket returns false on collision (object buckets only) - fail this branch
+            if (!addToBucket(s2, item.bucket, flowKey, node, bucketLevel, sliceKind)) {
               return; // Collision - don't emit this solution
             }
           }

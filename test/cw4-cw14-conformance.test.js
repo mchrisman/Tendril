@@ -15,12 +15,12 @@ import { Tendril } from '../src/tendril-api.js';
 // ==================== Basic CW14 Tests ====================
 
 // FIXED: The `else` belongs INSIDE the value pattern, not between K:V terms.
-// Original: "{ /[ab]/:$v->@good else _:$v->@bad }" - WRONG (two K:V terms)
-// Correct: "{ $k: (match_good->@good else _->@bad) }" - ONE K:V term with value alternation
+// Original: "{ /[ab]/:$v->%good else _:$v->%bad }" - WRONG (two K:V terms)
+// Correct: "{ $k: (match_good->%good else _->%bad) }" - ONE K:V term with value alternation
 test('CW14: basic categorization into buckets by value', () => {
   const data = {a:1, b:1, c:2};  // Categorize by VALUE (1s vs 2s)
 
-  const result = Tendril("{ $k: (1->@ones else _->@rest) }")
+  const result = Tendril("{ $k: (1->%ones else _->%rest) }")
     .match(data)
     .solutions()
     .first();
@@ -45,7 +45,7 @@ test('CW4: strong semantics via else !', () => {
 test('CW14 + CW4: categorize then validate exhaustively', () => {
   const data = {a:1, b:2, c:3};
 
-  const pat = "{ /[abc]/:(1->@ones else 2->@twos else 3->@threes) else ! }";
+  const pat = "{ /[abc]/:(1->%ones else 2->%twos else 3->%threes) else ! }";
 
   const sol = Tendril(pat).match(data).solutions().first();
 
@@ -58,7 +58,7 @@ test('CW14 + CW4: categorize then validate exhaustively', () => {
 test('CW14: bucket accumulates all matching kv-pairs', () => {
   const data = {x:1, y:1, z:2};
 
-  const sol = Tendril("{ $k: (1->@ones else _) }")
+  const sol = Tendril("{ $k: (1->%ones else _) }")
     .match(data)
     .solutions()
     .first();
@@ -69,7 +69,7 @@ test('CW14: bucket accumulates all matching kv-pairs', () => {
 test('CW14: unpopulated bucket is undefined', () => {
   const data = {a:1};
 
-  const sol = Tendril("{ a: (1->@hit else _->@miss) }")
+  const sol = Tendril("{ a: (1->%hit else _->%miss) }")
     .match(data)
     .solutions()
     .first();
@@ -82,7 +82,7 @@ test('CW14: unpopulated bucket is undefined', () => {
 test('CW14: else prevents double collection', () => {
   const data = {a:1};
 
-  const sol = Tendril("{ $k: (1->@x else _->@y) }")
+  const sol = Tendril("{ $k: (1->%x else _->%y) }")
     .match(data)
     .solutions()
     .first();
@@ -94,7 +94,7 @@ test('CW14: else prevents double collection', () => {
 test('CW14: else _ gives total coverage without failure', () => {
   const data = {a:1, b:2};
 
-  const sol = Tendril("{ $k: (1->@ones else _->@rest) }")
+  const sol = Tendril("{ $k: (1->%ones else _->%rest) }")
     .match(data)
     .solutions()
     .first();
@@ -116,8 +116,8 @@ test('CW16: nested categorization using labels', () => {
   // So instead of bucket key 'a' (inner), we use 'row1' or 'row2' (outer)
   const pat = `§L {
     $k: ({
-      $k2: (1->@ones<^L> else _)
-    }->@rows)
+      $k2: (1->%ones<^L> else _)
+    }->%rows)
   }`;
 
   const sol = Tendril(pat).match(data).solutions().first();
@@ -143,7 +143,7 @@ test('CW4: strong + optional (else !?)', () => {
 test('CW14: categorization iterates all matching keys', () => {
   const data = {a:1, b:1, c:1};
 
-  const sol = Tendril("{ /[abc]/:1->@all }")
+  const sol = Tendril("{ /[abc]/:1->%all }")
     .match(data)
     .solutions()
     .first();
@@ -162,7 +162,7 @@ test('CW14: nested maps — categorize inner kv pairs per outer record', () => {
 
   const pat = `{
     (row1|row2 as $row): {
-      $k: (1->@ones else 2->@twos else _->@rest)
+      $k: (1->%ones else 2->%twos else _->%rest)
     }
   }`;
 
@@ -189,7 +189,7 @@ test('CW14: nested maps — bucket whole sub-objects based on their contents', (
   };
 
   const sol = Tendril(`{
-    $k: ({ profile:{ role: admin } }->@admins else _->@others)
+    $k: ({ profile:{ role: admin } }->%admins else _->%others)
   }`).match(data).solutions().first();
 
   assert.deepEqual(sol.admins, {
@@ -217,7 +217,7 @@ test('CW14: bucket rollback when array * backtracks (no ghost kvs)', () => {
   const sol = Tendril(`{
     k: [
       ({t:1} as $x)*
-      ({t:1}->@ones)
+      ({t:1}->%ones)
       {t:2}
     ]
   }`).match(data).solutions().first();
@@ -236,9 +236,9 @@ test('CW15: Seq in Alt - first branch succeeds', () => {
   // Branch 2: tries {kind:"B"} at index 0 which is {kind:"A"} - fails
   const pat = `{
     box: [
-      ({kind:"A"}->@picked {kind:"B"})
+      ({kind:"A"}->%picked {kind:"B"})
       |
-      ({kind:"B"}->@picked)
+      ({kind:"B"}->%picked)
     ]
   }`;
 
@@ -253,9 +253,9 @@ test('CW15: fallback to second branch when first fails', () => {
   // Branch 2: {p:1} succeeds, flows to @seen, then {q:2} matches
   const pat = `{
     k: [
-      ({p:1}->@seen {r:3})
+      ({p:1}->%seen {r:3})
       |
-      ({p:1}->@seen)
+      ({p:1}->%seen)
       ,
       {q:2}
     ]
@@ -276,7 +276,7 @@ test('CW14: bucket rollback - losing value branch does not pour', () => {
   };
 
   const sol = Tendril(`{
-    $k: ([{x:1}]->@ones else [{x:2}]->@twos)
+    $k: ([{x:1}]->%ones else [{x:2}]->%twos)
   }`).match(data).solutions().first();
 
   assert.deepEqual(sol.ones, {k2: [{x:1}]});
@@ -289,10 +289,10 @@ test('CW14: greedy * backtracking does not leave ghost bucket entries', () => {
     items: [1, 1, 1, 2]  // greedy * will try to eat all 1s, must backtrack
   };
 
-  // Greedy (1)* tries to eat [1,1,1], then must match 1->@last, 2
-  // That fails (only 2 left), so backtrack to eat [1,1], match 1->@last, 2
+  // Greedy (1)* tries to eat [1,1,1], then must match 1->%last, 2
+  // That fails (only 2 left), so backtrack to eat [1,1], match 1->%last, 2
   const sol = Tendril(`{
-    items: [(1 as $x)* (1->@last) 2]
+    items: [(1 as $x)* (1->%last) 2]
   }`).match(data).solutions().first();
 
   // Only ONE 1 should be in @last (the third 1), not multiple from retry paths

@@ -14,8 +14,8 @@ test('valid: % at end {k:$v %}', () => {
   assert.ok(matchSet.hasMatch(), 'Should match with extra keys');
 });
 
-test('valid: group binding at end {k:$v (% as @rest)}', () => {
-  const t = Tendril('{k:$v (% as @rest)}');
+test('valid: group binding at end {k:$v (% as %rest)}', () => {
+  const t = Tendril('{k:$v (% as %rest)}');
   const matchSet = t.match({k: 1, extra: 2});
   assert.ok(matchSet.hasMatch(), 'Should match');
   const sol = matchSet.solutions().first();
@@ -45,14 +45,14 @@ test('invalid: % in middle throws', () => {
 });
 
 test('group binding captures residual keys', () => {
-  const t = Tendril('{a:$x (% as @rest)}');
+  const t = Tendril('{a:$x (% as %rest)}');
   const sol = t.match({a: 1, b: 2, c: 3}).solutions().first();
   assert.equal(sol.x, 1);
   assert.deepEqual(sol.rest, {b: 2, c: 3});
 });
 
 test('group bindings with patterns match whole object, can overlap', () => {
-  const t = Tendril('{(/[ab]/:_ as @a) (/[bc]/:_ as @b) (% as @c)}');
+  const t = Tendril('{(/[ab]/:_ as %a) (/[bc]/:_ as %b) (% as %c)}');
   const matchSet = t.match({b: 1, x: 2});
   assert.ok(matchSet.hasMatch(), 'Should match');
   const sol = matchSet.solutions().first();
@@ -62,7 +62,7 @@ test('group bindings with patterns match whole object, can overlap', () => {
 });
 
 test('nested group bindings', () => {
-  const t = Tendril('{(a:_ (c:_ as @y) as @x)}');
+  const t = Tendril('{(a:_ (c:_ as %y) as %x)}');
   const matchSet = t.match({a: 'A', c: 'C', d: 'D'});
   assert.ok(matchSet.hasMatch(), 'Should match');
   const sol = matchSet.solutions().first();

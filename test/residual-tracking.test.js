@@ -15,31 +15,31 @@ import { Tendril } from '../src/tendril-api.js';
 // ==================== Coverage-Based Remainder ====================
 
 test('residual with literal keys - uncovered keys in %', () => {
-  // {a:1 (%? as @r)} against {a:1, b:2, c:3}
+  // {a:1 (%? as %r)} against {a:1, b:2, c:3}
   // Covered keys: {a} (matches literal 'a')
   // Remainder: {b:2, c:3}
-  const results = Tendril('{a:1 (%? as @r)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
+  const results = Tendril('{a:1 (%? as %r)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
 
   assert.equal(results.length, 1);
   assert.deepEqual(results[0].r, {b: 2, c: 3});
 });
 
 test('residual with wildcard key - all keys covered', () => {
-  // {_:1 (%? as @r)} against {a:1, b:2}
+  // {_:1 (%? as %r)} against {a:1, b:2}
   // Wildcard _ matches ALL keys, so all are covered
   // Remainder: {} (empty)
-  const results = Tendril('{_:1 (%? as @r)}').match({a: 1, b: 2}).solutions().toArray();
+  const results = Tendril('{_:1 (%? as %r)}').match({a: 1, b: 2}).solutions().toArray();
 
   assert.equal(results.length, 1);
   assert.deepEqual(results[0].r, {}, 'All keys covered by wildcard');
 });
 
 test('residual with variable key - all keys covered', () => {
-  // {$k:1 (%? as @r)} against {a:1, b:2, c:1}
+  // {$k:1 (%? as %r)} against {a:1, b:2, c:1}
   // Variable $k matches ALL keys, so all are covered
   // Remainder: {} (empty)
   // Note: multiple solutions (k='a' and k='c'), but all have same empty %
-  const results = Tendril('{$k:1 (%? as @r)}').match({a: 1, b: 2, c: 1}).solutions().toArray();
+  const results = Tendril('{$k:1 (%? as %r)}').match({a: 1, b: 2, c: 1}).solutions().toArray();
 
   assert.equal(results.length, 2); // Two keys have value 1
 
@@ -50,11 +50,11 @@ test('residual with variable key - all keys covered', () => {
 });
 
 test('residual with regex key - uncovered keys in %', () => {
-  // {(/^[a-z]$/ as $k):3 (%? as @r)} against {a:3, b:3, foo:3}
+  // {(/^[a-z]$/ as $k):3 (%? as %r)} against {a:3, b:3, foo:3}
   // Covered keys: {a, b} (match /^[a-z]$/)
   // Remainder: {foo:3}
   // Note: use key binding to get multiple distinguishable solutions
-  const results = Tendril('{(/^[a-z]$/ as $k):3 (%? as @r)}').match({a: 3, b: 3, foo: 3}).solutions().toArray();
+  const results = Tendril('{(/^[a-z]$/ as $k):3 (%? as %r)}').match({a: 3, b: 3, foo: 3}).solutions().toArray();
 
   // Two solutions (one for k='a', one for k='b')
   assert.equal(results.length, 2);
@@ -66,11 +66,11 @@ test('residual with regex key - uncovered keys in %', () => {
 });
 
 test('residual with alternation in key', () => {
-  // {(a|b as $k):1 (%? as @r)} against {a:1, b:1, c:2}
+  // {(a|b as $k):1 (%? as %r)} against {a:1, b:1, c:2}
   // Covered keys: {a, b} (match alternation (a|b))
   // Remainder: {c:2}
   // Note: use key binding to get multiple distinguishable solutions
-  const results = Tendril('{(a|b as $k):1 (%? as @r)}').match({a: 1, b: 1, c: 2}).solutions().toArray();
+  const results = Tendril('{(a|b as $k):1 (%? as %r)}').match({a: 1, b: 1, c: 2}).solutions().toArray();
 
   // Two solutions (one for k='a', one for k='b')
   assert.equal(results.length, 2);
@@ -84,12 +84,12 @@ test('residual with alternation in key', () => {
 // ==================== Bad Entries Are Covered (Not In Remainder) ====================
 
 test('bad entries are covered not in %', () => {
-  // {/^[a-z]$/:3 (%? as @r)} against {a:3, b:5, foo:3}
+  // {/^[a-z]$/:3 (%? as %r)} against {a:3, b:5, foo:3}
   // Covered keys: {a, b} (both match /^[a-z]$/)
   // 'a:3' is in slice (value matches)
   // 'b:5' is a bad entry (key matches, value doesn't)
   // Remainder: {foo:3} (doesn't match key pattern)
-  const results = Tendril('{/^[a-z]$/:3 (%? as @r)}').match({a: 3, b: 5, foo: 3}).solutions().toArray();
+  const results = Tendril('{/^[a-z]$/:3 (%? as %r)}').match({a: 3, b: 5, foo: 3}).solutions().toArray();
 
   assert.equal(results.length, 1); // Only 'a' produces a solution
 
@@ -101,18 +101,18 @@ test('bad entries are covered not in %', () => {
 // ==================== Empty Residuals ====================
 
 test('empty residual when all keys covered', () => {
-  // {a:1 b:2 (%? as @r)} against {a:1, b:2}
+  // {a:1 b:2 (%? as %r)} against {a:1, b:2}
   // Covered keys: {a, b}
   // Remainder: {} (empty)
-  const results = Tendril('{a:1 b:2 (%? as @r)}').match({a: 1, b: 2}).solutions().toArray();
+  const results = Tendril('{a:1 b:2 (%? as %r)}').match({a: 1, b: 2}).solutions().toArray();
 
   assert.equal(results.length, 1);
   assert.deepEqual(results[0].r, {});
 });
 
 test('%? allows empty and multiple keys', () => {
-  // {a:1 (%? as @r)} against {a:1, b:2, c:3}
-  const results = Tendril('{a:1 (%? as @r)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
+  // {a:1 (%? as %r)} against {a:1, b:2, c:3}
+  const results = Tendril('{a:1 (%? as %r)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(results.length, 1);
   assert.deepEqual(results[0].r, {b: 2, c: 3});
 });
@@ -120,12 +120,12 @@ test('%? allows empty and multiple keys', () => {
 // ==================== Multiple Key Patterns ====================
 
 test('multiple key patterns - coverage is union', () => {
-  // {a:1 /^b/:2 (%? as @r)} against {a:1, bar:2, c:3}
+  // {a:1 /^b/:2 (%? as %r)} against {a:1, bar:2, c:3}
   // Covered by 'a': {a}
   // Covered by /^b/: {bar}
   // Total covered: {a, bar}
   // Remainder: {c:3}
-  const results = Tendril('{a:1 /^b/:2 (%? as @r)}').match({a: 1, bar: 2, c: 3}).solutions().toArray();
+  const results = Tendril('{a:1 /^b/:2 (%? as %r)}').match({a: 1, bar: 2, c: 3}).solutions().toArray();
 
   assert.equal(results.length, 1);
   assert.deepEqual(results[0].r, {c: 3});

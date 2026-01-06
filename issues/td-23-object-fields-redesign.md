@@ -41,9 +41,11 @@ The flow operator may also operate elsewhere, but I'm not going to describe this
 
 The following changes must be documented, implemented and tested and committed individually, one by one.
 
-1. Use @foo for array slices and new syntax %foo for object slices. 
+1. Use @foo for array slices and new syntax %foo for object slices.
 
-The grammar enforces the correct usage according to context. There's only one place in which either form may be used: the object of the flow operator, where `->%foo` means collect key:value pairs, and `->@foo` means collect only the values. 
+The grammar enforces the correct usage according to context. The flow operator target is the one place where either form may be used:
+- In object context: `->%foo` collects key:value pairs, `->@foo` collects values only
+- In array context: `->%foo` collects index:value pairs, `->@foo` collects values only
 
 There cannot be an array slice variable and an object slice variable of the same name (%foo with @foo is a variable name collision. The JavaScript spelling of both is 'foo'.)
 
@@ -51,30 +53,40 @@ Object group bindings now look like `(K:V as %slice)`.
 
 Apart from type safety and readability and the flow operator case, there is no semantic change.
 
-Bare '%' Continues to signify "the remainder" (Object properties that were not constrained.)
+Bare '%' continues to signify "the remainder" (object properties that were not constrained.)
 
-2. Replace
+2. Replace the flow operator `->` with the `<collecting>` directive (except in `each` clauses, see #3).
 
-`§L { $key: { name: ($n -> %names<^L>) } }`
-
-with
-
-`{ $key: { name: $n <collecting $key:$n in %names> }}`
-
-Or if you only want to collect values and not keys,
-
-`{ $key: { name: $n <collecting $n in @names across $key>}}`
-
-(You still have to refer to key in order to set the scope of the collection. If `collecting...in @names` or `in %names` appear more than once, They must refer to the same key, and it is not unification, it is just more collecting.
-
-The arrow operator `->` is thus replaced with the `<collecting>` directive, *except* in the case of #3 below.
-
-3. Change the syntax `KEY ':' VALUE 'else' '!'`, a hard-coded phrase in the current grammar, to
+Old syntax:
 ```
-FIELD_SCAN:='each' KEY ':' VALUE_CLAUSE ('else' VALUE_CLAUSE)*
-VALUE_CLAUSE:=VALUE ('->' ('@'|'%') IDENT)*
+§L { $key: { name: ($n -> %names<^L>) } }
 ```
-*Only for ->% collectors in this phrase*: You do not need to specify where the key being collected comes from. It implicitly comes from the key in this field scan clause, whether or not you bind it to a variable. 
+
+New syntax:
+```
+§L { $key: { name: $n <collecting $key:$n in %names across ^L> }}
+```
+
+Or if you only want to collect values (not key:value pairs):
+```
+§L { $key: { name: $n <collecting $n in @names across ^L> }}
+```
+
+The `across ^L` clause is **required** — there is no default scope. The label marks the iteration point at which separate buckets are created. Different branches at that point have different bucket instances; values are collected across all sub-branches beneath it.
+
+If `<collecting ... in @names>` or `<collecting ... in %names>` appears multiple times with the same target, they all contribute to the same bucket (it is additive collection, not unification).
+
+3. Change the syntax `KEY ':' VALUE 'else' '!'`, a hard-coded phrase in the current grammar, to:
+```
+FIELD_SCAN := 'each' KEY ':' VALUE_CLAUSE ('else' VALUE_CLAUSE)*
+VALUE_CLAUSE := VALUE ('->' ('@'|'%') IDENT)?
+```
+
+The `each` keyword provides "validate all" semantics: for all k matching K, the value must match one of the VALUE_CLAUSEs.
+
+The `->` flow operator is retained *only* within `each` clauses. For `->%bucket`, the key being collected comes implicitly from the `each` clause's key (whether or not it's bound to a variable). For `->@bucket`, only values are collected.
+
+Quantifiers compose with `each`: `each K:V #{2,5}` means "for all k~K, v~V must hold, AND there must be 2-5 such k." 
 
 4. Document the contract for <directives> generally.
 * It should be **zero-width** (doesn’t consume / doesn’t affect matching).
@@ -87,11 +99,6 @@ Fix this by saying that the quantifier is not an *additional condition*, it is m
 
 Ditto for `each K:V`, with 'each' signifying (for all k in the object, k~K implies v~V).
 
-6. Eliminate the '?' forms `K:V?` and `K:V else !?`, As they are confusing and are redundant, since you can now say `K:V#{0,}` or `each K:V#{0,}`.
+In the case of the object validation idiom `K:V1 else V2`, illustrate in the documentation that the quantifier must go at the end. Add a unit test to prove that `K:V1#{1} else V2` is a syntax error.
 
-
-
-
-
-
-
+6. Eliminate the '?' forms `K:V?` and `K:V else !?`, as they are confusing and redundant. Use `K:V#{0,}` or `each K:V#{0,}` instead.

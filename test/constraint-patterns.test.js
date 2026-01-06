@@ -135,20 +135,20 @@ test('array group binding with pattern - any elements', () => {
 // ============================================================================
 
 test('object group binding - residual keys', () => {
-  const result = Tendril('{a:1 (% as @x)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
+  const result = Tendril('{a:1 (% as %x)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {b: 2, c: 3});
 });
 
 test('object group binding - empty residual', () => {
   // Use %? to allow empty residual (bare % requires nonempty)
-  const result = Tendril('{a:1 (%? as @x)}').match({a: 1}).solutions().toArray();
+  const result = Tendril('{a:1 (%? as %x)}').match({a: 1}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {});
 });
 
 test('object group binding with pattern - match subset', () => {
-  const result = Tendril('{(a:1 b:2 as @x) c:3}').match({a: 1, b: 2, c: 3}).solutions().toArray();
+  const result = Tendril('{(a:1 b:2 as %x) c:3}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {a: 1, b: 2});
 });
@@ -203,13 +203,13 @@ test('existential matching with unification', () => {
 // ============================================================================
 
 test('group binding with negation', () => {
-  const result = Tendril('{(a:1 as @x) (!b:_)}').match({a: 1, c: 2}).solutions().toArray();
+  const result = Tendril('{(a:1 as %x) (!b:_)}').match({a: 1, c: 2}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {a: 1});
 });
 
 test('multiple groups and negations', () => {
-  const result = Tendril('{(a:1 as @x) (c:3 as @y) (!d:_)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
+  const result = Tendril('{(a:1 as %x) (c:3 as %y) (!d:_)}').match({a: 1, b: 2, c: 3}).solutions().toArray();
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].x, {a: 1});
   assert.deepEqual(result[0].y, {c: 3});

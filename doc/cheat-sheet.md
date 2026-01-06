@@ -2,7 +2,7 @@
 
 **Pattern matching for tree structures.** Match patterns against JSON-like data, extract values with variables, and transform structures. Variables unify across the pattern—if `$x` appears twice, both occurrences must match the same value. This enables relational joins across nested data.
 
-**Two contexts:** Arrays match positionally (like regex). Objects use field clauses that assert key-value pairs exist. Variables prefixed with `$` capture single values; `@` captures groups (array slices or object subsets).
+**Two contexts:** Arrays match positionally (like regex). Objects use field clauses that assert key-value pairs exist. Variables prefixed with `$` capture single values; `@` captures array groups (subsequences); `%` captures object groups (key-value subsets).
 
 **Core API:** `Tendril(pattern).match(data)` matches at root. `.find(data)` searches recursively. Both return an OccurrenceSet with `.solutions()` for variable bindings and `.editAll({...})` for transformations.
 
@@ -96,21 +96,20 @@ Tendril("{/a.*/: $x}").match({ab: 1, xyz: 2}).solutions().first()
 // => {x: 1}
 ```
 
-### Object Implication (`:>`)
+### Object Implication (`: else !`)
 
 ```javascript
-// :> means "all matching keys must have matching values"
-Tendril("{/a.*/:> 1}").match({ab: 1, ac: 1}).hasMatch()
+Tendril("{/a.*/: 1 else !}").match({ab: 1, ac: 1}).hasMatch()
 // => true (all /a.*/ keys have value 1)
 
-Tendril("{/a.*/:> 1}").match({ab: 1, ac: 2}).hasMatch()
+Tendril("{/a.*/: 1 else !}").match({ab: 1, ac: 2}).hasMatch()
 // => false (ac:2 is a "bad entry" - key matches but value doesn't)
 
 // Universal equality idiom
-Tendril("{/a.*/: $x, /a.*/:> $x}").match({ab: 1, ac: 1}).hasMatch()
+Tendril("{/a.*/: $x, /a.*/: $x else !}").match({ab: 1, ac: 1}).hasMatch()
 // => true (all /a.*/ values equal)
 
-Tendril("{/a.*/: $x, /a.*/:> $x}").match({ab: 1, ac: 2}).hasMatch()
+Tendril("{/a.*/: $x, /a.*/: $x else !}").match({ab: 1, ac: 2}).hasMatch()
 // => false (values differ)
 ```
 
@@ -132,7 +131,7 @@ Tendril("{a: 1, %#{0}}").match({a: 1, b: 2}).hasMatch()
 // => false (b is unexpected)
 
 // Bind remainder
-Tendril("{a: 1, @rest=(%?)}").match({a: 1, b: 2}).solutions().first()
+Tendril("{a: 1, (%? as %rest)}").match({a: 1, b: 2}).solutions().first()
 // => {rest: {b: 2}}
 ```
 

@@ -209,9 +209,9 @@ test('object multiple properties', () => {
 
 test('object with % binding', () => {
   // Use %? to allow empty residual (bare % requires nonempty)
-  assert.ok(matches('{a:1 (%? as @x)}', {a: 1}));
-  assert.ok(matches('{a:1 (% as @x)}', {a: 1, b: 2, c: 3}));
-  assert.ok(!matches('{a:1 (% as @x)}', {b: 2}));
+  assert.ok(matches('{a:1 (%? as %x)}', {a: 1}));
+  assert.ok(matches('{a:1 (% as %x)}', {a: 1, b: 2, c: 3}));
+  assert.ok(!matches('{a:1 (% as %x)}', {b: 2}));
 });
 
 test('object wildcard key', () => {
@@ -541,7 +541,7 @@ test('greedy quantifiers - optional object emits longest match first', () => {
 
   // Use %? to allow empty residual (bare % requires nonempty)
   const pattern = `[... (
-    {tag:when/i (% as @otherProps)}
+    {tag:when/i (% as %otherProps)}
     {tag:else/i children:$else %?}?
   as @whenelse) ...]`;
 
@@ -569,7 +569,7 @@ test('replace uses first solution only (longest match)', () => {
 
   // Use %? to allow empty residual (bare % requires nonempty)
   const pattern = `[... (
-    {tag:when/i (% as @otherProps)}
+    {tag:when/i (% as %otherProps)}
     {tag:else/i children:$else %?}?
   as @whenelse) ...]`;
 
