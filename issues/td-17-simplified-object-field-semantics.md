@@ -129,7 +129,7 @@ As is already implemented, the buckets are visible in all of the branches that t
 Test the same value being sent to two buckets, (_ -> @b1) -> @b2 
 
 
-## **UPDATE**
+## **DECISIONS - UPDATE**
 
 1. Kept % for remainder (not %%)
 2. Object group bindings use %: (K:V as %slice) not @slice
@@ -142,4 +142,4 @@ Test the same value being sent to two buckets, (_ -> @b1) -> @b2
 
 # LOG [2026-01-05T00:49:25-08:00]
 
-Opened.
+Opened. 

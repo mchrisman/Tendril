@@ -15,7 +15,8 @@
       "Bash(grep:*)",
       "Bash(find:*)",
       "Bash(rg:*)",
-      "Bash(xxd:*)"
+      "Bash(xxd:*)",
+      "Bash(git mv:*)"
     ],
     "deny": [],
     "ask": []

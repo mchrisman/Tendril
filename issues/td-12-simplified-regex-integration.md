@@ -21,11 +21,10 @@ tags: [regex, syntax]
    (where 'else' is the non-backtracking form of '|' as desscribed earlier), with regard to backtracking, binding, and so on.
 3. Provide consistent ergonomic quoting options:
 
-'...' "..." «...» --- literals
+bareword '...' "..." «...» --- literals
 /.../, r'...' r"..." r«...» --- Tendril regex (like JS regex, but with (1)+(2))
 jr/.../ - JavaScript compatible regex (disables (1) and (2))
-
-~ LITERAL_OR_REGEX --- Substring match (unanchored)
+~foo --- Literal substring match (unanchored)
 
 4. allow division '/' in EL
 
