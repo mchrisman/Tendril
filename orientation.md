@@ -118,7 +118,6 @@ src/
 test/
   engine.test.js               # Main engine tests
   else.test.js                 # 'else' operator (prioritized choice)
-  each-clause.test.js          # 'each' clause for "validate all" semantics
   flow-operator.test.js        # Flow operator (->) for bucket collection
   cw4-cw14-conformance.test.js # CW4/CW14/CW16 conformance (buckets, labels)
   guarded-patterns.test.js     # CW 2B: anonymous guards (PATTERN where EXPR)

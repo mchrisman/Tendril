@@ -96,38 +96,21 @@ Tendril("{/a.*/: $x}").match({ab: 1, xyz: 2}).solutions().first()
 // => {x: 1}
 ```
 
-### Each Clause (validate all)
+### Object Implication (`: else !`)
 
 ```javascript
-// each K: V - for all keys matching K, value must match V
-Tendril("{ each /a.*/: 1 }").match({ab: 1, ac: 1}).hasMatch()
+Tendril("{/a.*/: 1 else !}").match({ab: 1, ac: 1}).hasMatch()
 // => true (all /a.*/ keys have value 1)
 
-Tendril("{ each /a.*/: 1 }").match({ab: 1, ac: 2}).hasMatch()
-// => false (ac:2 fails validation)
+Tendril("{/a.*/: 1 else !}").match({ab: 1, ac: 2}).hasMatch()
+// => false (ac:2 is a "bad entry" - key matches but value doesn't)
 
-// each with else chain - value must match one of the clauses
-Tendril("{ each /a.*/: 1 else 2 }").match({ab: 1, ac: 2}).hasMatch()
-// => true (values are 1 or 2)
+// Universal equality idiom
+Tendril("{/a.*/: $x, /a.*/: $x else !}").match({ab: 1, ac: 1}).hasMatch()
+// => true (all /a.*/ values equal)
 
-// each with flow operator - collect validated pairs
-Tendril("{ each /val.*/: $v -> %results }").match({val1: 10, val2: 10}).solutions().first()
-// => {v: 10, results: {val1: 10, val2: 10}}
-
-// each with quantifier - validate all AND require count
-Tendril("{ each /a.*/: 1 #{2} }").match({a1: 1, a2: 1}).hasMatch()
-// => true (exactly 2 matching keys, all have value 1)
-
-// Universal equality - all matching values must be the same
-Tendril("{ each /a.*/: $x }").match({ab: 1, ac: 1}).hasMatch()
-// => true ($x unifies across all matches)
-
-Tendril("{ each /a.*/: $x }").match({ab: 1, ac: 2}).hasMatch()
-// => false (values differ, can't unify)
-
-// Legacy syntax still supported: "else !" is equivalent to "each"
-Tendril("{/a.*/: 1 else !}").match({ab: 1, ac: 1}).hasMatch()
-// => true (same as each /a.*/: 1)
+Tendril("{/a.*/: $x, /a.*/: $x else !}").match({ab: 1, ac: 2}).hasMatch()
+// => false (values differ)
 ```
 
 ### Object Remainder

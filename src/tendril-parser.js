@@ -90,16 +90,6 @@ const OTerm = (key, breadcrumbs, val, quant, optional = false, strong = false) =
   strong         // true if 'else !' suffix - triggers strong semantics (no bad entries)
 });
 
-// Each clause: 'each' KEY ':' VALUE_CLAUSE ('else' VALUE_CLAUSE)* QUANT?
-// Provides "validate all" semantics: for all k matching KEY, value must match one of the VALUE_CLAUSEs
-const Each = (key, breadcrumbs, valueClauses, quant) => ({
-  type: 'Each',
-  key,            // ITEM - key pattern
-  breadcrumbs,    // Breadcrumb[] - path navigation
-  valueClauses,   // Array of {value, flow?} where flow is {bucket, sliceKind} or null
-  quant           // null or {min, max} - quantifier on count of matching keys
-});
-
 const Spread = (quant) => ({type: 'Spread', quant});  // ... with optional #{...}
 
 // Slice patterns at root level: %{ O_GROUP } (object) or @[ A_BODY ] (array)
@@ -609,12 +599,8 @@ function parseRemainderQuant(p) {
 }
 
 function parseOGroup(p) {
-  // O_GROUP := 'each' EACH_CLAUSE | '(?' O_GROUP ')' | '(!' O_GROUP ')' | '(' O_GROUP* ')' | '(' O_GROUP* 'as' '%' IDENT ')' | O_TERM
+  // O_GROUP := '(?' O_GROUP ')' | '(!' O_GROUP ')' | '(' O_GROUP* ')' | '(' O_GROUP* 'as' '%' IDENT ')' | O_TERM
   // Uses ordered backtracking.
-
-  // 'each' clause - validate all semantics (replaces 'K:V else !')
-  const eachClause = p.bt('each-clause', () => parseEach(p));
-  if (eachClause) return eachClause;
 
   // Lookahead
   const look = p.bt('obj-lookahead', () => parseObjectLookahead(p));
@@ -657,63 +643,6 @@ function parseOGroup(p) {
   const result = OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, false);
   if (term.loc) result.loc = term.loc;  // preserve source location
   return result;
-}
-
-// Parse 'each' clause: 'each' KEY BREADCRUMB* ':' VALUE_CLAUSE ('else' VALUE_CLAUSE)* QUANT?
-// VALUE_CLAUSE := VALUE ('->' ('@'|'%') IDENT)?
-function parseEach(p) {
-  // Check for 'each' keyword
-  if (!p.peek('id') || p.cur().v !== 'each') return null;
-
-  return p.span(() => {
-    p.eat('id'); // 'each'
-
-    // Parse KEY
-    const key = parseItem(p);
-
-    // Parse breadcrumbs
-    const breadcrumbs = [];
-    for (let bc; (bc = parseBreadcrumb(p)); ) breadcrumbs.push(bc);
-
-    p.eat(':');
-
-    // Parse first VALUE_CLAUSE
-    const valueClauses = [parseValueClause(p)];
-
-    // Parse ('else' VALUE_CLAUSE)*
-    while (p.backtrack(() => { p.eat('else'); return true; })) {
-      valueClauses.push(parseValueClause(p));
-    }
-
-    // Parse optional quantifier
-    const quant = parseOQuant(p);
-
-    return Each(key, breadcrumbs, valueClauses, quant);
-  });
-}
-
-// VALUE_CLAUSE := VALUE ('->' ('@'|'%') IDENT)?
-function parseValueClause(p) {
-  const value = parseItem(p);
-
-  // Check for optional flow operator
-  const flow = p.backtrack(() => {
-    p.eat('->');
-    let sliceKind;
-    if (p.peek('%')) {
-      p.eat('%');
-      sliceKind = 'object';
-    } else if (p.peek('@')) {
-      p.eat('@');
-      sliceKind = 'array';
-    } else {
-      p.fail("expected '%' or '@' after '->'");
-    }
-    const bucket = eatVarName(p);
-    return {bucket, sliceKind};
-  });
-
-  return {value, flow};
 }
 
 // Helper: parse O_GROUP* until one of stopTokens
@@ -858,17 +787,6 @@ function validateAST(ast, src = null) {
         check(node.key, inChild);
         check(node.val, inChild);
         for (const bc of node.breadcrumbs || []) check(bc.key, inChild);
-        break;
-      case 'Each':
-        check(node.key, inChild);
-        for (const bc of node.breadcrumbs || []) check(bc.key, inChild);
-        for (const clause of node.valueClauses || []) {
-          check(clause.value, inChild);
-          // Track bucket slice kind if flow is present
-          if (clause.flow) {
-            checkSliceConflict(clause.flow.bucket, clause.flow.sliceKind, node.loc);
-          }
-        }
         break;
       case 'Alt':
         for (const alt of node.alts || []) check(alt, inChild);
