@@ -105,7 +105,8 @@ test('guarded: filter object values with guard', () => {
 
 test('guarded: categorize with guard in value pattern', () => {
   const data = {a: 1, b: 5, c: 2, d: 10};
-  const sol = Tendril('{$k: ((_ where _ > 3)->%big else _->%small)}')
+  // -> requires 'each' clause for scoping
+  const sol = Tendril('{each $k: ((_ where _ > 3)->%big else _->%small)}')
     .match(data).solutions().first();
   assert.deepEqual(sol.big, {b: 5, d: 10});
   assert.deepEqual(sol.small, {a: 1, c: 2});

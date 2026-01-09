@@ -16,11 +16,11 @@ import { Tendril } from '../src/tendril-api.js';
 
 // FIXED: The `else` belongs INSIDE the value pattern, not between K:V terms.
 // Original: "{ /[ab]/:$v->%good else _:$v->%bad }" - WRONG (two K:V terms)
-// Correct: "{ $k: (match_good->%good else _->%bad) }" - ONE K:V term with value alternation
+// Correct: "{ each $k: (match_good->%good else _->%bad) }" - 'each' clause with value alternation
 test('CW14: basic categorization into buckets by value', () => {
   const data = {a:1, b:1, c:2};  // Categorize by VALUE (1s vs 2s)
 
-  const result = Tendril("{ $k: (1->%ones else _->%rest) }")
+  const result = Tendril("{ each $k: (1->%ones else _->%rest) }")
     .match(data)
     .solutions()
     .first();
@@ -54,11 +54,11 @@ test('CW14 + CW4: categorize then validate exhaustively', () => {
   assert.deepEqual(sol.threes, {c:3});
 });
 
-// FIXED: Use correct value-pattern syntax
+// FIXED: Use correct value-pattern syntax with 'each' for flow
 test('CW14: bucket accumulates all matching kv-pairs', () => {
   const data = {x:1, y:1, z:2};
 
-  const sol = Tendril("{ $k: (1->%ones else _) }")
+  const sol = Tendril("{ each $k: (1->%ones else _) }")
     .match(data)
     .solutions()
     .first();
@@ -69,7 +69,8 @@ test('CW14: bucket accumulates all matching kv-pairs', () => {
 test('CW14: unpopulated bucket is undefined', () => {
   const data = {a:1};
 
-  const sol = Tendril("{ a: (1->%hit else _->%miss) }")
+  // Note: -> requires 'each' clause for scoping
+  const sol = Tendril("{ each a: (1->%hit else _->%miss) }")
     .match(data)
     .solutions()
     .first();
@@ -78,11 +79,11 @@ test('CW14: unpopulated bucket is undefined', () => {
   assert.strictEqual(sol.miss, undefined);
 });
 
-// FIXED: Use correct value-pattern syntax
+// FIXED: Use correct value-pattern syntax with 'each' for flow
 test('CW14: else prevents double collection', () => {
   const data = {a:1};
 
-  const sol = Tendril("{ $k: (1->%x else _->%y) }")
+  const sol = Tendril("{ each $k: (1->%x else _->%y) }")
     .match(data)
     .solutions()
     .first();
@@ -94,7 +95,8 @@ test('CW14: else prevents double collection', () => {
 test('CW14: else _ gives total coverage without failure', () => {
   const data = {a:1, b:2};
 
-  const sol = Tendril("{ $k: (1->%ones else _->%rest) }")
+  // Note: -> requires 'each' clause for scoping
+  const sol = Tendril("{ each $k: (1->%ones else _->%rest) }")
     .match(data)
     .solutions()
     .first();
@@ -114,9 +116,10 @@ test('CW16: nested categorization using labels', () => {
 
   // §L labels the outer object; <^L> uses the outer iteration key ($k)
   // So instead of bucket key 'a' (inner), we use 'row1' or 'row2' (outer)
+  // Note: -> requires 'each' clause for scoping
   const pat = `§L {
-    $k: ({
-      $k2: (1->%ones<^L> else _)
+    each $k: ({
+      each $k2: (1->%ones<^L> else _)
     }->%rows)
   }`;
 
@@ -143,7 +146,8 @@ test('CW4: strong + optional (each K:V ?)', () => {
 test('CW14: categorization iterates all matching keys', () => {
   const data = {a:1, b:1, c:1};
 
-  const sol = Tendril("{ /[abc]/:1->%all }")
+  // Note: -> requires 'each' clause for scoping
+  const sol = Tendril("{ each /[abc]/:1->%all }")
     .match(data)
     .solutions()
     .first();
@@ -160,9 +164,10 @@ test('CW14: nested maps — categorize inner kv pairs per outer record', () => {
     row2: {a: 2, d: 2}
   };
 
+  // Note: -> requires 'each' clause for scoping (inner object)
   const pat = `{
     (row1|row2 as $row): {
-      $k: (1->%ones else 2->%twos else _->%rest)
+      each $k: (1->%ones else 2->%twos else _->%rest)
     }
   }`;
 
@@ -180,7 +185,7 @@ test('CW14: nested maps — categorize inner kv pairs per outer record', () => {
   assert.strictEqual(byRow.row2.rest, undefined);  // No "rest" values in row2
 });
 
-// FIXED: Use correct value-pattern syntax
+// FIXED: Use correct value-pattern syntax with 'each' for flow operator
 test('CW14: nested maps — bucket whole sub-objects based on their contents', () => {
   const data = {
     u1: {profile: {role: "admin"}},
@@ -189,7 +194,7 @@ test('CW14: nested maps — bucket whole sub-objects based on their contents', (
   };
 
   const sol = Tendril(`{
-    $k: ({ profile:{ role: admin } }->%admins else _->%others)
+    each $k: ({ profile:{ role: admin } }->%admins else _->%others)
   }`).match(data).solutions().first();
 
   assert.deepEqual(sol.admins, {
@@ -214,8 +219,9 @@ test('CW14: bucket rollback when array * backtracks (no ghost kvs)', () => {
   // - Then it must match {t:1} {t:2} — which fails (only {t:2} remains),
   //   so it backtracks to eat only ONE {t:1}.
   // Bucket @ones should end up containing exactly ONE witness.
+  // Note: -> requires 'each' clause for scoping
   const sol = Tendril(`{
-    k: [
+    each k: [
       ({t:1} as $x)*
       ({t:1}->%ones)
       {t:2}
@@ -234,8 +240,9 @@ test('CW15: Seq in Alt - first branch succeeds', () => {
 
   // Branch 1: matches {kind:"A"} (flows it), then {kind:"B"} - succeeds
   // Branch 2: tries {kind:"B"} at index 0 which is {kind:"A"} - fails
+  // Note: -> requires 'each' clause for scoping
   const pat = `{
-    box: [
+    each box: [
       ({kind:"A"}->%picked {kind:"B"})
       |
       ({kind:"B"}->%picked)
@@ -251,8 +258,9 @@ test('CW15: fallback to second branch when first fails', () => {
 
   // Branch 1: {p:1}->{r:3} fails because arr[1] is {q:2} not {r:3}
   // Branch 2: {p:1} succeeds, flows to @seen, then {q:2} matches
+  // Note: -> requires 'each' clause for scoping
   const pat = `{
-    k: [
+    each k: [
       ({p:1}->%seen {r:3})
       |
       ({p:1}->%seen)
@@ -275,8 +283,9 @@ test('CW14: bucket rollback - losing value branch does not pour', () => {
     k2: [{x:1}]   // first branch succeeds
   };
 
+  // Note: -> requires 'each' clause for scoping
   const sol = Tendril(`{
-    $k: ([{x:1}]->%ones else [{x:2}]->%twos)
+    each $k: ([{x:1}]->%ones else [{x:2}]->%twos)
   }`).match(data).solutions().first();
 
   assert.deepEqual(sol.ones, {k2: [{x:1}]});
@@ -291,8 +300,9 @@ test('CW14: greedy * backtracking does not leave ghost bucket entries', () => {
 
   // Greedy (1)* tries to eat [1,1,1], then must match 1->%last, 2
   // That fails (only 2 left), so backtrack to eat [1,1], match 1->%last, 2
+  // Note: -> requires 'each' clause for scoping
   const sol = Tendril(`{
-    items: [(1 as $x)* (1->%last) 2]
+    each items: [(1 as $x)* (1->%last) 2]
   }`).match(data).solutions().first();
 
   // Only ONE 1 should be in @last (the third 1), not multiple from retry paths

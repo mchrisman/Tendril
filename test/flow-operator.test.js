@@ -27,45 +27,52 @@ function extractAll(pattern, data) {
 }
 
 // ==================== Basic Flow ====================
+// Note: -> requires 'each' clause for scoping
 
 test('basic flow - single key', () => {
-  const result = extract('{a: 1 -> %bucket}', {a: 1});
+  const result = extract('{each a: 1 -> %bucket}', {a: 1});
   assert.ok(result);
   assert.deepEqual(result.bucket, {a: 1});
 });
 
 test('basic flow - multiple keys', () => {
-  const result = extract('{$k: 1 -> %ones}', {a: 1, b: 1, c: 2});
+  // With 'each $k:', ALL keys must match the value pattern (strong semantics)
+  // So use data where all values are 1
+  const result = extract('{each $k: 1 -> %ones}', {a: 1, b: 1});
   assert.ok(result);
-  // Bucket should contain all k:v where value matched 1
+  // Bucket should contain all k:v
   assert.deepEqual(result.ones, {a: 1, b: 1});
 });
 
 test('basic flow - no matches', () => {
-  const result = extract('{$k: 1 -> %ones}', {a: 2, b: 3});
+  const result = extract('{each $k: 1 -> %ones}', {a: 2, b: 3});
   // No values match 1, so pattern fails (existence required)
   assert.equal(result, null);
 });
 
 test('basic flow with optional - no matches ok', () => {
-  const result = extract('{$k: 1 -> %ones ?}', {a: 2, b: 3});
+  // Use a specific key pattern so non-matching keys are skipped
+  // With /z/: (no keys match), the optional ? allows zero matches
+  const result = extract('{each /z/: $v -> %zKeys ?}', {a: 2, b: 3});
   assert.ok(result);
-  // Bucket is undefined when no values matched (no entries flowed in)
-  assert.equal(result.ones, undefined);
+  // Bucket is undefined when no keys matched the key pattern
+  assert.equal(result.zKeys, undefined);
 });
 
 // ==================== Flow with else ====================
 
 test('flow with else - categorization', () => {
-  const result = extract('{$k: 1 -> %ones else 2 -> %twos}', {a: 1, b: 2, c: 1});
+  const result = extract('{each $k: 1 -> %ones else 2 -> %twos}', {a: 1, b: 2, c: 1});
   assert.ok(result);
   assert.deepEqual(result.ones, {a: 1, c: 1});
   assert.deepEqual(result.twos, {b: 2});
 });
 
 test('flow with else - some keys match neither', () => {
-  // Keys matching neither go to "bad" set; with weak semantics, this is allowed
-  const result = extract('{$k: 1 -> %ones else 2 -> %twos}', {a: 1, b: 3});
+  // With strong semantics, ALL keys must match one of the alternatives
+  // Keys matching neither cause failure unless there's a catch-all
+  // Use _ as catch-all to handle keys that don't match 1 or 2
+  const result = extract('{each $k: (1 -> %ones else 2 -> %twos else _)}', {a: 1, b: 3});
   assert.ok(result);
   assert.deepEqual(result.ones, {a: 1});
   // %twos is undefined because no values matched 2
@@ -79,7 +86,7 @@ test('flow with each - strong semantics', () => {
 });
 
 test('flow with else _ - catch-all', () => {
-  const result = extract('{$k: 1 -> %ones else _ -> %rest}', {a: 1, b: 3, c: 1});
+  const result = extract('{each $k: 1 -> %ones else _ -> %rest}', {a: 1, b: 3, c: 1});
   assert.ok(result);
   assert.deepEqual(result.ones, {a: 1, c: 1});
   assert.deepEqual(result.rest, {b: 3});
@@ -90,7 +97,7 @@ test('flow with else _ - catch-all', () => {
 test('flow inside array under K:V - uses outer key', () => {
   // Flow inside an array uses the outer K:V key
   // Multiple array elements flowing the same value are deduplicated
-  const result = extract('{$k: [/a/ -> %captured, b]}', {x: ['apple', 'b']});
+  const result = extract('{each $k: [/a/ -> %captured, b]}', {x: ['apple', 'b']});
   assert.ok(result);
   // 'apple' matches /a/ and flows to %captured with key 'x' (from outer $k)
   assert.deepEqual(result.captured, {x: 'apple'});
@@ -99,7 +106,7 @@ test('flow inside array under K:V - uses outer key', () => {
 test('flow at outer level - captures full value', () => {
   // Flow at the VALUE level (outside the array) is allowed
   // and captures the full K:V value
-  const result = extract('{$k: ([/a/, b] -> %captured)}', {x: ['apple', 'b'], y: ['avocado', 'b']});
+  const result = extract('{each $k: ([/a/, b] -> %captured)}', {x: ['apple', 'b'], y: ['avocado', 'b']});
   assert.ok(result);
   assert.deepEqual(result.captured, {x: ['apple', 'b'], y: ['avocado', 'b']});
 });
@@ -110,7 +117,7 @@ test('flow with backtracking at value level', () => {
   // Test backtracking with Flow at the value level (not inside array)
   // Pattern: match array->%a OR string /c/->%c
   const result = extract(
-    '{$k: ([/a/, /b/] -> %arrays) else (/c/ -> %strings)}',
+    '{each $k: ([/a/, /b/] -> %arrays) else (/c/ -> %strings)}',
     {k1: 'c1', k2: 'c2', k3: ['a1', 'b1'], k4: ['a2', 'b2']}
   );
   assert.ok(result);
@@ -123,7 +130,7 @@ test('flow with backtracking at value level', () => {
 // ==================== Flow with scalar bindings ====================
 
 test('flow with scalar binding - both work together', () => {
-  const results = extractAll('{$k: ($v -> %all)}', {a: 1, b: 2});
+  const results = extractAll('{each $k: ($v -> %all)}', {a: 1, b: 2});
   // Should have 2 solutions (branching on $k)
   assert.equal(results.length, 2);
   // But all solutions should have the same %all bucket (accumulated)
@@ -136,7 +143,9 @@ test('flow with scalar binding - both work together', () => {
 });
 
 test('flow inside binding - captures bound value', () => {
-  const result = extract('{$k: ((/\\d+/ as $num) -> %numbers)}', {a: '123', b: 'abc', c: '456'});
+  // With strong semantics, ALL keys must match the pattern
+  // Add catch-all for non-numeric values
+  const result = extract('{each $k: ((/\\d+/ as $num) -> %numbers else _)}', {a: '123', b: 'abc', c: '456'});
   assert.ok(result);
   // Only a and c match /\d+/
   assert.deepEqual(result.numbers, {a: '123', c: '456'});
@@ -145,7 +154,8 @@ test('flow inside binding - captures bound value', () => {
 // ==================== Multiple flows in same pattern ====================
 
 test('multiple independent flows', () => {
-  const result = extract('{a: $x -> %avals, b: $y -> %bvals}', {a: 1, b: 2, c: 3});
+  // Use two separate each clauses for independent flows
+  const result = extract('{each a: $x -> %avals, each b: $y -> %bvals}', {a: 1, b: 2, c: 3});
   assert.ok(result);
   assert.deepEqual(result.avals, {a: 1});
   assert.deepEqual(result.bvals, {b: 2});
@@ -154,35 +164,37 @@ test('multiple independent flows', () => {
 // ==================== Edge cases ====================
 
 test('flow with regex key pattern', () => {
-  const result = extract('{/^user/: $v -> %users}', {user1: 'alice', user2: 'bob', admin: 'root'});
+  const result = extract('{each /^user/: $v -> %users}', {user1: 'alice', user2: 'bob', admin: 'root'});
   assert.ok(result);
   assert.deepEqual(result.users, {user1: 'alice', user2: 'bob'});
 });
 
 test('empty bucket when optional', () => {
-  const result = extract('{a: 1 -> %ones ?}', {a: 2});
+  // Use a key pattern that doesn't match any keys
+  const result = extract('{each /z/: $v -> %zKeys ?}', {a: 2});
   assert.ok(result);
-  // a:2 doesn't match 1, so %ones is undefined (no entries flowed in)
-  assert.equal(result.ones, undefined);
+  // No keys match /z/, so %zKeys is undefined
+  assert.equal(result.zKeys, undefined);
 });
 
 // ==================== Array bucket (values only) ====================
 
 test('array bucket - collects values only', () => {
-  const result = extract('{$k: 1 -> @ones}', {a: 1, b: 1, c: 2});
+  // With strong semantics, all keys must match the value pattern
+  const result = extract('{each $k: 1 -> @ones}', {a: 1, b: 1});
   assert.ok(result);
   // @bucket collects values only (no keys)
   assert.deepEqual(result.ones, [1, 1]);
 });
 
 test('array bucket - single value', () => {
-  const result = extract('{a: 1 -> @bucket}', {a: 1});
+  const result = extract('{each a: 1 -> @bucket}', {a: 1});
   assert.ok(result);
   assert.deepEqual(result.bucket, [1]);
 });
 
 test('array bucket - with else categorization', () => {
-  const result = extract('{$k: 1 -> @ones else 2 -> @twos}', {a: 1, b: 2, c: 1});
+  const result = extract('{each $k: 1 -> @ones else 2 -> @twos}', {a: 1, b: 2, c: 1});
   assert.ok(result);
   // Values are collected without keys
   assert.deepEqual(result.ones, [1, 1]);
@@ -190,14 +202,14 @@ test('array bucket - with else categorization', () => {
 });
 
 test('array bucket - inside nested array', () => {
-  const result = extract('{$k: [/a/ -> @captured, b]}', {x: ['apple', 'b']});
+  const result = extract('{each $k: [/a/ -> @captured, b]}', {x: ['apple', 'b']});
   assert.ok(result);
   // @captured collects just the matched value, not k:v
   assert.deepEqual(result.captured, ['apple']);
 });
 
 test('array bucket - multiple values from array elements', () => {
-  const result = extract('{$k: [(/\\d+/ -> @nums)+]}', {x: ['1', '2', '3']});
+  const result = extract('{each $k: [(/\\d+/ -> @nums)+]}', {x: ['1', '2', '3']});
   assert.ok(result);
   // All matching values collected
   assert.deepEqual(result.nums, ['1', '2', '3']);
@@ -206,14 +218,15 @@ test('array bucket - multiple values from array elements', () => {
 // ==================== Mixing % and @ buckets ====================
 
 test('mixed buckets - object and array in same pattern', () => {
-  const result = extract('{a: $x -> %aobj, b: $y -> @barr}', {a: 1, b: 2, c: 3});
+  // Use two separate each clauses for independent flows
+  const result = extract('{each a: $x -> %aobj, each b: $y -> @barr}', {a: 1, b: 2, c: 3});
   assert.ok(result);
   assert.deepEqual(result.aobj, {a: 1});
   assert.deepEqual(result.barr, [2]);
 });
 
 test('mixed buckets - different buckets for same pattern branches', () => {
-  const result = extract('{$k: 1 -> %ones else 2 -> @twos}', {a: 1, b: 2, c: 1});
+  const result = extract('{each $k: 1 -> %ones else 2 -> @twos}', {a: 1, b: 2, c: 1});
   assert.ok(result);
   assert.deepEqual(result.ones, {a: 1, c: 1});
   assert.deepEqual(result.twos, [2]);
@@ -224,7 +237,7 @@ test('mixed buckets - different buckets for same pattern branches', () => {
 test('slice conflict - same name with different sigils throws', () => {
   // Using %foo and @foo in same pattern should throw
   assert.throws(() => {
-    extract('{a: $x -> %foo, b: $y -> @foo}', {a: 1, b: 2});
+    extract('{each a: $x -> %foo, each b: $y -> @foo}', {a: 1, b: 2});
   }, /Slice name conflict.*foo.*used as both/);
 });
 

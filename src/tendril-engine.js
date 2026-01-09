@@ -799,17 +799,33 @@ function matchItem(item, node, path, sol, emit, ctx) {
 
       case 'Arr': {
         if (!Array.isArray(node)) return;
-        // If this array has a label and we have a flowKey, record it with bucket level
-        if (item.label && ctx.flowKey !== undefined) {
+
+        if (item.label) {
+          // Labeled array: push bucket level for <collecting> directive support
           const s2 = cloneSolution(sol);
-          s2.labels.set(item.label, {key: ctx.flowKey, bucketLevel: s2.bucketStack.length - 1});
-          matchArray(item.items, node, path, s2, emit, ctx);
-        } else if (item.label) {
-          // Label exists but no flowKey - record undefined so we can detect it later
-          const s2 = cloneSolution(sol);
-          s2.labels.set(item.label, {key: undefined, bucketLevel: s2.bucketStack.length - 1});
-          matchArray(item.items, node, path, s2, emit, ctx);
+          pushBucketLevel(s2);
+
+          // Record label with bucket level info
+          if (ctx.flowKey !== undefined) {
+            s2.labels.set(item.label, {key: ctx.flowKey, bucketLevel: s2.bucketStack.length - 1});
+          } else {
+            // No flowKey - record undefined so we can detect it later
+            s2.labels.set(item.label, {key: undefined, bucketLevel: s2.bucketStack.length - 1});
+          }
+
+          // Collect all solutions from matchArray, then finalize and emit
+          const collected = [];
+          matchArray(item.items, node, path, s2, (s3) => {
+            collected.push(s3);
+          }, ctx);
+
+          // Finalize bucket level for all collected solutions
+          if (collected.length > 0) {
+            const finalized = finalizeBucketLevel(collected);
+            for (const s of finalized) emit(s);
+          }
         } else {
+          // Unlabeled array: no bucket handling needed
           matchArray(item.items, node, path, sol, emit, ctx);
         }
         return;
@@ -836,308 +852,245 @@ function matchItem(item, node, path, sol, emit, ctx) {
 
 // ------------- Array matching -------------
 
+// Match a single pattern item against array starting at startIdx
+// Calls onMatch(solution, endIndex) for each way it can match
+// This enables proper backtracking for GroupBind and other variable-length patterns
+function matchArrayItemWithRange(item, arr, startIdx, path, sol, onMatch, ctx) {
+  guard(ctx);
+
+  switch (item.type) {
+    case 'Spread': {
+      // Spread matches min..max elements (lazy: shortest first for natural ordering)
+      const {min, max} = parseQuantRange(item.quant);
+      const maxK = Math.min(max, arr.length - startIdx);
+      for (let k = min; k <= maxK; k++) {
+        onMatch(cloneSolution(sol), startIdx + k);
+        if (ctx.steps > ctx.maxSteps) break;
+      }
+      return;
+    }
+
+    case 'Seq': {
+      // Sequence: match items in order
+      matchArraySeqWithRange(item.items, arr, startIdx, path, sol, onMatch, ctx);
+      return;
+    }
+
+    case 'Alt': {
+      // Alternation: try each branch
+      let anyEmitted = false;
+      for (const branch of item.alts) {
+        if (item.prioritized && anyEmitted) break;
+        if (ctx.steps > ctx.maxSteps) break;
+        guard(ctx);
+
+        // Unwrap Paren if present
+        let inner = branch;
+        while (inner.type === 'Paren') inner = inner.item;
+
+        matchArrayItemWithRange(inner, arr, startIdx, path, sol, (s, endIdx) => {
+          anyEmitted = true;
+          onMatch(s, endIdx);
+        }, ctx);
+      }
+      return;
+    }
+
+    case 'Quant': {
+      // Quantified: match sub-pattern m..n times
+      const m = item.min !== null ? item.min : 0;
+      const n = item.max !== null ? item.max : Infinity;
+      quantWithRange(item.sub, arr, startIdx, m, n, item.op || '?', path, sol, onMatch, ctx);
+      return;
+    }
+
+    case 'GroupBind': {
+      // Group binding: match inner pattern, capture range
+      matchArrayItemWithRange(item.pat, arr, startIdx, path, sol, (s2, endIdx) => {
+        const slice = arr.slice(startIdx, endIdx);
+        const s3 = cloneSolution(s2);
+        const groupValue = Group.array(...slice);
+        if (bindGroup(s3.env, item.name, groupValue)) {
+          recordGroupSite(s3, item.name, path, startIdx, endIdx, slice);
+          if (ctx.debug?.onBind) {
+            ctx.debug.onBind('group', item.name, groupValue);
+          }
+          onMatch(s3, endIdx);
+        }
+      }, ctx);
+      return;
+    }
+
+    case 'SBind': {
+      // Scalar binding: special handling if inner pattern is Seq
+      if (item.pat.type === 'Seq') {
+        // $x=(seq) matches iff seq matches exactly 1 element
+        matchArraySeqWithRange(item.pat.items, arr, startIdx, path, sol, (s2, endIdx) => {
+          if (endIdx - startIdx === 1) {
+            const s3 = cloneSolution(s2);
+            const element = arr[startIdx];
+            if (bindScalar(s3.env, item.name, element)) {
+              recordScalarSite(s3, item.name, [...path, startIdx], element);
+              if (ctx.debug?.onBind) {
+                ctx.debug.onBind('scalar', item.name, element);
+              }
+              addGuard(s3, item.guard, item.name);
+              if (checkGuards(s3)) {
+                onMatch(s3, endIdx);
+              }
+            }
+          }
+        }, ctx);
+        return;
+      }
+      // Fall through to default single-element handling
+      if (startIdx < arr.length) {
+        matchItem(item, arr[startIdx], [...path, startIdx], sol, (s2) => {
+          onMatch(s2, startIdx + 1);
+        }, ctx);
+      }
+      return;
+    }
+
+    case 'Look': {
+      // Lookahead: zero-width assertion (doesn't consume elements)
+      const remainingGroup = arr.slice(startIdx);
+      const patternItems = [item.pat, {type: 'Spread', quant: null}];
+
+      if (item.neg) {
+        let matched = false;
+        matchArray(patternItems, remainingGroup, [...path, startIdx], cloneSolution(sol), () => {
+          matched = true;
+        }, ctx);
+        if (!matched) {
+          onMatch(sol, startIdx);
+        }
+      } else {
+        const hasBindings = patternHasBindings(item.pat);
+        if (hasBindings) {
+          matchArray(patternItems, remainingGroup, [...path, startIdx], sol, (s2) => {
+            onMatch(s2, startIdx);
+          }, ctx);
+        } else {
+          let matchedSol = null;
+          matchArray(patternItems, remainingGroup, [...path, startIdx], sol, (s2) => {
+            if (!matchedSol) matchedSol = s2;
+          }, ctx);
+          if (matchedSol) {
+            onMatch(matchedSol, startIdx);
+          }
+        }
+      }
+      return;
+    }
+
+    // Single-element patterns: delegate to matchItem
+    default: {
+      if (startIdx < arr.length) {
+        matchItem(item, arr[startIdx], [...path, startIdx], sol, (s2) => {
+          onMatch(s2, startIdx + 1);
+        }, ctx);
+      }
+      return;
+    }
+  }
+}
+
+// Match a sequence of items against array starting at startIdx
+// Calls onMatch(solution, endIndex) for each way the sequence can match
+function matchArraySeqWithRange(items, arr, startIdx, path, sol, onMatch, ctx) {
+  function step(ixItem, ixArr, sIn) {
+    guard(ctx);
+    if (ixItem === items.length) {
+      onMatch(sIn, ixArr);
+      return;
+    }
+    matchArrayItemWithRange(items[ixItem], arr, ixArr, path, sIn, (s2, endIdx) => {
+      step(ixItem + 1, endIdx, s2);
+    }, ctx);
+  }
+  step(0, startIdx, sol);
+}
+
+// Quantifier matching with range tracking
+// Matches sub-pattern m..n times, calls onMatch(sol, endIdx) for each match
+function quantWithRange(sub, arr, startIdx, m, n, op, path, sol, onMatch, ctx) {
+  const maxRep = Math.min(n, arr.length - startIdx);
+  const isPossessive = op === '++' || op === '*+' || op === '?+';
+
+  // DP-like expansion to avoid deep recursion
+  let frontier = [{idx: startIdx, sol: cloneSolution(sol), reps: 0}];
+
+  // First reach minimum reps
+  for (let r = 0; r < m; r++) {
+    const next = [];
+    for (const st of frontier) {
+      if (st.idx >= arr.length) continue;
+      matchItem(sub, arr[st.idx], [...path, st.idx], st.sol, (s2) => {
+        next.push({idx: st.idx + 1, sol: s2, reps: st.reps + 1});
+      }, ctx);
+    }
+    frontier = next;
+    if (!frontier.length) return; // cannot satisfy minimum
+  }
+
+  if (isPossessive) {
+    // Greedy, no backtracking: consume as many as possible
+    for (let r = m; r < maxRep; r++) {
+      const grown = [];
+      for (const st of frontier) {
+        if (st.idx >= arr.length) continue;
+        matchItem(sub, arr[st.idx], [...path, st.idx], st.sol, (s2) => {
+          grown.push({idx: st.idx + 1, sol: s2, reps: st.reps + 1});
+        }, ctx);
+      }
+      if (!grown.length) break;
+      frontier = grown;
+    }
+    for (const st of frontier) {
+      onMatch(st.sol, st.idx);
+    }
+  } else {
+    // Non-possessive: collect all lengths, emit longest first (greedy)
+    const allFrontiers = [frontier];
+    for (let r = m; r < maxRep; r++) {
+      const grown = [];
+      for (const st of frontier) {
+        if (st.idx >= arr.length) continue;
+        matchItem(sub, arr[st.idx], [...path, st.idx], st.sol, (s2) => {
+          grown.push({idx: st.idx + 1, sol: s2, reps: st.reps + 1});
+        }, ctx);
+      }
+      if (!grown.length) break;
+      frontier = grown;
+      allFrontiers.push(frontier);
+    }
+    // Emit longest first (greedy)
+    for (let i = allFrontiers.length - 1; i >= 0; i--) {
+      for (const st of allFrontiers[i]) {
+        onMatch(st.sol, st.idx);
+      }
+    }
+  }
+}
+
+// Entry point for array matching
+// Matches items against the entire array (with trailing spread optimization)
 function matchArray(items, arr, path, sol, emit, ctx) {
-  // Optimize away trailing '..' (bare spread with no quantifier)
-  // This is redundant since it means "consume any remaining elements"
-  // Note: This only affects Spread nodes, not GroupBind nodes like @x
+  // Optimization: trailing bare spread means "consume rest" - handle in O(1)
   const last = items[items.length - 1];
   const hadTrailingSpread = last && last.type === 'Spread' && last.quant == null;
   if (hadTrailingSpread) {
     items = items.slice(0, -1);
   }
 
-  // Match array items anchored at start (and end if no trailing ..)
-  step(items, 0, 0, sol);
-
-  // step: match pattern items against array elements
-  // items is passed as parameter to allow splicing in Seq items from Alt branches
-  function step(items, ixItem, ixArr, sIn) {
-    guard(ctx);
-    if (ixItem === items.length) {
-      // If we had trailing spread, allow leftover elements; otherwise require exact match
-      if (hadTrailingSpread || ixArr === arr.length) {
-        emit(cloneSolution(sIn));
-      }
-      return;
+  // Match using range-tracking, then filter for full consumption
+  matchArraySeqWithRange(items, arr, 0, path, sol, (s, endIdx) => {
+    // Accept if: trailing spread (any end position) or exact match (consumed all)
+    if (hadTrailingSpread || endIdx === arr.length) {
+      emit(cloneSolution(s));
     }
-    const it = items[ixItem];
-
-    // Spread '..' — try consuming k elements, k from 0..(remaining)
-    if (it.type === 'Spread') {
-      const {min, max} = parseQuantRange(it.quant);
-      const maxK = Math.min(max, arr.length - ixArr);
-
-      for (let k = min; k <= maxK; k++) {
-        step(items, ixItem + 1, ixArr + k, sIn);
-        if (ctx.steps > ctx.maxSteps) break;
-      }
-      return;
-    }
-
-    // Group binding @x or @x:(pattern)
-    if (it.type === 'GroupBind') {
-      return matchArrayGroupBind(items, it, ixItem, ixArr, sIn);
-    }
-
-    // Scalar binding with Seq pattern: $x=(seq) matches iff seq matches exactly 1 element
-    // e.g., [$x=(1? 2?)] matches [1] and [2] but not [] or [1,2]
-    if (it.type === 'SBind' && it.pat.type === 'Seq') {
-      const maxK = arr.length - ixArr;
-      // Try each possible slice length, but only accept length-1 matches
-      for (let k = Math.min(maxK, 2); k >= 0; k--) {  // Only need to try 0, 1, 2
-        const testGroup = arr.slice(ixArr, ixArr + k);
-        matchArray(it.pat.items, testGroup, [...path, ixArr], sIn, (s2) => {
-          // Only accept if exactly 1 element was matched
-          if (k === 1) {
-            const s3 = cloneSolution(s2);
-            const element = testGroup[0];
-            if (bindScalar(s3.env, it.name, element)) {
-              recordScalarSite(s3, it.name, [...path, ixArr], element);
-              if (ctx.debug?.onBind) {
-                ctx.debug.onBind('scalar', it.name, element);
-              }
-              // Add guard expression if present
-              addGuard(s3, it.guard, it.name);
-              // Check guards - prune if any closed guard fails
-              if (!checkGuards(s3)) return;
-              step(items, ixItem + 1, ixArr + k, s3);
-            }
-          }
-          // k === 0 or k >= 2: seq matched but wrong length, no solution emitted
-        }, ctx);
-      }
-      return;
-    }
-
-    // Quantified item (from parser: Quant node)
-    if (it.type === 'Quant') {
-      const min = it.min !== null ? it.min : 0;
-      const max = it.max !== null ? it.max : Infinity;
-      const op = it.op || '?';
-      return quantOnArray(items, it.sub, min, max, op, ixItem, ixArr, sIn);
-    }
-
-    // Lookahead — zero-width assertion at current position (unanchored)
-    if (it.type === 'Look') {
-      const remainingGroup = arr.slice(ixArr);
-      const hasBindings = patternHasBindings(it.pat);
-
-      // Make pattern unanchored by appending '..' if not already present
-      const patternItems = [it.pat];
-      const lastItem = patternItems[patternItems.length - 1];
-      const alreadyUnanchored = lastItem && lastItem.type === 'Spread';
-      if (!alreadyUnanchored) {
-        patternItems.push({type: 'Spread', quant: null}); // '..' with no quant
-      }
-
-      if (it.neg) {
-        // Negative lookahead: succeed if pattern does NOT match, never commit bindings
-        let matched = false;
-        matchArray(patternItems, remainingGroup, [...path, ixArr], cloneSolution(sIn), () => {
-          matched = true;
-        }, ctx);
-        if (!matched) {
-          step(items, ixItem + 1, ixArr, sIn);
-        }
-      } else if (hasBindings) {
-        // Positive lookahead with bindings: enumerate all solutions
-        matchArray(patternItems, remainingGroup, [...path, ixArr], sIn, (s2) => {
-          step(items, ixItem + 1, ixArr, s2);
-        }, ctx);
-      } else {
-        // Positive lookahead without bindings: stop at first match (optimization)
-        let matchedSol = null;
-        matchArray(patternItems, remainingGroup, [...path, ixArr], sIn, (s2) => {
-          if (!matchedSol) matchedSol = s2;
-        }, ctx);
-        if (matchedSol) {
-          step(items, ixItem + 1, ixArr, matchedSol);
-        }
-      }
-      return;
-    }
-
-    // Alt — try each alternative; Seq branches consume multiple elements
-    if (it.type === 'Alt') {
-      let anyEmitted = false;
-      for (const sub of it.alts) {
-        if (it.prioritized && anyEmitted) break;
-        guard(ctx);
-
-        // Unwrap Paren if present
-        let inner = sub;
-        while (inner.type === 'Paren') inner = inner.item;
-
-        if (inner.type === 'Seq') {
-          // Seq in alternation: splice Seq items in place of this Alt
-          const newItems = [...inner.items, ...items.slice(ixItem + 1)];
-          step(newItems, 0, ixArr, sIn);
-          anyEmitted = true; // Conservative: assume it may have emitted
-        } else {
-          // Single item: match at current position
-          if (ixArr < arr.length) {
-            matchItem(sub, arr[ixArr], [...path, ixArr], sIn, (s2) => {
-              anyEmitted = true;
-              step(items, ixItem + 1, ixArr + 1, s2);
-            }, ctx);
-          }
-        }
-      }
-      return;
-    }
-
-    // Regular pattern item — match one element at current index
-    if (ixArr >= arr.length) return;
-    matchItem(it, arr[ixArr], [...path, ixArr], sIn, (s2) => {
-      step(items, ixItem + 1, ixArr + 1, s2);
-    }, ctx);
-  }
-
-  function matchArrayGroupBind(items, groupBind, ixItem, ixArr, sIn) {
-    // @x matches 0+ consecutive items
-    // @x:(pat) matches 0+ items where each matches pat
-    const maxK = arr.length - ixArr;
-
-    // For @x:(item1 item2? ...), match a sequence of items
-    if (groupBind.pat.type === 'Seq') {
-      // Try each possible group length and see if the Seq pattern matches
-      // GREEDY: try longer groups first
-      for (let k = maxK; k >= 0; k--) {
-        const testGroup = arr.slice(ixArr, ixArr + k);
-
-        matchArray(groupBind.pat.items, testGroup, [...path, ixArr], sIn, (s2) => {
-          const group = testGroup;
-          const s3 = cloneSolution(s2);
-          const groupValue = Group.array(...group);
-          if (bindGroup(s3.env, groupBind.name, groupValue)) {
-            recordGroupSite(s3, groupBind.name, path, ixArr, ixArr + k, group);
-            if (ctx.debug?.onBind) {
-              ctx.debug.onBind('group', groupBind.name, groupValue);
-            }
-            step(items, ixItem + 1, ixArr + k, s3);
-          }
-        }, ctx);
-      }
-      return;
-    }
-
-    // For @x:(pat*), use quantifier logic with solution threading
-    if (groupBind.pat.type === 'Quant') {
-      const {sub, min, max, op} = groupBind.pat;
-      const m = min !== null ? min : 0;
-      const n = max !== null ? max : Infinity;
-      const quantOp = op || '?';
-
-      return quantOnArray(items, sub, m, n, quantOp, ixItem, ixArr, sIn, (st) => {
-        const start = ixArr;
-        const end = st.idx;
-        const group = arr.slice(start, end);
-        const s2 = cloneSolution(st.sol);
-        const groupValue = Group.array(...group);
-        if (bindGroup(s2.env, groupBind.name, groupValue)) {
-          recordGroupSite(s2, groupBind.name, path, start, end, group);
-          if (ctx.debug?.onBind) {
-            ctx.debug.onBind('group', groupBind.name, groupValue);
-          }
-          step(items, ixItem + 1, end, s2);
-        }
-      });
-    } else {
-      // Non-quantified pattern: @x:(pattern) means exactly one item matching pattern
-      if (ixArr < arr.length) {
-        matchItem(groupBind.pat, arr[ixArr], [...path, ixArr], sIn, (s2) => {
-          const group = [arr[ixArr]];
-          const s3 = cloneSolution(s2);
-          const groupValue = Group.array(...group);
-          if (bindGroup(s3.env, groupBind.name, groupValue)) {
-            recordGroupSite(s3, groupBind.name, path, ixArr, ixArr + 1, group);
-            if (ctx.debug?.onBind) {
-              ctx.debug.onBind('group', groupBind.name, groupValue);
-            }
-            step(items, ixItem + 1, ixArr + 1, s3);
-          }
-        }, ctx);
-      }
-    }
-  }
-
-  function quantOnArray(items, sub, m, n, op, ixItem, ixArr, sIn, cont) {
-    // Consume exactly k repetitions for some k ∈ [m..n]
-    const maxRep = Math.min(n, arr.length - ixArr);
-
-    // Determine if this is possessive (commit to first match, no backtracking)
-    // Possessive operators: ++, *+, ?+ (NOT plain +)
-    const isPossessive = op === '++' || op === '*+' || op === '?+';
-
-    const continueWith = cont
-      ? (st) => cont(st)
-      : (st) => step(items, ixItem + 1, st.idx, st.sol);
-
-    // DP-like iterative expansion to avoid deep recursion explosion
-    let frontier = [{idx: ixArr, sol: cloneSolution(sIn), reps: 0}];
-
-    // First, ensure we can reach at least m reps
-    for (let r = 0; r < m; r++) {
-      const next = [];
-      for (const st of frontier) {
-        const {idx, sol} = st;
-        if (idx >= arr.length) continue;
-        matchItem(sub, arr[idx], [...path, idx], sol, (s2) => {
-          next.push({idx: idx + 1, sol: s2, reps: st.reps + 1});
-        }, ctx);
-      }
-      frontier = next;
-      if (!frontier.length) return; // cannot satisfy minimum
-    }
-
-    if (isPossessive) {
-      // Possessive: greedily consume as many as possible, then commit
-      // Continue expanding to maximum
-      for (let r = m; r < maxRep; r++) {
-        const grown = [];
-        for (const st of frontier) {
-          const {idx, sol} = st;
-          if (idx >= arr.length) continue;
-          matchItem(sub, arr[idx], [...path, idx], sol, (s2) => {
-            grown.push({idx: idx + 1, sol: s2, reps: st.reps + 1});
-          }, ctx);
-        }
-        if (!grown.length) break; // Can't match more
-        frontier = grown;
-      }
-      // Emit only the longest match (possessive - no backtracking)
-      for (const st of frontier) {
-        continueWith(st);
-      }
-    } else {
-      // Non-possessive: try all lengths from m to n (backtracking allowed)
-      // GREEDY: emit longer matches before shorter ones
-
-      // Collect all frontiers from m to maxRep
-      const allFrontiers = [frontier]; // frontier at m reps
-
-      for (let r = m; r < maxRep; r++) {
-        const grown = [];
-        for (const st of frontier) {
-          const {idx, sol} = st;
-          if (idx >= arr.length) continue;
-          matchItem(sub, arr[idx], [...path, idx], sol, (s2) => {
-            grown.push({idx: idx + 1, sol: s2, reps: st.reps + 1});
-          }, ctx);
-        }
-        if (!grown.length) break;
-        frontier = grown;
-        allFrontiers.push(frontier);
-      }
-
-      // Emit in reverse order: longest matches first (greedy)
-      for (let i = allFrontiers.length - 1; i >= 0; i--) {
-        for (const st of allFrontiers[i]) {
-          continueWith(st);
-        }
-      }
-    }
-  }
+  }, ctx);
 }
 
 // ------------- Object matching -------------
@@ -1153,9 +1106,11 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
   // - coveredKeys: keys that match any K pattern (for remainder calculation)
   let solutions = [{sol: cloneSolution(sol), testedKeys: new Set(), coveredKeys: new Set()}];
 
-  // Push bucket level at object start - all terms share this level
-  // (Cloned solutions inherit the bucket stack, so only need to push for initial)
-  pushBucketLevel(solutions[0].sol);
+  // Push bucket level only for labeled objects (to support <collecting> directive)
+  // Each `each` clause will push its own level for -> operator
+  if (objLabel) {
+    pushBucketLevel(solutions[0].sol);
+  }
 
   if (DEBUG) console.log(`[matchObject] obj keys:`, Object.keys(obj), `terms:`, terms.length);
 
@@ -1341,6 +1296,14 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     const isStrong = term.strong === true;
     const isOptional = term.optional === true;
 
+    // For strong terms (each clauses), push a bucket level for this clause's scope
+    // The -> operator will collect into this level
+    if (isStrong) {
+      for (const state of solutions) {
+        pushBucketLevel(state.sol);
+      }
+    }
+
     // For each solution, process the term
     let next = [];
     for (const state of solutions) {
@@ -1499,7 +1462,11 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
 
     solutions = next;
 
-    // Bucket finalization moved to end of object (after all terms)
+    // For strong terms (each clauses), finalize this clause's bucket level
+    // This merges collected entries, pops the level, and binds bucket variables
+    if (isStrong && solutions.length > 0) {
+      solutions = finalizeBucketLevel(solutions);
+    }
 
     if (!solutions.length) break;
   }
@@ -1592,9 +1559,9 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     }
   }
 
-  // Finalize bucket level: collect from all solutions, merge, pop, bind
-  // This happens once at end of object, after all terms have contributed
-  if (solutions.length > 0) {
+  // Finalize bucket level for labeled objects (to support <collecting> directive)
+  // Each `each` clause finalizes its own level separately
+  if (objLabel && solutions.length > 0) {
     solutions = finalizeBucketLevel(solutions);
   }
 

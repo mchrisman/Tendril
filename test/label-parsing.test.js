@@ -52,17 +52,20 @@ test('labeled array inside labeled object', () => {
 });
 
 // ==================== Label References in Flow ====================
+// Note: -> requires 'each' clause, and label references must refer to defined labels
 
 test('flow with label reference', () => {
-  const ast = parsePattern('{ $k: ($v -> @bucket<^foo>) }');
+  // Use a labeled object and 'each' clause so validation passes
+  const ast = parsePattern('§foo { each $k: ($v -> @bucket<^foo>) }');
   const flow = ast.terms[0].val;
   assert.equal(flow.type, 'Flow');
   assert.equal(flow.bucket, 'bucket');
   assert.equal(flow.labelRef, 'foo');
 });
 
-test('flow without label reference has null labelRef', () => {
-  const ast = parsePattern('{ $k: ($v -> @bucket) }');
+test('flow without explicit label reference uses implicit each scope', () => {
+  // -> without <^label> requires enclosing 'each' clause
+  const ast = parsePattern('{ each $k: ($v -> @bucket) }');
   const flow = ast.terms[0].val;
   assert.equal(flow.type, 'Flow');
   assert.equal(flow.bucket, 'bucket');
@@ -70,7 +73,8 @@ test('flow without label reference has null labelRef', () => {
 });
 
 test('flow with label reference in alternation', () => {
-  const ast = parsePattern('{ $k: (1 -> @ones<^L> else _ -> @rest) }');
+  // Need labeled container and 'each' clause for validation to pass
+  const ast = parsePattern('§L { each $k: (1 -> @ones<^L> else _ -> @rest) }');
   const alt = ast.terms[0].val;
   assert.equal(alt.type, 'Alt');
 
@@ -88,14 +92,16 @@ test('flow with label reference in alternation', () => {
 // ==================== Combined Usage ====================
 
 test('labeled object with flow referencing same label', () => {
-  const ast = parsePattern('§L { $k: ($v -> @bucket<^L>) }');
+  // Need 'each' clause for -> to be valid
+  const ast = parsePattern('§L { each $k: ($v -> @bucket<^L>) }');
   assert.equal(ast.label, 'L');
   const flow = ast.terms[0].val;
   assert.equal(flow.labelRef, 'L');
 });
 
 test('nested structure with cross-scope flow', () => {
-  const ast = parsePattern('§outer { row: { $k: ($v -> @vals<^outer>) } }');
+  // Need 'each' clause for -> to be valid
+  const ast = parsePattern('§outer { row: { each $k: ($v -> @vals<^outer>) } }');
   assert.equal(ast.label, 'outer');
   const innerObj = ast.terms[0].val;
   const flow = innerObj.terms[0].val;

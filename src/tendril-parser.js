@@ -508,13 +508,13 @@ function parseAGroup(p) {
 function parseAGroupBase(p) {
   // Base A_GROUP without quantifiers or alternation
   // Uses ordered backtracking: try each alternative, return first success.
+  // Note: $x and @x bindings are handled by parseItemTermCore (via parseItemTerm),
+  // which also handles <collecting> suffixes. Don't duplicate those cases here.
   return p.bt('arr-lookahead', () => parseLookahead(p))
       || parseParenWithBindingAndGuard(p, (p, stopTokens) => {
            const items = parseABody(p, ...stopTokens);
            return items.length === 1 ? items[0] : {type: 'Seq', items};
          })
-      || p.bt('arr-@bind', () => { p.eat('@'); return GroupBind(eatVarName(p), Quant(Any(), '*', 0, Infinity)); })
-      || p.bt('arr-$bind', () => { p.eat('$'); return SBind(eatVarName(p), Any()); })
       || parseItemTerm(p);
 }
 
@@ -713,107 +713,42 @@ function eatNonNegInt(p, context = 'quantifier') {
 
 // ---------- AST Validation ----------
 
-// Validate AST: Flow node placement and slice name conflicts
+// Validate AST: Flow/Collecting placement, scope requirements, and bucket conflicts
 function validateAST(ast, src = null) {
-  // Track slice names and their kinds to detect conflicts
-  // Map: name -> {kind: 'array'|'object', loc: {start, end}}
+  // Track slice names and their kinds to detect type conflicts (@x vs %x)
+  // Map: name -> {kind: 'array'|'object', loc}
   const sliceBindings = new Map();
 
-  // src is captured in closure - it's constant context for error messages
-  // inContainer changes during traversal - it's structural context
-  function check(node, inContainer) {
+  // Track bucket scopes to detect duplicate bucket names in different scopes
+  // Map: bucketName -> {scope: string, loc}
+  // scope is either a label name or a generated ID for implicit each scopes
+  const bucketScopes = new Map();
+
+  // Track all labels defined in the AST for forward reference checking
+  const definedLabels = new Set();
+
+  // First pass: collect all defined labels
+  function collectLabels(node) {
     if (!node || typeof node !== 'object') return;
-
-    // Check Flow nodes are inside containers and track their bucket kinds
-    if (node.type === 'Flow') {
-      if (!inContainer) {
-        const sigil = node.sliceKind === 'object' ? '%' : '@';
-        let msg = `Flow operator ->${sigil}${node.bucket} can only be used inside an object or array pattern`;
-        if (src && node.loc) {
-          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
-        }
-        throw new Error(msg);
-      }
-      // Track bucket slice kind
-      checkSliceConflict(node.bucket, node.sliceKind || 'object', node.loc);
+    if ((node.type === 'Obj' || node.type === 'Arr') && node.label) {
+      definedLabels.add(node.label);
     }
-
-    // Check Collecting directive nodes are inside containers and validate type enforcement
-    if (node.type === 'Collecting') {
-      if (!inContainer) {
-        const sigil = node.sliceKind === 'object' ? '%' : '@';
-        let msg = `<collecting> directive can only be used inside an object or array pattern`;
-        if (src && node.loc) {
-          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
-        }
-        throw new Error(msg);
+    // Recurse
+    for (const key of Object.keys(node)) {
+      const val = node[key];
+      if (Array.isArray(val)) {
+        for (const item of val) collectLabels(item);
+      } else if (val && typeof val === 'object') {
+        collectLabels(val);
       }
-      // Type enforcement: k:v form requires %bucket, value-only form requires @bucket
-      if (node.collectExpr.key !== undefined && node.sliceKind !== 'object') {
-        let msg = `key:value collection requires %bucket (object slice), not @bucket`;
-        if (src && node.loc) {
-          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
-        }
-        throw new Error(msg);
-      }
-      if (node.collectExpr.key === undefined && node.sliceKind !== 'array') {
-        let msg = `value-only collection requires @bucket (array slice), not %bucket`;
-        if (src && node.loc) {
-          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
-        }
-        throw new Error(msg);
-      }
-      // Track bucket slice kind
-      checkSliceConflict(node.bucket, node.sliceKind, node.loc);
-    }
-
-    // Check GroupBind slice kinds
-    if (node.type === 'GroupBind') {
-      checkSliceConflict(node.name, node.sliceKind || 'array', node.loc);
-    }
-
-    // Obj and Arr establish container context
-    const inChild = inContainer || node.type === 'Obj' || node.type === 'Arr';
-
-    // Recurse into children based on node type
-    switch (node.type) {
-      case 'Obj':
-        for (const term of node.terms || []) check(term, inChild);
-        if (node.spread) check(node.spread, inChild);
-        break;
-      case 'Arr':
-        for (const item of node.items || []) check(item, inChild);
-        break;
-      case 'OTerm':
-        check(node.key, inChild);
-        check(node.val, inChild);
-        for (const bc of node.breadcrumbs || []) check(bc.key, inChild);
-        break;
-      case 'Alt':
-        for (const alt of node.alts || []) check(alt, inChild);
-        break;
-      case 'Quant':
-      case 'Look':
-      case 'SBind':
-      case 'GroupBind':
-      case 'Flow':
-      case 'Collecting':
-      case 'Guarded':
-        check(node.pat || node.sub, inChild);
-        break;
-      case 'Seq':
-        for (const item of node.items || []) check(item, inChild);
-        break;
-      case 'OGroup':
-        for (const g of node.groups || []) check(g, inChild);
-        break;
-      case 'SlicePattern':
-        check(node.content, true); // Slice patterns are container-like
-        break;
     }
   }
+  collectLabels(ast);
 
-  // Check for slice name conflicts (same name with different kinds)
+  // Counter for generating unique implicit scope IDs for each clauses
+  let implicitScopeCounter = 0;
+
+  // Check for slice type conflicts (same name with different kinds)
   function checkSliceConflict(name, kind, loc) {
     const existing = sliceBindings.get(name);
     if (existing) {
@@ -831,7 +766,167 @@ function validateAST(ast, src = null) {
     }
   }
 
-  check(ast, false);
+  // Check for bucket scope conflicts (same bucket name in different scopes)
+  function checkBucketScope(bucketName, scope, loc, sigil) {
+    const existing = bucketScopes.get(bucketName);
+    if (existing) {
+      if (existing.scope !== scope) {
+        let msg = `Bucket name conflict: '${sigil}${bucketName}' used in different scopes`;
+        if (src && loc) {
+          msg += `\n  at: ${src.slice(loc.start, loc.end)}`;
+        }
+        if (src && existing.loc) {
+          msg += `\n  previously at: ${src.slice(existing.loc.start, existing.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+    } else {
+      bucketScopes.set(bucketName, {scope, loc});
+    }
+  }
+
+  // Main validation traversal
+  // ctx contains: {inContainer, implicitScope (ID of enclosing each clause, or null)}
+  function check(node, ctx) {
+    if (!node || typeof node !== 'object') return;
+
+    const {inContainer, implicitScope} = ctx;
+
+    // Check Flow nodes
+    if (node.type === 'Flow') {
+      if (!inContainer) {
+        const sigil = node.sliceKind === 'object' ? '%' : '@';
+        let msg = `Flow operator ->${sigil}${node.bucket} can only be used inside an object or array pattern`;
+        if (src && node.loc) {
+          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+
+      // Determine scope for this bucket
+      let scope;
+      const sigil = node.sliceKind === 'object' ? '%' : '@';
+      if (node.labelRef) {
+        // Explicit label reference
+        if (!definedLabels.has(node.labelRef)) {
+          let msg = `Flow operator ->${sigil}${node.bucket}<^${node.labelRef}> references unknown label '${node.labelRef}'`;
+          if (src && node.loc) {
+            msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
+          }
+          throw new Error(msg);
+        }
+        scope = `label:${node.labelRef}`;
+      } else {
+        // Implicit scope: must be inside an each clause
+        if (implicitScope === null) {
+          let msg = `Flow operator ->${sigil}${node.bucket} requires enclosing 'each' clause (or explicit <^label>)`;
+          if (src && node.loc) {
+            msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
+          }
+          throw new Error(msg);
+        }
+        scope = `implicit:${implicitScope}`;
+      }
+
+      checkSliceConflict(node.bucket, node.sliceKind || 'object', node.loc);
+      checkBucketScope(node.bucket, scope, node.loc, sigil);
+    }
+
+    // Check Collecting directive nodes
+    if (node.type === 'Collecting') {
+      if (!inContainer) {
+        const sigil = node.sliceKind === 'object' ? '%' : '@';
+        let msg = `<collecting> directive can only be used inside an object or array pattern`;
+        if (src && node.loc) {
+          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+
+      // Type enforcement: k:v form requires %bucket, value-only form requires @bucket
+      if (node.collectExpr.key !== undefined && node.sliceKind !== 'object') {
+        let msg = `key:value collection requires %bucket (object slice), not @bucket`;
+        if (src && node.loc) {
+          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+      if (node.collectExpr.key === undefined && node.sliceKind !== 'array') {
+        let msg = `value-only collection requires @bucket (array slice), not %bucket`;
+        if (src && node.loc) {
+          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+
+      // Check label exists
+      if (!definedLabels.has(node.labelRef)) {
+        let msg = `<collecting> references unknown label '${node.labelRef}'`;
+        if (src && node.loc) {
+          msg += `\n  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+
+      const sigil = node.sliceKind === 'object' ? '%' : '@';
+      const scope = `label:${node.labelRef}`;
+      checkSliceConflict(node.bucket, node.sliceKind, node.loc);
+      checkBucketScope(node.bucket, scope, node.loc, sigil);
+    }
+
+    // Check GroupBind slice kinds
+    if (node.type === 'GroupBind') {
+      checkSliceConflict(node.name, node.sliceKind || 'array', node.loc);
+    }
+
+    // Determine child context
+    const inChild = inContainer || node.type === 'Obj' || node.type === 'Arr';
+
+    // Recurse into children based on node type
+    switch (node.type) {
+      case 'Obj':
+        for (const term of node.terms || []) check(term, {inContainer: inChild, implicitScope});
+        if (node.spread) check(node.spread, {inContainer: inChild, implicitScope});
+        break;
+      case 'Arr':
+        for (const item of node.items || []) check(item, {inContainer: inChild, implicitScope});
+        break;
+      case 'OTerm':
+        check(node.key, {inContainer: inChild, implicitScope});
+        // For each clauses (strong=true), create a new implicit scope for the value
+        if (node.strong) {
+          const newScope = `each_${implicitScopeCounter++}`;
+          check(node.val, {inContainer: inChild, implicitScope: newScope});
+        } else {
+          check(node.val, {inContainer: inChild, implicitScope});
+        }
+        for (const bc of node.breadcrumbs || []) check(bc.key, {inContainer: inChild, implicitScope});
+        break;
+      case 'Alt':
+        for (const alt of node.alts || []) check(alt, {inContainer: inChild, implicitScope});
+        break;
+      case 'Quant':
+      case 'Look':
+      case 'SBind':
+      case 'GroupBind':
+      case 'Flow':
+      case 'Collecting':
+      case 'Guarded':
+        check(node.pat || node.sub, {inContainer: inChild, implicitScope});
+        break;
+      case 'Seq':
+        for (const item of node.items || []) check(item, {inContainer: inChild, implicitScope});
+        break;
+      case 'OGroup':
+        for (const g of node.groups || []) check(g, {inContainer: inChild, implicitScope});
+        break;
+      case 'SlicePattern':
+        check(node.content, {inContainer: true, implicitScope}); // Slice patterns are container-like
+        break;
+    }
+  }
+
+  check(ast, {inContainer: false, implicitScope: null});
 }
 
 // ---------- Exports ----------

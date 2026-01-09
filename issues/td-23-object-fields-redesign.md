@@ -26,6 +26,8 @@ All of the above 'consume' all matching keys, for the purpose of commuting the r
 - 'K:V else !' is a hard-coded expression in the grammar. 
 - The idiom 'K:V1 else V2 else V3 else !' is merely the strong field clause, with V:='V1 else V2 else V3'. (Not sure if this is true.)
 
+Backward compatibility is not required because nobody is using this language yet. Retire the "else !" form and update docs and tests.
+
 ### New design
 
 This is only a change in spelling, not a change in semantics.
