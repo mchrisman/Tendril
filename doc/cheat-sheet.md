@@ -96,22 +96,29 @@ Tendril("{/a.*/: $x}").match({ab: 1, xyz: 2}).solutions().first()
 // => {x: 1}
 ```
 
-### Object Implication (`: else !`)
+### Each Clause (validate all)
 
 ```javascript
-Tendril("{/a.*/: 1 else !}").match({ab: 1, ac: 1}).hasMatch()
+// each K:V - for all keys matching K, value must match V
+Tendril("{ each /a.*/: 1 }").match({ab: 1, ac: 1}).hasMatch()
 // => true (all /a.*/ keys have value 1)
 
-Tendril("{/a.*/: 1 else !}").match({ab: 1, ac: 2}).hasMatch()
+Tendril("{ each /a.*/: 1 }").match({ab: 1, ac: 2}).hasMatch()
 // => false (ac:2 is a "bad entry" - key matches but value doesn't)
 
-// Universal equality idiom
-Tendril("{/a.*/: $x, /a.*/: $x else !}").match({ab: 1, ac: 1}).hasMatch()
-// => true (all /a.*/ values equal)
+Tendril("{ each /a.*/: 1 }").match({}).hasMatch()
+// => false (There must be at least one.)
 
-Tendril("{/a.*/: $x, /a.*/: $x else !}").match({ab: 1, ac: 2}).hasMatch()
-// => false (values differ)
-```
+Tendril("{ each /a.*/: 1 ? }").match({}).hasMatch()
+// => true ('?' is a shorthand for #{0,}  instead of the default #{1,})
+
+Tendril("{ each /a.*/: 1 else 2 }").match({ab: 1, ac: 3}).hasMatch()
+// => false (`3` does not match `1 else 2`).
+
+Tendril("{ each /a.*/: $x }").match({a1: 1, a2: 2}).hasMatch()
+// => true (Variables are *not* required to unify across keys. Hint: the keyword is "each", not "all".)
+// If you want to assert that all the values are the same, you can use this idiomatic pattern: `{ /a.*/: $x, each /a.*/: $x }`. (Todo, provide linear-time alternative.)
+
 
 ### Object Remainder
 

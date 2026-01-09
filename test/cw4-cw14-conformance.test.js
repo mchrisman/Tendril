@@ -2,7 +2,7 @@
  * CW4/CW14 Conformance Tests
  *
  * Tests for:
- * - CW4: `else !` strong semantics (replacement for `:>`)
+ * - CW4: `each K:V` strong semantics (for all k~K, v must match V)
  * - CW14: `->` bucket accumulation and categorization
  *
  * Run with: node --test test/cw4-cw14-conformance.test.js
@@ -29,23 +29,23 @@ test('CW14: basic categorization into buckets by value', () => {
   assert.deepEqual(result.rest, {c:2});
 });
 
-test('CW4: strong semantics via else !', () => {
+test('CW4: strong semantics via each', () => {
   const ok   = {a:1, b:1};
   const bad  = {a:1, b:2};
 
   assert.ok(
-    Tendril("{ /[ab]/:1 else ! }").match(ok).hasMatch()
+    Tendril("{ each /[ab]/:1 }").match(ok).hasMatch()
   );
 
   assert.ok(
-    !Tendril("{ /[ab]/:1 else ! }").match(bad).hasMatch()
+    !Tendril("{ each /[ab]/:1 }").match(bad).hasMatch()
   );
 });
 
 test('CW14 + CW4: categorize then validate exhaustively', () => {
   const data = {a:1, b:2, c:3};
 
-  const pat = "{ /[abc]/:(1->%ones else 2->%twos else 3->%threes) else ! }";
+  const pat = "{ each /[abc]/:(1->%ones else 2->%twos else 3->%threes) }";
 
   const sol = Tendril(pat).match(data).solutions().first();
 
@@ -128,12 +128,12 @@ test('CW16: nested categorization using labels', () => {
   assert.deepEqual(sol.rows, {row1: {a:1, b:2}, row2: {a:1}});
 });
 
-test('CW4: strong + optional (else !?)', () => {
+test('CW4: strong + optional (each K:V ?)', () => {
   const empty = {};
   const ok    = {a:1};
   const bad   = {a:2};
 
-  const pat = "{ a:1 else !? }";
+  const pat = "{ each a:1 ? }";
 
   assert.ok(Tendril(pat).match(empty).hasMatch());
   assert.ok(Tendril(pat).match(ok).hasMatch());

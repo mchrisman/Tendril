@@ -2,12 +2,12 @@
  * Object Semantics V2 Test Suite
  *
  * Tests for the new slice-based object matching model:
- * - K:V         = slice exists, bad entries allowed
- * - K:V else !  = slice exists, no bad entries (strong semantics)
- * - K:V?        = optional (no existence assertion)
- * - K:V else !? = strong + optional (no existence, no bad entries)
- * - %           = remainder (keys not covered by any key pattern)
- * - %#{0}       = closed object (no remainder allowed)
+ * - K:V        = slice exists, bad entries allowed
+ * - each K:V   = slice exists, no bad entries (strong semantics)
+ * - K:V?       = optional (no existence assertion)
+ * - each K:V ? = strong + optional (no existence, no bad entries)
+ * - %          = remainder (keys not covered by any key pattern)
+ * - %#{0}      = closed object (no remainder allowed)
  *
  * Run with: node --test test/object-semantics-v2.test.js
  */
@@ -62,35 +62,35 @@ test('K:V with wildcard key - slice semantics', () => {
   assert.ok(!matches('{_:1}', {a: 2})); // No key has value 1
 });
 
-// ==================== K:V else ! (strong semantics - no bad entries) ====================
+// ==================== each K:V (strong semantics - no bad entries) ====================
 
-test('K:V else ! with literal key - same as K:V for unique keys', () => {
+test('each K:V with literal key - same as K:V for unique keys', () => {
   // For literal keys, there's at most one matching key, so no ambiguity
-  assert.ok(matches('{a:1 else !}', {a: 1}));
-  assert.ok(!matches('{a:1 else !}', {a: 2}));
-  assert.ok(!matches('{a:1 else !}', {})); // Existence still required
-  assert.ok(matches('{a:1 else !}', {a: 1, b: 2})); // Extra keys allowed (not covered by 'a')
+  assert.ok(matches('{each a:1}', {a: 1}));
+  assert.ok(!matches('{each a:1}', {a: 2}));
+  assert.ok(!matches('{each a:1}', {})); // Existence still required
+  assert.ok(matches('{each a:1}', {a: 1, b: 2})); // Extra keys allowed (not covered by 'a')
 });
 
-test('K:V else ! with regex key - forbids bad entries', () => {
-  // {/a.*/:1 else !} means "all keys matching /a.*/ must have value 1"
-  assert.ok(matches('{/a.*/:1 else !}', {ab: 1}));
-  assert.ok(matches('{/a.*/:1 else !}', {ab: 1, ac: 1}));
+test('each K:V with regex key - forbids bad entries', () => {
+  // {each /a.*/:1} means "all keys matching /a.*/ must have value 1"
+  assert.ok(matches('{each /a.*/:1}', {ab: 1}));
+  assert.ok(matches('{each /a.*/:1}', {ab: 1, ac: 1}));
 
   // This should FAIL: ac:2 is a bad entry (key matches /a.*/ but value != 1)
-  assert.ok(!matches('{/a.*/:1 else !}', {ab: 1, ac: 2}),
-    'K:V else ! should forbid bad entries (key matches but value differs)');
+  assert.ok(!matches('{each /a.*/:1}', {ab: 1, ac: 2}),
+    'each K:V should forbid bad entries (key matches but value differs)');
 
   // Keys not matching /a.*/ are fine (they're in %, not bad)
-  assert.ok(matches('{/a.*/:1 else !}', {ab: 1, xyz: 99}));
+  assert.ok(matches('{each /a.*/:1}', {ab: 1, xyz: 99}));
 });
 
-test('K:V else ! with wildcard key - all values must match', () => {
-  // {_:1 else !} means "all keys must have value 1"
-  assert.ok(matches('{_:1 else !}', {a: 1}));
-  assert.ok(matches('{_:1 else !}', {a: 1, b: 1}));
-  assert.ok(!matches('{_:1 else !}', {a: 1, b: 2})); // b:2 is bad
-  assert.ok(!matches('{_:1 else !}', {})); // Existence still required
+test('each K:V with wildcard key - all values must match', () => {
+  // {each _:1} means "all keys must have value 1"
+  assert.ok(matches('{each _:1}', {a: 1}));
+  assert.ok(matches('{each _:1}', {a: 1, b: 1}));
+  assert.ok(!matches('{each _:1}', {a: 1, b: 2})); // b:2 is bad
+  assert.ok(!matches('{each _:1}', {})); // Existence still required
 });
 
 // ==================== K:V? (optional - no existence assertion) ====================
@@ -115,24 +115,24 @@ test('K:V? for binding without assertion', () => {
   assert.ok(result2 === null || result2.x === undefined);
 });
 
-// ==================== K:V else !? (strong + optional - no bad, no existence) ====================
+// ==================== each K:V ? (strong + optional - no bad, no existence) ====================
 
-test('K:V else !? - no existence required, but no bad entries allowed', () => {
-  // {a:1 else !?} means "if any 'a' key exists, its value must be 1; but 'a' doesn't have to exist"
-  assert.ok(matches('{a:1 else !?}', {}), 'K:V else !? should match empty object');
-  assert.ok(matches('{a:1 else !?}', {a: 1}), 'K:V else !? should match when condition satisfied');
-  assert.ok(!matches('{a:1 else !?}', {a: 2}), 'K:V else !? should reject bad entries');
-  assert.ok(matches('{a:1 else !?}', {b: 99}), 'K:V else !? should allow unrelated keys');
+test('each K:V ? - no existence required, but no bad entries allowed', () => {
+  // {each a:1 ?} means "if any 'a' key exists, its value must be 1; but 'a' doesn't have to exist"
+  assert.ok(matches('{each a:1 ?}', {}), 'each K:V ? should match empty object');
+  assert.ok(matches('{each a:1 ?}', {a: 1}), 'each K:V ? should match when condition satisfied');
+  assert.ok(!matches('{each a:1 ?}', {a: 2}), 'each K:V ? should reject bad entries');
+  assert.ok(matches('{each a:1 ?}', {b: 99}), 'each K:V ? should allow unrelated keys');
 });
 
-test('K:V else !? with regex key - validate without requiring existence', () => {
+test('each K:V ? with regex key - validate without requiring existence', () => {
   // "If any keys match /secret/, their values must match /^\\*+$/"
   // This is useful for validation: "no plaintext secrets allowed"
-  assert.ok(matches('{/secret/:/^\\*+$/ else !?}', {}));
-  assert.ok(matches('{/secret/:/^\\*+$/ else !?}', {name: 'Alice'}));
-  assert.ok(matches('{/secret/:/^\\*+$/ else !?}', {secret: '***'}));
-  assert.ok(!matches('{/secret/:/^\\*+$/ else !?}', {secret: 'plaintext'}));
-  assert.ok(!matches('{/secret/:/^\\*+$/ else !?}', {api_secret: 'exposed'}));
+  assert.ok(matches('{each /secret/:/^\\*+$/ ?}', {}));
+  assert.ok(matches('{each /secret/:/^\\*+$/ ?}', {name: 'Alice'}));
+  assert.ok(matches('{each /secret/:/^\\*+$/ ?}', {secret: '***'}));
+  assert.ok(!matches('{each /secret/:/^\\*+$/ ?}', {secret: 'plaintext'}));
+  assert.ok(!matches('{each /secret/:/^\\*+$/ ?}', {api_secret: 'exposed'}));
 });
 
 // ==================== % (%) ====================
@@ -233,8 +233,8 @@ test('binding key and value together', () => {
   assert.equal(result.v, 42);
 });
 
-test('binding with else ! still works', () => {
-  const result = extract('{$k:$v else !}', {foo: 42});
+test('binding with each still works', () => {
+  const result = extract('{each $k:$v}', {foo: 42});
   assert.ok(result);
   assert.equal(result.k, 'foo');
   assert.equal(result.v, 42);

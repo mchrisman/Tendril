@@ -249,11 +249,11 @@ Each field clause `K:V` defines a **slice**: the set of the object's properties 
 | Short form | Meaning |
 |------------|---------|
 | `K:V`      | At least one matching k:v pair exists |
-| `K:V else !` | At least one matching k:v pair exists, AND no bad entries (all keys matching K must have values matching V) |
+| `each K:V` | At least one matching k:v pair exists, AND no bad entries (all keys matching K must have values matching V) |
 | `K:V?`     | No existence requirement (use for optional binding) |
-| `K:V else !?` | No bad entries allowed (but key doesn't need to exist) |
+| `each K:V ?` | No bad entries allowed (but key doesn't need to exist) |
 
-The `else !` suffix triggers **strong semantics**: if a key matches K, its value MUST match V, or the pattern fails.
+The `each` keyword triggers **strong semantics**: if a key matches K, its value MUST match V, or the pattern fails.
 
 ```javascript
 { a: 1 }            // matches {"a":1} and {"a":1, "b":2}
@@ -262,16 +262,16 @@ The `else !` suffix triggers **strong semantics**: if a key matches K, its value
 { /a.*/: 1 }        // matches {"ab":1, "ac":2}
                    // At least one /a.*/ key with value 1 (bad entries allowed)
 
-{ /a.*/: 1 else ! } // does NOT match {"ab":1, "ac":2}
+{ each /a.*/: 1 }   // does NOT match {"ab":1, "ac":2}
                    // "ac":2 is a bad entry (key matches /a.*/, value doesn't match 1)
 
-{ /a.*/: 1 else ! } // matches {"ab":1, "xyz":99}
+{ each /a.*/: 1 }   // matches {"ab":1, "xyz":99}
                    // "xyz" doesn't match /a.*/, so it's not a bad entry
 
 { a: 1 ? }           // matches {} and {"a":1} and {"a":2}
                    // No existence requirement - just for binding
 
-{ a: 1 else ! }     // matches {"a":1} and {"a":1,"b":2}, but NOT {"a":2}
+{ each a: 1 }       // matches {"a":1} and {"a":1,"b":2}, but NOT {"a":2}
                    // 'a' must exist with value 1; 'b' is uncovered, irrelevant.
 ```
 
@@ -355,7 +355,7 @@ Negation uses lookahead syntax:
 
 ```
 { (! a:1) }           // key 'a' must not have value 1
-{ (! a: 1 else !?) }  // if 'a' exists, its value must not be 1.
+{ (! each a: 1 ?) }   // if 'a' exists, its value must not be 1.
 { (! a:1 b:2) }       // can't have BOTH a:1 and b:2 (one is OK)
 { (! a:1) (! b:2) }  // can't have a:1 AND can't have b:2
 ```
@@ -596,13 +596,13 @@ The `->` operator collects matching key-value pairs into **buckets** during obje
 // %captured = {x: ['apple', 'b'], y: ['avocado', 'b']}
 ```
 
-**Strong semantics with `else !`:**
+**Strong semantics with `each`:**
 
 ```javascript
-{ $k: 1 -> %ones else 2 -> %twos else ! }  // FAIL if any value is neither 1 nor 2
+{ each $k: (1 -> %ones else 2 -> %twos) }  // FAIL if any value is neither 1 nor 2
 ```
 
-The `else !` triggers **strong semantics**: every key must match one of the preceding branches, or the pattern fails.
+The `each` keyword triggers **strong semantics**: every key must match one of the value alternatives, or the pattern fails.
 
 **Backtracking safety:** If a branch fails after the `->` has been reached, the bucket entry is rolled back. Only successful complete matches contribute to buckets.
 
@@ -711,18 +711,18 @@ Lookaheads test conditions without consuming data:
 
 ### "Same-values" idiom
 
-❌ `K:V else !` does not mean all values are the same; it merely means all values (individually) match V.
+❌ `each K:V` does not mean all values are the same; it merely means all values (individually) match V.
 
 ```
     // Does not demand that all the colors are the same.
-    "{ (/color/ as $k): $c else ! }" matches {backgroundColor:"green", color:"white"}
+    "{ each (/color/ as $k): $c }" matches {backgroundColor:"green", color:"white"}
     // => Solutions = [{k:"backgroundColor", c:"green"}, {k:"color",c:"white"}]
 ```
 
 ✅ Use this idiom to enforce universal equality over values:
 
 ```
-    "{ (/color/ as $k):$c  (/color/ as $k): $c else ! }"
+    "{ (/color/ as $k):$c  each (/color/ as $k): $c }"
 ```
 
 It works because variables unify across terms.
@@ -742,7 +742,7 @@ In objects, a positive lookahead does not contribute to the computation of the r
 
 ```
 { (! secret:_) }              // assert no key named 'secret' exists
-{ (! secret: yes else !) }    // assert no key named 'secret' exists, or some secret key does not have value "yes"
+{ (! each secret: yes) }      // assert no key named 'secret' exists, or some secret key does not have value "yes"
 
 ```
 
@@ -1127,16 +1127,12 @@ O_GROUP :=
       O_LOOKAHEAD
     | '(' O_GROUP* ')'                         # OGroup node
     | '(' O_GROUP* 'as' S_OBJGROUP ')'         # group binding in object context (uses %)
-    | STRONG_O_TERM O_KV_OPT?                  # try strong first (with 'else !')
-    | O_TERM O_KV_OPT?                         # then weak
+    | 'each' O_TERM O_KV_OPT?                  # strong semantics (no bad entries allowed)
+    | O_TERM O_KV_OPT?                         # weak semantics
 
 O_LOOKAHEAD :=
       '(?' O_GROUP ')'
     | '(!' O_GROUP ')'
-
-# Strong O_TERM: triggers strong semantics (no bad entries allowed)
-# The 'else !' suffix replaces the deprecated ':>' operator.
-STRONG_O_TERM := O_TERM 'else' '!'
 
 # Breadcrumb paths
 O_TERM :=
@@ -1148,9 +1144,9 @@ VALUE := ITEM
 
 # Object field semantics:
 # K:V          = weak: at least one k~K with v~V; bad entries (k~K, NOT v~V) allowed
-# K:V else !   = strong: at least one k~K with v~V; bad entries forbidden
+# each K:V     = strong: at least one k~K with v~V; bad entries forbidden
 # K:V?         = weak + optional: no existence requirement
-# K:V else !?  = strong + optional: no existence requirement, but bad entries forbidden
+# each K:V ?   = strong + optional: no existence requirement, but bad entries forbidden
 # V -> %bucket = flow k:v pairs into bucket; V -> @bucket = flow values only (accumulates, does not unify)
 
 # KV quantifier counts the slice (not the bad set). Defaults are semantic, not syntactic.
@@ -1209,14 +1205,14 @@ Bare variables are shorthand: `$x` ≡ `(_ as $x)`, `@x` ≡ `(_* as @x)`.
 
 Each field clause defines both a **slice** (the set of object fields that satisfy both k~K and v~V) and a set denoted by **bad** (k~K AND NOT(v~V)).
 
-In the following short forms, `else !` signifies "no bad values" (strong semantics: k~K => v~V), and `?` signifies that the key is optional:
+In the following short forms, `each` signifies "no bad values" (strong semantics: k~K => v~V), and `?` signifies that the key is optional:
 
 | Short form | Equivalent long form | Meaning |
 |------------|----------------------|---------|
 | `K:V`      | `K:V  #{1,} bad#{0,}`  | At least one matching k,v |
-| `K:V else !` | `K:V  #{1,} bad#{0}` | At least one matching k,v, and no bad values |
+| `each K:V` | `K:V  #{1,} bad#{0}` | At least one matching k,v, and no bad values |
 | `K:V?`     | `K:V  #{0,} bad#{0,}`  | No existence requirement (use for binding) |
-| `K:V else !?` | `K:V  #{0,} bad#{0}` | No bad values |
+| `each K:V ?` | `K:V  #{0,} bad#{0}` | No bad values |
 
 > Note: The "Equivalent long form" column uses `bad#{...}` as notation to describe semantics, not actual syntax.
 
@@ -1257,27 +1253,27 @@ Each field clause selects a **witness** — one key-value pair where both K and 
 // Two solutions: {x:1} and {x:2} — one witness each
 ```
 
-**`else !` with unbound variables:**
+**`each` with unbound variables:**
 
-When V contains an unbound variable like `$x`, matching V against a value *binds* `$x`. This means the value is in the slice, not the bad set. Therefore `else !` is not a "universal equality" operator — it means "no bad entries exist," where bad means "fails to match the field clause's value pattern":
+When V contains an unbound variable like `$x`, matching V against a value *binds* `$x`. This means the value is in the slice, not the bad set. Therefore `each` is not a "universal equality" operator — it means "no bad entries exist," where bad means "fails to match the field clause's value pattern":
 
 ```javascript
-{ /a.*/: $x else ! }  matching {a1:1, a2:2}
+{ each /a.*/: $x }  matching {a1:1, a2:2}
 // Succeeds with two solutions: {x:1} and {x:2}
 // Each value matches $x (by binding), so no bad entries
 
-{ /a.*/: 1 else ! }   matching {a1:1, a2:2}
+{ each /a.*/: 1 }   matching {a1:1, a2:2}
 // Fails — a2:2 is a bad entry (2 doesn't match 1)
 ```
 
-**Universal equality idiom:** To enforce that all matching keys have the same value, bind first, then use `else !` with the bound variable:
+**Universal equality idiom:** To enforce that all matching keys have the same value, bind first, then use `each` with the bound variable:
 
 ```javascript
-{ /a.*/:$x  /a.*/: $x else ! }  matching {a1:1, a2:2}
+{ /a.*/:$x  each /a.*/: $x }  matching {a1:1, a2:2}
 // Fails — first clause binds x, second requires ALL /a.*/
 // values to match that x. With x=1, a2:2 is a bad entry.
 
-{ /a.*/:$x  /a.*/: $x else ! }  matching {a1:1, a2:1}
+{ /a.*/:$x  each /a.*/: $x }  matching {a1:1, a2:1}
 // Succeeds with x=1 — all values match
 ```
 
@@ -1366,27 +1362,25 @@ The `->` operator composes naturally with `else`. There is no special "categoriz
 
 For each value, try V1 first; if it matches, flow into @bucket1. Otherwise try V2, etc. The `else` ensures mutual exclusivity.
 
-### Strong semantics with `else !`
+### Strong semantics with `each`
 
-The pattern `K:V else !` replaces `K:>V`. It triggers **strong semantics**: every k matching K must have a value matching V, or the pattern fails.
+The `each K:V` syntax triggers **strong semantics**: every k matching K must have a value matching V, or the pattern fails.
 
 ```
 { K: V }           // weak: at least one k~K with v~V; other k's may have non-matching v's
-{ K: V else ! }    // strong: all k~K must have v~V (replaces K:>V)
+{ each K: V }      // strong: all k~K must have v~V
 ```
-
-This allows retiring the `:>` operator while preserving its semantics in a more compositional form.
 
 ### Categorization patterns
 
 | Pattern | Meaning |
 |---------|---------|
 | `K: V1->%a else V2->%b` | Collect matching k:v's into buckets; non-matching k's ignored; require at least one match |
-| `K: V1->%a else V2->%b else !` | Collect matching k:v's; **fail** if any k doesn't match V1 or V2 |
+| `each K: (V1->%a else V2->%b)` | Collect matching k:v's; **fail** if any k doesn't match V1 or V2 |
 | `K: V1->%a else V2->%b else _->%rest` | Collect **all** k:v's (complete coverage) |
 | `K: V else _` | At least one match; silently ignore non-matching k's (no collection) |
 
-**Note:** `{ K:V else _->%bad }` collects non-matching values but never fails. Use `else !` if you want validation.
+**Note:** `{ K:V else _->%bad }` collects non-matching values but never fails. Use `each` if you want validation.
 
 ### Unpopulated buckets
 

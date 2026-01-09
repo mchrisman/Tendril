@@ -599,7 +599,9 @@ function parseRemainderQuant(p) {
 }
 
 function parseOGroup(p) {
-  // O_GROUP := '(?' O_GROUP ')' | '(!' O_GROUP ')' | '(' O_GROUP* ')' | '(' O_GROUP* 'as' '%' IDENT ')' | O_TERM
+  // O_GROUP := '(?' O_GROUP ')' | '(!' O_GROUP ')' | '(' O_GROUP* ')' | '(' O_GROUP* 'as' '%' IDENT ')'
+  //          | 'each' O_TERM '?'?
+  //          | O_TERM '?'?
   // Uses ordered backtracking.
 
   // Lookahead
@@ -626,17 +628,16 @@ function parseOGroup(p) {
   });
   if (groupPlain) return groupPlain;
 
-  // O_TERM with possible 'else !' suffix and '?' suffix (legacy - prefer 'each' for new code)
-  const strongTerm = p.bt('obj-strong-term', () => {
+  // 'each K:V' syntax - strong field clause (for all k~K, value must match V)
+  const eachTerm = p.bt('obj-each-term', () => {
+    p.eat('each');
     const term = parseOTerm(p);
-    p.eat('else');
-    p.eat('!');
     const optional = !!p.backtrack(() => { p.eat('?'); return true; });
     const result = OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, true);
-    if (term.loc) result.loc = term.loc;  // preserve source location
+    if (term.loc) result.loc = term.loc;
     return result;
   });
-  if (strongTerm) return strongTerm;
+  if (eachTerm) return eachTerm;
 
   const term = parseOTerm(p);
   const optional = !!p.backtrack(() => { p.eat('?'); return true; });

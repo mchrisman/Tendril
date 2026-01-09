@@ -72,9 +72,9 @@ test('flow with else - some keys match neither', () => {
   assert.equal(result.twos, undefined);
 });
 
-test('flow with else ! - strong semantics', () => {
-  // With else !, keys matching neither cause failure
-  const result = extract('{$k: 1 -> %ones else 2 -> %twos else !}', {a: 1, b: 3});
+test('flow with each - strong semantics', () => {
+  // With each, keys matching neither cause failure
+  const result = extract('{each $k: (1 -> %ones else 2 -> %twos)}', {a: 1, b: 3});
   assert.equal(result, null); // b:3 matches neither, fails strong semantics
 });
 
