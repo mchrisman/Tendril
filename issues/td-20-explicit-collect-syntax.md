@@ -11,125 +11,79 @@ tags: [buckets, syntax]
 
 # DESCRIPTION
 
-## CW 20
+## CW 20 - REVISED
 
-I've just realized that instead of using labels, there's a much better spelling. instead of
-`§L { $key: { name: ($n -> %names<^L>) } }`
-you could say
-`{ $key: { name: $n <collect $key:$n in %names> }}`
+Doing without the label was too subtle. We now always require the label for <collecting>. The canonical form is
 
-Note, this adopts the proposal that % is an object slice and @ is an array slice. If you only wanted to collect the values, it would be something like.
-`{ $key: { name: $n <collect $n in @names across $key>}}`
-
-If you just want to collect from the local iteration and not from a key-loop at a higher level:
-`{ _: { name: $n <collect $n in @names>}}`
-
-If you want to collect a derived value, use the EL.
-
-### **ChatGPT's response**
-
-This is a genuinely nicer *mental model* than labels: it makes the “wiring” explicit at the point of collection, and it reads like an English side-condition rather than a second scoping language. It also avoids the biggest label problem: labels are metadata you have to chase to understand what a collector is keyed by.
-
-A few thoughts on how it lands, and what I’d tweak to keep it sharp.
-
-Your first example:
-
-```tendril
-{ $key: { name: $n <collect $key:$n in %names> } }
+```
+    COLLECTING:=  '<collecting' COLLECT_EXPR ':' COLLECT_EXPR in '%' IDENT across '^' IDENT '>'
+               |  '<collecting' COLLECT_EXPR in '@' IDENT across '^' IDENT '>'
+    COLLECT_EXPR = '$' IDENT | '(' EL_EXPRESSION ')'
 ```
 
-reads well. It says: “while matching `name:$n`, also collect `$key:$n` into `%names`.” That’s much more discoverable than `-> @names<^L>` because it explains both *what* you’re collecting and *where* it goes in one place.
+where '^' IDENT references a label §IDENT higher up in the structure, and COLLECT_EXPR references bound variables. During evaluation, when §IDENT is first seen on a branch, it is initialized to an empty array or object, and *persists across downstream branches* by copying its reference rather than by deep clone. "X,Y in %foo" collects into an object slice, "Y in @foo" into an array slice.
 
-A couple of design tensions to watch:
+```
+data=
+{ a1 : { b11: {c111: 111, c112:112},
+         b12: {c121: 121, c122:122} },
 
-### 1) The angle-bracket payload is its own mini-language
+  a2 : { b21: {c211: 211, c212:212},
+         b22: {c221: 221, c222:222} } }
+         
+pattern=
+"{$a: §L {$b: {$c:$v <collecting $c:$v in %bucket across ^L>  }}}"
 
-That’s not necessarily bad, but you’ll want it to be very small and regular so it doesn’t become “second DSL.” Your proposed forms are already close to a tiny grammar:
+solutions:
+[
+   {a='a1', b='b11', c='c111', v='111', bucket={c111:'111',c112:'112',c121:'121',c122:'122'} },
+   {a='a1', b='b11', c='c112', v='112', bucket={c111:'111',c112:'112',c121:'121',c122:'122'} },
+   {a='a1', b='b12', c='c121', v='121', bucket={c111:'111',c112:'112',c121:'121',c122:'122'} },
+   {a='a1', b='b12', c='c122', v='122', bucket={c111:'111',c112:'112',c121:'121',c122:'122'} },
 
-* `<collect EXPR in TARGET (across KEYEXPR)?>`
+   // we backtrack past §L to $a, therefore a new bucket. 
+   {a='a2', b='b21', c='c211', v='211', bucket={c211:'211',c212:'212',c221:'221',c222:'222'} },
+   {a='a2', b='b21', c='c212', v='212', bucket={c211:'211',c212:'212',c221:'221',c222:'222'} },
+   {a='a2', b='b22', c='c221', v='221', bucket={c211:'211',c212:'212',c221:'221',c222:'222'} },
+   {a='a2', b='b22', c='c222', v='222', bucket={c211:'211',c212:'212',c221:'221',c222:'222'} },
+]
+  
+pattern=
+"{$a: §L {$b: {$c:$v <collecting $c:$v in @bucket across ^L>  }}}"
 
-That’s good. I’d keep it to exactly that, plus maybe one optional policy later (collisions).
+solutions:
+[
+   {a='a1', b='b11', c='c111', v='111', bucket={'111','112','121','122'} },
+   {a='a1', b='b11', c='c112', v='112', bucket={'111','112','121','122'} },
+   {a='a1', b='b12', c='c121', v='121', bucket={'111','112','121','122'} },
+   {a='a1', b='b12', c='c122', v='122', bucket={'111','112','121','122'} },
 
-### 2) “across $key” vs “collect $key:$n”
-
-You’ve shown two ways to express keying:
-
-* explicit pair: `collect $key:$n in %names`
-* implicit keying via `across`: `collect $n in @names across $key`
-
-Pick one as canonical. I’d lean toward the **explicit pair** form because it’s self-contained and doesn’t invent a new preposition:
-
-* object collector: `in %names` expects a `{k:v}` expression
-* array collector: `in @names` expects a scalar (or slice) value
-
-Then your “values only” example becomes:
-
-```tendril
-{ $key: { name: $n <collect $n in @names> } }
+   // we backtrack past §L to $a, therefore a new bucket. 
+   {a='a2', b='b21', c='c211', v='211', bucket={'211','212','221','222'} },
+   {a='a2', b='b21', c='c212', v='212', bucket={'211','212','221','222'} },
+   {a='a2', b='b22', c='c221', v='221', bucket={'211','212','221','222'} },
+   {a='a2', b='b22', c='c222', v='222', bucket={'211','212','221','222'} },
+]
 ```
 
-and if you actually want the association to the outer key while still collecting “values,” you can just collect pairs into an object-slice collector instead:
+The -> operator can go anywhere within the scope of a `each K:V` construction, and desugars "A->B" to "<collecting $k:A into B>" over the nearest such construction. Thus
 
-```tendril
-{ $key: { name: $n <collect $key:$n in %names> } }   // values keyed by $key
+```
+{ each /a/: $p->%p1 else [ [ $q->%q1 ] ] }
 ```
 
-This eliminates `across` entirely, and the reader doesn’t have to learn two keying mechanisms.
+desugars to
+'''
+§__1 { each (/a/ as $__k1) :
+    $p <collecting $__k1,$p in %p1 across §__1>,
+    else [ [ $q <collecting $__k1:$q in %q1 across §__1 ] ] }
 
-(If you truly need “array bucket per outer key” you can still model it by collecting nested objects: collect `$key:[$n]`-ish, but that’s a separate feature.)
+'''
 
-### 3) Where does it attach?
+## BOTTOM LINE
 
-You’re attaching the collect-clause after `$n`, which is nice because it’s local and reads like an annotation. But you should specify attachment rules:
-
-* It should be **zero-width** (doesn’t consume / doesn’t affect matching).
-* It should run **only on successful branches** (your rollback property).
-* It should be allowed after any ITEM, not just scalar bindings, if you want to collect derived values.
-
-If you support EL, the derived-value story is clean:
-
-```tendril
-{ $key: { name: $n <collect $key:(string($n)+"!") in %names> } }
-```
-
-### 4) This obsoletes labels in the common case
-
-Mostly, yes. Labels were doing two jobs: naming scopes and selecting which loop provides the key. Your `<collect …>` form selects the key by *expression* (`$key`) rather than by “which ancestor loop,” which is strictly more direct.
-
-You might still want labels for other things (debugging, readability, maybe future constraints), but for collection scoping, this is a big simplification.
-
-### 5) `%` vs `@` for slice type is a good clarification
-
-If `%names` is “object slice collector” and `@names` is “array slice collector,” then the target itself communicates the shape. That makes the collect syntax easier to read and to type-check.
-
----
-
-If I rewrite your three examples in the “explicit pair for objects, plain value for arrays” style (no `across`), they look like:
-
-**Collect key→value pairs into an object slice:**
-
-```tendril
-{ $key: { name: $n <collect $key:$n in %names> } }
-```
-
-**Collect values into an array slice (local loop):**
-
-```tendril
-{ _: { name: $n <collect $n in @names> } }
-```
-
-**Collect derived value:**
-
-```tendril
-{ _: { name: $n <collect string($n) in @names> } }
-```
-
-That’s extremely readable.
-
-The only missing piece is collision policy (do we fail, dedupe, append?), but you can punt that exactly the way you’ve been punting other “advanced” knobs: default to fail, and leave a future hook in the collect clause.
-
-Net: this is a strong improvement. It moves “where does this collect and what key does it use?” from an out-of-band label mechanism into a **local, intention-revealing annotation**, which is exactly the direction your whole “clarifying / affirming intent” theme has been heading.
-
-# LOG [2026-01-05T00:49:25-08:00]
-
-Opened.
+There are these forms:
+`<collecting K:V in %B across ^L>` within a substructure labeled §L
+`<collecting K:V in @B across ^L>` within a substructure labeled §L
+`<collecting V in @B across ^L>` within a substructure labeled §L
+`A->B` within the V of `{ each K:V }`, automatically takes `each K:V` as the scope and `K` as the key.

@@ -16,7 +16,10 @@
       "Bash(find:*)",
       "Bash(rg:*)",
       "Bash(xxd:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(git show:*)",
+      "Bash(git -C /Users/mchrisman/s/Tendril diff --stat)",
+      "Bash(git -C /Users/mchrisman/s/Tendril log --oneline -5)"
     ],
     "deny": [],
     "ask": []
