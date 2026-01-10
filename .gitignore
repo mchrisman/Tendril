@@ -21,3 +21,4 @@ issues/
 # AI agent config
 CLAUDE.md
 AGENT.md
+.claude/
