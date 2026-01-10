@@ -11,6 +11,7 @@
       "require": "./dist/tendril.cjs"
     }
   },
+  "types": "./src/tendril-api.d.ts",
   "files": [
     "dist",
     "src"
