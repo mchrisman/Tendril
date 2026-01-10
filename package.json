@@ -27,8 +27,11 @@
     "json",
     "graph"
   ],
-  "author": "",
+  "author": "mchrisman <githhub.9.mcw@xoxy.net>",
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "devDependencies": {
     "esbuild": "^0.19.0"
   }
