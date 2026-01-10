@@ -8,7 +8,6 @@ activate
 
 # Node
 node_modules
-package-lock.json
 
 # OS metadata
 .DS_Store
