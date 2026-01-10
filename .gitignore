@@ -15,3 +15,6 @@ package-lock.json
 
 # Temporary files
 tmp/
+
+# Local issue tracking
+issues/
