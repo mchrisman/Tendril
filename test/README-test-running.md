@@ -1,78 +1,49 @@
 # Running Tests
 
+Tests use Node's built-in test runner (`node:test`).
+
 ## Run All Tests
-
-From the project root:
-
-```bash
-./run-all
-```
-
-Or with npm:
 
 ```bash
 npm test
 ```
 
-**Output:** JSON with aggregate statistics and list of failing tests.
-
-### Verbose Output
-
-For detailed test-by-test results:
+## Run a Specific Test File
 
 ```bash
-./run-all -v
+node --test test/engine.test.js
+node --test test/else.test.js
 ```
 
-This adds a `detail` section with the status of every test.
-
-## Run Individual Test Files
+## Filter by Test Name
 
 ```bash
-node test/v5-core.test.js
-node test/residual-tracking.test.js
-# ... etc
+npm test -- --test-name-pattern="else:"
+node --test --test-name-pattern="Golden" test/golden-tests.test.js
 ```
 
-**Output:** Standard test runner output (not JSON).
-
-## Filter Tests
-
-Run tests matching a pattern:
+## Run Multiple Specific Files
 
 ```bash
-./run-all --filter "pattern"
+node --test test/engine.test.js test/else.test.js
 ```
 
-Run tests from a specific file:
+## Verbose Output
 
-```bash
-./run-all --file "v5-core.test.js"
+Node's test runner shows pass/fail for each test by default. For more detail on failures, the error messages include stack traces.
+
+## Adding New Tests
+
+Create `test/foo.test.js`:
+
+```javascript
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { Tendril } from '../src/tendril-api.js';
+
+test('description', () => {
+  // assertions
+});
 ```
 
-Run tests from a specific group:
-
-```bash
-./run-all --group "groupName"
-```
-
-## Output Format
-
-The `./run-all` script outputs JSON:
-
-```json
-{
-  "aggregate": {
-    "totalFiles": 12,
-    "passedFiles": 12,
-    "failedFiles": 0,
-    "totalTests": 134,
-    "passedTests": 133,
-    "failedTests": 0,
-    "skippedTests": 1
-  },
-  "failingTests": []
-}
-```
-
-With `-v` flag, includes a `detail` array with per-file and per-test results.
+The file will be picked up automatically by `npm test`.
