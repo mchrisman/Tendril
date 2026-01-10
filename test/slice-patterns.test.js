@@ -79,21 +79,21 @@ test('@[ ] - array slice with pattern', () => {
 test('%{ } with match() throws error', () => {
   assert.throws(
     () => Tendril('%{ a:1 }').match({a: 1}),
-    /Slice patterns.*require find\(\) or first\(\)/
+    /Slice patterns.*require.*advancedFind/
   );
 });
 
 test('@[ ] with match() throws error', () => {
   assert.throws(
     () => Tendril('@[ 1 2 ]').match([1, 2, 3]),
-    /Slice patterns.*require find\(\) or first\(\)/
+    /Slice patterns.*require.*advancedFind/
   );
 });
 
 test('%{ } with hasMatch() throws error', () => {
   assert.throws(
     () => Tendril('%{ a:1 }').hasMatch({a: 1}),
-    /Slice patterns.*require find\(\) or first\(\)/
+    /Slice patterns.*require.*advancedFind/
   );
 });
 

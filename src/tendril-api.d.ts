@@ -166,20 +166,121 @@ export interface OccurrenceSet extends Iterable<Occurrence> {
   editAll(plan: EditPlan, opts?: EditAllOptions): JsonValue;
 }
 
+// ==================== Simple API ====================
+
+/** Location result from InMatcher.locations() */
+export interface Location {
+  path: (string | number)[];
+  fragment: JsonValue;
+  bindings: Record<string, JsonValue>;
+}
+
+/** Replacement value or function that computes replacement from bindings */
+export type Replacement = JsonValue | ((bindings: Record<string, JsonValue>) => JsonValue);
+
+/** Mutation plan: object mapping variable names to values/functions, or function returning such object */
+export type Mutation =
+  | Record<string, JsonValue | ((bindings: Record<string, JsonValue>) => JsonValue)>
+  | ((bindings: Record<string, JsonValue>) => Record<string, JsonValue>);
+
+/**
+ * Simple API for anchored matching.
+ * @example
+ * Tendril("{name: $x}").on({name: "Alice"}).solve()
+ * // => {x: "Alice"}
+ */
+export interface OnMatcher {
+  /** Boolean: does the pattern match the data at root? */
+  test(): boolean;
+
+  /**
+   * First solution as a plain object, or null if no match.
+   * Empty object {} means "matched but no bindings".
+   */
+  solve(): Record<string, JsonValue> | null;
+
+  /** All solutions as an array of plain objects. */
+  allSolutions(): Record<string, JsonValue>[];
+
+  /**
+   * Replace the entire match.
+   * @param replacement - value or function (bindings) => value
+   */
+  replace(replacement: Replacement): JsonValue;
+
+  /**
+   * Mutate (surgically edit) specific bindings.
+   * @param mutation - {varName: value|fn, ...} or function (bindings) => {...}
+   */
+  mutate(mutation: Mutation): JsonValue;
+}
+
+/**
+ * Simple API for searching within data.
+ * @example
+ * Tendril("{name: $n}").in(data).locations()
+ * // => [{path: [...], fragment: {...}, bindings: {n: "Alice"}}, ...]
+ */
+export interface InMatcher {
+  /** Count of matching occurrences. */
+  count(): number;
+
+  /**
+   * Array of {path, fragment, bindings} for each occurrence.
+   * Uses first solution per occurrence (with warning if multiple solutions).
+   */
+  locations(): Location[];
+
+  /**
+   * Replace all occurrences.
+   * @param replacement - value or function (bindings) => value
+   */
+  replace(replacement: Replacement): JsonValue;
+
+  /**
+   * Mutate (surgically edit) specific bindings across all occurrences.
+   * @param mutation - {varName: value|fn, ...} or function (bindings) => {...}
+   */
+  mutate(mutation: Mutation): JsonValue;
+}
+
 // ==================== Pattern ====================
 
 export interface Pattern {
-  /**
-   * Match pattern at the root (anchored).
-   * @param data - Data to match against
-   */
-  match(data: JsonValue): OccurrenceSet;
+  // ==================== Simple API ====================
 
   /**
-   * Find all matches at any depth.
+   * Simple anchored matching API.
+   * @param data - Data to match against
+   * @example
+   * Tendril("{name: $x}").on({name: "Alice"}).solve()
+   * // => {x: "Alice"}
+   */
+  on(data: JsonValue): OnMatcher;
+
+  /**
+   * Simple search-within API.
+   * @param data - Data to search
+   * @example
+   * Tendril("{name: $n}").in(data).locations()
+   */
+  in(data: JsonValue): InMatcher;
+
+  // ==================== Advanced API ====================
+
+  /**
+   * Advanced: Match pattern at the root (anchored).
+   * Returns OccurrenceSet for fine-grained control.
+   * @param data - Data to match against
+   */
+  advancedMatch(data: JsonValue): OccurrenceSet;
+
+  /**
+   * Advanced: Find all matches at any depth.
+   * Returns OccurrenceSet for fine-grained control.
    * @param data - Data to search
    */
-  find(data: JsonValue): OccurrenceSet;
+  advancedFind(data: JsonValue): OccurrenceSet;
 
   /**
    * Find first match only (optimized).
@@ -210,6 +311,18 @@ export interface Pattern {
    * @param listener - Debug listener object
    */
   debug(listener: DebugListener): Pattern;
+
+  // ==================== Legacy Aliases (deprecated) ====================
+
+  /**
+   * @deprecated Use advancedMatch() instead
+   */
+  match(data: JsonValue): OccurrenceSet;
+
+  /**
+   * @deprecated Use advancedFind() instead
+   */
+  find(data: JsonValue): OccurrenceSet;
 }
 
 // ==================== Options ====================

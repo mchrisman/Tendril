@@ -938,6 +938,156 @@ class FilteredSolutionSet {
   }
 }
 
+// ------------------- Simple API wrappers (OnMatcher, InMatcher) -------------------
+
+/**
+ * OnMatcher: Simple API for anchored matching.
+ * pattern.on(data).test() / .solve() / .allSolutions() / .replace() / .mutate()
+ */
+class OnMatcher {
+  constructor(pattern, data) {
+    this._pattern = pattern;
+    this._data = data;
+    this._occSet = null; // lazy
+  }
+
+  _getOccSet() {
+    if (!this._occSet) {
+      this._occSet = this._pattern.advancedMatch(this._data);
+    }
+    return this._occSet;
+  }
+
+  /** Boolean: does the pattern match the data at root? */
+  test() {
+    return this._pattern.hasMatch(this._data);
+  }
+
+  /**
+   * First solution as a plain object, or null if no match.
+   * Empty object {} means "matched but no bindings".
+   */
+  solve() {
+    const occSet = this._getOccSet();
+    const sol = occSet.solutions().first();
+    return sol ? sol.toObject() : null;
+  }
+
+  /** All solutions as an array of plain objects. */
+  allSolutions() {
+    const occSet = this._getOccSet();
+    const out = [];
+    for (const sol of occSet.solutions()) {
+      out.push(sol.toObject());
+    }
+    return out;
+  }
+
+  /**
+   * Replace the entire match.
+   * @param replacement - value or function (bindings) => value
+   */
+  replace(replacement) {
+    const occSet = this._getOccSet();
+    if (!occSet.hasMatch()) return this._data;
+    return occSet.replaceAll(replacement, {mutate: false});
+  }
+
+  /**
+   * Mutate (edit in place) specific bindings.
+   * @param mutation - {varName: value|fn, ...} or function (bindings) => {...}
+   */
+  mutate(mutation) {
+    const occSet = this._getOccSet();
+    if (!occSet.hasMatch()) return this._data;
+    return occSet.editAll(mutation, {mutate: false}); // still pure; "mutate" refers to surgical edits
+  }
+}
+
+/**
+ * InMatcher: Simple API for searching within data.
+ * pattern.in(data).count() / .locations() / .replace() / .mutate()
+ */
+class InMatcher {
+  constructor(pattern, data) {
+    this._pattern = pattern;
+    this._data = data;
+    this._occSet = null; // lazy
+  }
+
+  _getOccSet() {
+    if (!this._occSet) {
+      this._occSet = this._pattern.advancedFind(this._data);
+    }
+    return this._occSet;
+  }
+
+  /** Count of matching occurrences. */
+  count() {
+    return this._getOccSet().count();
+  }
+
+  /**
+   * Array of {path, fragment, bindings} for each occurrence.
+   * Uses first solution per occurrence (with warning if multiple solutions).
+   */
+  locations() {
+    const occSet = this._getOccSet();
+    const results = [];
+
+    for (const occ of occSet) {
+      const sols = [...occ.solutions()];
+      if (sols.length > 1) {
+        console.warn(
+          `Tendril: occurrence at path ${JSON.stringify(occ.path())} has ${sols.length} solutions; ` +
+          `using first. Consider refining your pattern for deterministic results.`
+        );
+      }
+
+      const firstSol = sols[0] || null;
+      results.push({
+        path: occ.path(),
+        fragment: occ.value(),
+        bindings: firstSol ? firstSol.toObject() : {}
+      });
+    }
+
+    return results;
+  }
+
+  /**
+   * Replace all occurrences.
+   * @param replacement - value or function (bindings) => value
+   */
+  replace(replacement) {
+    const occSet = this._getOccSet();
+    if (!occSet.hasMatch()) return this._data;
+
+    // Warn if any occurrence has multiple solutions
+    for (const occ of occSet) {
+      const solCount = [...occ.solutions()].length;
+      if (solCount > 1) {
+        console.warn(
+          `Tendril: occurrence at path ${JSON.stringify(occ.path())} has ${solCount} solutions; ` +
+          `using first for replacement. Consider refining your pattern.`
+        );
+      }
+    }
+
+    return occSet.replaceAll(replacement, {mutate: false});
+  }
+
+  /**
+   * Mutate (surgically edit) specific bindings across all occurrences.
+   * @param mutation - {varName: value|fn, ...} or function (bindings) => {...}
+   */
+  mutate(mutation) {
+    const occSet = this._getOccSet();
+    if (!occSet.hasMatch()) return this._data;
+    return occSet.editAll(mutation, {mutate: false});
+  }
+}
+
 // ------------------- Pattern class (Tendril(pattern)) -------------------
 
 class PatternImpl {
@@ -975,14 +1125,34 @@ class PatternImpl {
     return opts;
   }
 
+  // ==================== Simple API ====================
+
   /**
-   * match(data): anchored match at the root.
+   * on(data): Simple anchored matching API.
+   * Returns OnMatcher with .test(), .solve(), .allSolutions(), .replace(), .mutate()
+   */
+  on(input) {
+    return new OnMatcher(this, input);
+  }
+
+  /**
+   * in(data): Simple search-within API.
+   * Returns InMatcher with .count(), .locations(), .replace(), .mutate()
+   */
+  in(input) {
+    return new InMatcher(this, input);
+  }
+
+  // ==================== Advanced API ====================
+
+  /**
+   * advancedMatch(data): anchored match at the root.
    * Returns an OccurrenceSet (possibly empty; at most one occurrence: []).
    */
-  match(input) {
+  advancedMatch(input) {
     const ast = this._getAst();
     if (ast._isSlicePattern) {
-      throw new Error('Slice patterns (@{ } and @[ ]) require find() or first(), not match()');
+      throw new Error('Slice patterns (@{ } and @[ ]) require advancedFind() or first(), not advancedMatch()');
     }
     const rawSolutions = engineMatch(ast, input, this._buildOpts());
     const groups = groupByZeroPath(rawSolutions);
@@ -990,15 +1160,19 @@ class PatternImpl {
   }
 
   /**
-   * find(data): scan for matches at any depth.
+   * advancedFind(data): scan for matches at any depth.
    * Returns an OccurrenceSet over all occurrences.
    */
-  find(input) {
+  advancedFind(input) {
     const ast = this._getAst();
     const rawSolutions = engineScan(ast, input, this._buildOpts());
     const groups = groupByZeroPath(rawSolutions);
     return new OccurrenceSet(input, groups);
   }
+
+  // Legacy aliases for backwards compatibility (will be deprecated)
+  match(input) { return this.advancedMatch(input); }
+  find(input) { return this.advancedFind(input); }
 
   /**
    * first(data): first occurrence only (scan + stop).
@@ -1018,7 +1192,7 @@ class PatternImpl {
   hasMatch(input) {
     const ast = this._getAst();
     if (ast._isSlicePattern) {
-      throw new Error('Slice patterns (@{ } and @[ ]) require find() or first(), not match()/hasMatch()');
+      throw new Error('Slice patterns (@{ } and @[ ]) require in() or advancedFind(), not on()/advancedMatch()/hasMatch()');
     }
     return engineMatchExists(ast, input, this._buildOpts());
   }
