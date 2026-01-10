@@ -9,7 +9,7 @@ Tendril combines structural patterns (like regex), path navigation (like jq or J
 
 ## Status
 
-**Beta.** Tendril’s core engine and semantics are stable. API and tooling are still evolving.
+**Beta.** Backward compatibility is not guaranteed.
 
 Performance: The engine uses symbol unification to prune branches early, avoiding unnecessary traversals. Performance is reasonable for development and testing, untried at large scale.
 
