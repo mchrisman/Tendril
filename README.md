@@ -359,7 +359,7 @@ Commas between clauses are optional. Multiple clauses can match the same key-val
 { /a|b/:/x/ /b|c/:/y/ }  // matches {"b":"xy"} - "b":"xy" satisfies both field clauses
 ```
 Field clauses are evaluated left-to-right, so bindings from earlier clauses are
-visible to later ones.
+visible to later ones. (Also, Tendril treats object property order as meaningful (like an ordered map). If two objects have the same keys/values but different insertion order, they may match differently.)
 
 ### Categorization and the -> operator
 
