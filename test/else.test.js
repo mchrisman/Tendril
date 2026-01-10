@@ -359,3 +359,74 @@ test('else: negative lookahead does not leak bindings', () => {
   assert.equal(sols[0].y, 1);
   assert.equal(sols[0].x, undefined); // x should NOT be bound (negative lookahead)
 });
+
+// =============================================================================
+// Edge cases from proposal-safe-else.md
+// =============================================================================
+
+test('else: local bindings do not leak outside else', () => {
+  // If neither $a nor $b appears outside the else, they shouldn't be in solutions
+  // (Testing that branch-local vars stay local)
+  const sols = solutions('(((1 as $a)) else ((1 as $b)))', 1);
+  assert.equal(sols.length, 1);
+  assert.equal(sols[0].a, 1); // A wins, so $a is bound
+  assert.equal(sols[0].b, undefined); // B never tried, so $b not bound
+});
+
+test('else: losing branch bindings do not appear', () => {
+  // When B wins, A's bindings should not appear
+  const sols = solutions('(((2 as $a)) else ((3 as $b)))', 3);
+  assert.equal(sols.length, 1);
+  assert.equal(sols[0].a, undefined); // A failed, no binding
+  assert.equal(sols[0].b, 3); // B succeeded
+});
+
+test('else: interface bindings do leak (join variable survives)', () => {
+  // $x is used both inside and outside the else
+  const sols = solutions('{ p:(1 as $x)  q:(($x) else 2) }', {p: 1, q: 1});
+  assert.equal(sols.length, 1);
+  assert.equal(sols[0].x, 1); // $x survives and is visible
+});
+
+test('else: B used when A has no solutions for given interface', () => {
+  // A pattern ($x=1) has no solutions when data is 2
+  const sols = solutions('((1 as $x) else (2 as $x))', 2);
+  assert.equal(sols.length, 1);
+  assert.equal(sols[0].x, 2);
+});
+
+test('else: multiple A-solutions all used, B excluded', () => {
+  // A produces multiple solutions (matching multiple keys)
+  // B should not be used for any key that A matched
+  const data = {a: 1, b: 1, c: 2};
+  const sols = solutions('{ (_ as $k): ((1 as $v) else (2 as $v)) }', data);
+  // a:1 and b:1 match A, c:2 matches B
+  assert.equal(sols.length, 3);
+  const aMatch = sols.find(s => s.k === 'a');
+  const bMatch = sols.find(s => s.k === 'b');
+  const cMatch = sols.find(s => s.k === 'c');
+  assert.equal(aMatch.v, 1);
+  assert.equal(bMatch.v, 1);
+  assert.equal(cMatch.v, 2);
+});
+
+test('else: disjoint A and B projections yield union', () => {
+  // [1, 2] with pattern that matches 1 via A and 2 via B
+  const sols = solutions('[... ((1 as $x) else (2 as $x)) ...]', [1, 2]);
+  assert.equal(sols.length, 2);
+  assert.ok(sols.some(s => s.x === 1));
+  assert.ok(sols.some(s => s.x === 2));
+});
+
+test('else: short-circuit hasMatch prefers A', () => {
+  // Both A and B match, but hasMatch should use A (and be fast)
+  const result = Tendril('((2 as $x) else (2 as $y))').match(2).hasMatch();
+  assert.equal(result, true);
+});
+
+test('else: matchFirst returns A-branch solution', () => {
+  // When both A and B could match, first() should return A's solution
+  const sol = Tendril('((2 as $x) else (2 as $y))').match(2).solutions().first();
+  assert.equal(sol.x, 2);
+  assert.equal(sol.y, undefined); // A won, B not tried
+});

@@ -1,9 +1,17 @@
 
 # Tendril: Pattern Matching for Tree Structures
 
+Express joins and transformations over nested data without flattening it.
+
+Tendril combines structural patterns (like regex), path navigation (like jq or JSONPath), and relational joins (like SQL) into a single model—so you can relate values across a nested structure without writing traversal code or flattening data first.
+
+---
+
 ## Status
 
-**Beta** - subject to change.
+**Beta.** Tendril’s core engine and semantics are stable. API and tooling are still evolving.
+
+Performance: The engine uses symbol unification to prune branches early, avoiding unnecessary traversals. Performance is reasonable for development and testing, untried at large scale.
 
 ---
 # Core Concepts
@@ -210,6 +218,41 @@ Tendril borrows quantifiers from regex, applying them to array elements rather t
 {m,n}, {m,}, {m}   // specific repetitions (greedy, nonpossessive)
 
 ...                // lazy wildcard group (equivalent to _*?)
+
+### Anchoring
+
+```
+
+[ a b ]        ~= ["a","b"]
+[ a b ]       !~= ["a","b","c"]
+[ a b ... ]    ~= ["a","b","c"]       // yes, "..." is the actual syntax
+
+{ b:_  c:_ }   ~= { b:1, c:2 } // every kv assertion satisfied
+{ b:_      }   ~= { b:1, c:2 } // every kv assertion satisfied
+{ b:_  c:_ }  !~= { b:1 } // unsatisfied assertion
+{ b:_  c?:_ }   ~= { b:1 } // optional assertion
+
+{ b:_  % }   ~= { a:1, c:2, Z:1 } // remainder % represents all key-value pairs where the keys did not match any of the assertions
+
+{ /[ab]/:_  /[ad]/:_ }   ~= { a:1 } // kv assertions can overlap
+{ /[ab]/:_  /[ad]/:_ }  !~= { d:1 }
+
+{ b:_  (% as %s) }   ~= { a:1, c:2, Z:1 } // Extracting the set of KV pairs that were not matched by the assertions:  $s = { 'c':2, 'Z':1 }
+
+```
+
+```
+
+a b c // *Three* patterns in sequence (only allowed in an array context)
+[ a b c ]                  // *One* pattern: an Array with three items
+
+[ a ( b c )*2 ]  === [a b c b c ]      // ( ) indicates mere grouping (not a substructure)
+[ a [ b c ]*2 ]  === [a [b c] [b c] ]  // [ ] indicates an Array
+
+a:b c:d e:f // *Three* unordered key/value assertions
+// (only allowed in an object/map context)
+{ a:b c:d e:f } // *One* pattern: an object with three assertions
+
 ```
 
 Parentheses group elements for operators:
@@ -225,6 +268,41 @@ The `|` operator creates alternatives (all matches enumerated). The `else` opera
 ```javascript
 [1 (2|3) 4]            // matches [1,2,4] and [1,3,4] — both alternatives
 [1 (2 else 3) 4]       // matches [1,2,4] (if 2 matches) or [1,3,4] (only if 2 fails)
+```
+
+
+### `else` Semantics (Prioritized Choice)
+
+`(A else B)` is a **prioritized disjunction**: B is tried only when A produces no solutions. Once A succeeds for given bindings, B is never tried—even if A's solutions fail to join with later terms.
+
+**Key properties:**
+
+1. **Local-first evaluation**: The choice between A and B is made based on bindings available when the `else` is evaluated, not globally.
+
+2. **No resurrection**: If A matches but later terms fail, we do NOT backtrack to try B. The `else` decision is committed.
+
+3. **Order-dependent**: Because bindings flow left-to-right, field order in objects affects which branch wins:
+   ```javascript
+   { p:$x  q:($x else 2) }  // p binds x=1, then q: $x≠2, so B(2) used → succeeds
+   { q:($x else 2)  p:$x }  // q first: $x unbound, A matches, x=2; p: x=2≠1 → fails
+   ```
+
+4. **Bindings from winning branch only**: Variables bound in A don't appear if B wins, and vice versa:
+   ```javascript
+   ((_ as $a) else (_ as $b))  // if A wins, $b is undefined; if B wins, $a is undefined
+   ```
+
+**Common patterns:**
+
+```javascript
+// Schema versioning: prefer new format
+({ version:2 data:$d } else { legacy_data:$d })
+
+// Default values: try specific, fall back to wildcard
+($x else (_ as $x))
+
+// Categorization with flow operator
+{ $k: (valid -> %good) else (invalid -> %bad) }
 ```
 
 Quantifiers bind tighter than adjacency. Lookaheads test without consuming:
@@ -373,14 +451,11 @@ You cannot use both '@x' and '$x' in the same pattern.  (The JS API treats them 
 `$x` (without the pattern) is short for `(_ as $x)`, and `@x` is short for `(_* as @x)`.  
 
 ```
-Tendril("[3 4 $x $y]").match([3,4,5,6])  // one match, with bindings {x:5, y:6}
-Tendril("[3 4 $x]").match([3,4,5,6])     // Does not match; scalar $x must match exactly one element
-Tendril("[3 4 @x]").match([3,4,5,6])     // one match, with {x:[5,6]} interpreted as a slice because x is a group variable
-Tendril("[3 4 $x]").match([3,4,[5,6]])   // one match, with {x:[5,6]} interpreted as a single item because x is a scalar
-
-Tendril("[$x @y]").match([3,4,5,6])      // one match, with {x:3, y:[4,5,6]}
-Tendril("[@x @y]").match([3,4,5,6])      // five matches, {x:[], y:[3,4,5,6]}, {x:[3], y:[4,5,6]}, {x:[3,4], y:[5,6]}, etc.
-
+[ .. $x .. ] ~= ['a','b']       // [{x:'a'},{x:'b'}]
+[ $x .. ]    ~= ['a','b']       // [{x:'a'}]
+[ @x .. ]    ~= ['a','b']       // [{x:[]},{x:['a']},{x:['a','b']}]
+[ $x @y ]    ~= [[1,2],[3,4]]   // {x:[1,2], y:[[3,4]]}
+[ @x @y ]    ~= [[1,2],[3,4]]   // 3 solutions (different splits)
 ```
 The type of variable matters **when performing replacements/edits**:
 ```
@@ -756,7 +831,7 @@ In objects, a positive lookahead does not contribute to the computation of the r
 4. Adjacency/commas (in arrays and objects)
 5. Alternation `|`, prioritized choice `else`
 6. Flow operator `->`
-7. Key-value separator `:`
+7. Key-value separator `:`, '?:'
 
 Parentheses override precedence. Lookaheads always require parentheses.
 

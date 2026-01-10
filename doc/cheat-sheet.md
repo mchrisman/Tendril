@@ -1,12 +1,5 @@
 # Tendril Cheat Sheet
 
-**Pattern matching for tree structures.** Match patterns against JSON-like data, extract values with variables, and transform structures. Variables unify across the pattern—if `$x` appears twice, both occurrences must match the same value. This enables relational joins across nested data.
-
-**Two contexts:** Arrays match positionally (like regex). Objects use field clauses that assert key-value pairs exist. Variables prefixed with `$` capture single values; `@` captures array groups (subsequences); `%` captures object groups (key-value subsets).
-
-**Core API:** `Tendril(pattern).match(data)` matches at root. `.find(data)` searches recursively. Both return an OccurrenceSet with `.solutions()` for variable bindings and `.editAll({...})` for transformations.
-
----
 
 ### Variables and Unification
 
@@ -35,6 +28,41 @@ Tendril("{users[$i].id: $uid, orders[$j].user_id: $uid, orders[$j].item: $item}"
   .match({users: [{id: 1}], orders: [{user_id: 1, item: "laptop"}]})
   .solutions().first()
 // => {i: 0, j: 0, uid: 1, item: "laptop"}
+```
+
+## Sequences and Containers
+
+```
+a b c                      // *Three* patterns in sequence (only allowed in an array context)
+[ a b c ]                  // *One* pattern: an Array with three items
+
+[ a ( b c )*2 ]  === [a b c b c ]      // ( ) indicates mere grouping (not a substructure)
+[ a [ b c ]*2 ]  === [a [b c] [b c] ]  // [ ] indicates an Array
+
+a:b c:d e:f                // *Three* unordered key/value assertions
+                           // (only allowed in an object/map context)
+{ a:b c:d e:f }            // *One* pattern: an object with three assertions
+
+```
+
+## Anchoring
+
+```
+[ a b ]        ~= ["a","b"]
+[ a b ]       !~= ["a","b","c"]
+[ a b ... ]    ~= ["a","b","c"]       // yes, "..." is the actual syntax
+
+{ b:_  c:_ }   ~= { b:1, c:2 }        // every kv assertion satisfied
+{ b:_      }   ~= { b:1, c:2 }        // every kv assertion satisfied
+{ b:_  c:_ }  !~= { b:1 }             // unsatisfied assertion
+{ b:_  c?:_ }   ~= { b:1 }             // optional assertion
+
+{ b:_  % }   ~= { a:1, c:2, Z:1 }    // remainder % represents all key-value pairs where the keys did not match any of the assertions
+
+{ /[ab]/:_  /[ad]/:_ }   ~= { a:1 }   // kv assertions can overlap
+{ /[ab]/:_  /[ad]/:_ }  !~= { d:1 }
+
+{ b:_  (% as %s) }   ~= { a:1, c:2, Z:1 }  // Extracting the set of KV pairs that were not matched by the assertions:  $s = { 'c':2, 'Z':1 }
 ```
 
 ### Array Matching
@@ -320,6 +348,13 @@ Tendril('§L { $key: { name: $n <collecting $n in @names across ^L> }}')
 
 ### Primitives and Literals
 
+```
+123                        // number literal
+true, false                // boolean literal
+"a", bareword, /regex/     // string or regex literal
+foo/i, "Foo Bar"/i         // case-insensitive string (exact match, not substring)
+_                          // wildcard (matches any single object or primitive)
+```
 ```javascript
 // Bare identifiers match strings
 Tendril("foo").match("foo").hasMatch()

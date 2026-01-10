@@ -1,4 +1,4 @@
-# TagMark Orientation
+# Tendril Orientation
 
 This document is the cold start knowledge map. It answers:
 
@@ -10,15 +10,18 @@ This document is the cold start knowledge map. It answers:
 It is *not*
 
 - A change log (see Git)
-- A backlog or to-do list (we don't have one yet)
+- A backlog or to-do list (see issues/ or Github issues)
 - A historical document (describe the *current* project only; delete obsolete info)
 
 Update this file after every change, to reflect the *current* project (as noted, this is not a historical document).
 
 ## Start here
 
-Read the full contents of README.md and src/tendril-engine.js into your context at the start of the session or after every memory compaction to enhance your contextual understanding.
+Read the full contents of README.md and doc/cheat-sheet into your context at the start of the session or after every memory compaction to enhance your contextual understanding.
 
+## Design Philosophy
+
+Functional, useful, and usable are non-negotiable goals, but the language should also have a strong and distinctive character. Aim for beauty, elegance, and the reaction "oooh, nice." When making design decisions, prefer solutions that are both powerful and delightful to use.
 
 ## General instructions
 
@@ -66,9 +69,13 @@ node test/foo.js   # Run a specific test file
 
 Tests use Node's built-in test runner (`node:test`). To add a new test file, create `test/foo.test.js` and import from `node:test` and `node:assert/strict`.
 
-### Debugging the parser
+### Debugging
 
-The parser has built-in debugging support via the `debug` option:
+Tendril has two phases: **parsing** (pattern string → AST) and **matching** (AST + data → solutions). Each has its own debugging approach.
+
+#### Debugging the Parser
+
+Use when: syntax errors, understanding how a pattern is parsed, parser performance.
 
 ```javascript
 import { parsePattern } from './src/tendril-parser.js';
@@ -92,7 +99,7 @@ try { parsePattern(src, { debug: dbg }); } catch(e) {}
 console.log(dbg.getReport());  // Shows hotspots, token count, failures
 ```
 
-Custom debug hooks (mirrors engine's ctx.debug pattern):
+Parser debug hooks:
 ```javascript
 const debug = {
   onEnter: (label, idx) => {},     // entering labeled rule
@@ -103,7 +110,44 @@ const debug = {
 };
 ```
 
-Key labeled hotspots: `parseItemTermCore`, `parseAGroupBase`, `parseOGroup`, `parseORemnant`, `parseBreadcrumb`.
+Key parser hotspots: `parseItemTermCore`, `parseAGroupBase`, `parseOGroup`, `parseORemnant`, `parseBreadcrumb`.
+
+#### Debugging the Engine/Matcher
+
+Use when: pattern doesn't match as expected, understanding variable bindings, match performance.
+
+```javascript
+import { match, scan } from './src/tendril-engine.js';
+import { parsePattern } from './src/tendril-parser.js';
+
+const ast = parsePattern('{ name: $x }');
+
+// Simple trace debugger
+const debug = {
+  onEnter: (type, node, path) => console.log(`ENTER ${type} at /${path.join('/')}`),
+  onExit: (type, node, path, matched) => console.log(`EXIT ${type} -> ${matched ? 'MATCH' : 'FAIL'}`),
+  onBind: (kind, name, value) => console.log(`BIND ${kind} $${name} = ${JSON.stringify(value)}`),
+};
+
+const solutions = match(ast, data, { debug });
+```
+
+Engine debug hooks:
+```javascript
+const debug = {
+  onEnter: (type, node, path) => {},  // entering AST node (type = node.type like 'Object', 'Scalar', etc.)
+  onExit: (type, node, path, matched) => {}, // exiting (matched = true/false)
+  onBind: (kind, name, value) => {},  // variable bound (kind = 'scalar'|'group')
+};
+```
+
+**Key differences:**
+| Aspect | Parser | Engine |
+|--------|--------|--------|
+| Input | pattern string | AST + data |
+| Output | AST | solutions (bindings) |
+| Errors | syntax errors (bad pattern) | match failures (pattern doesn't match data) |
+| Traces | grammar rules, tokens | AST nodes, bindings |
 
 ## Map
 
@@ -129,18 +173,7 @@ test/
   ...
 ```
 
-We have many `.md` documentation files that may be obsolete, tentative, or scratchpad-type notes. Ignore all of them except README.md and doc/cheat-sheet.md.
 
 ## Documentation Notes
 
 **Authoritative documentation:** README.md and doc/cheat-sheet.md
-
-**Binding syntax:** `(pattern as $x)` or `(pattern as @x)` or `(pattern as %x)`
-
-**Guard syntax:** `(pattern as $x where expr)`
-
-**Optional fields:** `K?:V` (preferred) or `K:V ?`
-
-**Case-insensitive literals:** `hello/i` or `"hello"/i`
-
-**Regex:** `/pattern/flags`
