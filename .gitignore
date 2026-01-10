@@ -1,9 +1,17 @@
+# IDE
 .idea
+*.iml
+
+# Python
 venv*
 activate
-*.iml
-build
-dist
-node_modules
-package_lock.json
 
+# Node
+node_modules
+package-lock.json
+
+# OS metadata
+.DS_Store
+
+# Temporary files
+tmp/
