@@ -17,3 +17,7 @@ tmp/
 
 # Local issue tracking
 issues/
+
+# AI agent config
+CLAUDE.md
+AGENT.md
