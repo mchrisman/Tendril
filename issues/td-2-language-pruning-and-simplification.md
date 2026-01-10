@@ -21,7 +21,7 @@ The language has got too complex and messy, and we need to prune or streamline s
 4. Retire item repetition numeric quantifiers a{m,n}. Keep the notation for greedy, lazy, possessive quantifiers, but relegate it to a footnote. Possessive is an 'advanced' escape hatch.
 5. Allow anonymous guards on wildcards: `(_ where _ % 2 == 0)` short for `(_ as $tmp where $tmp % 2 == 0)`
 6. Allow the top level pattern to be a slice, for find/edit/replace:
-
+7. See if lookaheads can be replaced with more sensible Boolean operations.
 ```
 Tendril("{ a:b }").find(data).replaceAll("X") // Cross out any object that contains key 'a'. 
 Tendril("a:b").find(data).replaceAll("X:X") // Replace only that key, not the whole object. 

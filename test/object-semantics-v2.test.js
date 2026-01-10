@@ -240,13 +240,30 @@ test('binding with each still works', () => {
   assert.equal(result.v, 42);
 });
 
-// ==================== ?: removed (should error) ====================
+// ==================== K?:V optional field syntax ====================
 
-test('?: syntax is removed', () => {
-  // Old syntax {a?:1} should no longer parse
-  assert.throws(() => {
-    Tendril('{a?:1}').match({});
-  }, /unexpected|expected|invalid/i, '?: should no longer be valid syntax');
+test('K?:V syntax for optional fields (preferred)', () => {
+  // K?:V is the preferred syntax for optional fields
+  // Matches when field is present
+  const sol1 = Tendril('{a: 1, b?: $x}').match({a: 1, b: 2}).solutions().first();
+  assert.ok(sol1);
+  assert.equal(sol1.x, 2);
+
+  // Also matches when field is absent
+  const sol2 = Tendril('{a: 1, b?: $x}').match({a: 1}).solutions().first();
+  assert.ok(sol2);
+  assert.equal(sol2.x, undefined);
+});
+
+test('K:V ? syntax also supported for optional fields', () => {
+  // K:V ? is the alternative syntax (space before ?)
+  const sol1 = Tendril('{a: 1, b: $x ?}').match({a: 1, b: 2}).solutions().first();
+  assert.ok(sol1);
+  assert.equal(sol1.x, 2);
+
+  const sol2 = Tendril('{a: 1, b: $x ?}').match({a: 1}).solutions().first();
+  assert.ok(sol2);
+  assert.equal(sol2.x, undefined);
 });
 
 console.log('\n[object-semantics-v2] Test suite defined\n');

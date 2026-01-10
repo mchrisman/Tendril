@@ -109,8 +109,8 @@ Tendril("{ each /a.*/: 1 }").match({ab: 1, ac: 2}).hasMatch()
 Tendril("{ each /a.*/: 1 }").match({}).hasMatch()
 // => false (There must be at least one.)
 
-Tendril("{ each /a.*/: 1 ? }").match({}).hasMatch()
-// => true ('?' is a shorthand for #{0,}  instead of the default #{1,})
+Tendril("{ each /a.*/?: 1 }").match({}).hasMatch()
+// => true ('?' makes the field optional, i.e. #{0,} instead of the default #{1,})
 
 Tendril("{ each /a.*/: 1 else 2 }").match({ab: 1, ac: 3}).hasMatch()
 // => false (`3` does not match `1 else 2`).
@@ -181,7 +181,7 @@ Tendril("[1 2{2,3} 3]").match([1, 2, 2, 3]).hasMatch()
 // => true
 
 // Greedy vs lazy
-Tendril("[@x=(1*) @y=(1*)]").match([1, 1]).solutions().count()
+Tendril("[((1*) as @x) ((1*) as @y)]").match([1, 1]).solutions().count()
 // => 3 (greedy matches all possibilities)
 ```
 
@@ -195,11 +195,11 @@ Tendril("{/a.*/: _#{2,4}}").match({a1: 1, a2: 2, a3: 3}).hasMatch()
 Tendril("{/a.*/: _#{5,}}").match({a1: 1, a2: 2}).hasMatch()
 // => false (only 2 keys)
 
-// Optional field
-Tendril("{a: 1, b: $x?}").match({a: 1}).solutions().first()
+// Optional field (K?:V is preferred syntax)
+Tendril("{a: 1, b?: $x}").match({a: 1}).solutions().first()
 // => {x: undefined} or similar (b doesn't exist)
 
-Tendril("{a: 1, b: $x?}").match({a: 1, b: 2}).solutions().first()
+Tendril("{a: 1, b?: $x}").match({a: 1, b: 2}).solutions().first()
 // => {x: 2}
 ```
 
@@ -229,10 +229,10 @@ Tendril("{a: (1|2)}").match({a: 1}).solutions().count()
 
 ```javascript
 // Positive lookahead (? ) - test without consuming
-Tendril("[(? $x=(/[ab]/)) $x ...]").match([2, 3]).hasMatch()
+Tendril("[(? (/[ab]/ as $x)) $x ...]").match([2, 3]).hasMatch()
 // => false (first element doesn't match /[ab]/)
 
-Tendril("[(? $x=(/[ab]/)) $x ...]").match(["a", "b"]).solutions().first()
+Tendril("[(? (/[ab]/ as $x)) $x ...]").match(["a", "b"]).solutions().first()
 // => {x: "a"}
 
 // Negative lookahead (! ) - must not match
@@ -355,26 +355,26 @@ Tendril("foo/i").match("foobar").hasMatch()
 
 ```javascript
 // Constrain bindings with boolean conditions
-Tendril("$x=(_number; $x > 100)").match(150).solutions().first()
+Tendril("(_number as $x where $x > 100)").match(150).solutions().first()
 // => {x: 150}
 
-Tendril("$x=(_number; $x > 100)").match(50).hasMatch()
+Tendril("(_number as $x where $x > 100)").match(50).hasMatch()
 // => false (50 > 100 is false)
 
 // Guards can reference multiple variables (deferred evaluation)
-Tendril("{ min: $a=(_number; $a < $b), max: $b=(_number) }")
+Tendril("{ min: (_number as $a where $a < $b), max: (_number as $b) }")
   .match({min: 1, max: 10}).hasMatch()
 // => true (guard waits for $b, then checks 1 < 10)
 
 // Available operators: < > <= >= == != && || ! + - * / %
-Tendril("$x=(_number; $x % 2 == 0)").match(4).hasMatch()
+Tendril("(_number as $x where $x % 2 == 0)").match(4).hasMatch()
 // => true (even number)
 
 // Functions: size(), number(), string(), boolean()
-Tendril("$x=(_string; size($x) >= 3)").match("hello").hasMatch()
+Tendril("(_string as $x where size($x) >= 3)").match("hello").hasMatch()
 // => true (length 5 >= 3)
 
 // Errors cause match failure (no exceptions)
-Tendril("$x=(_string; $x * 2 > 10)").match("hello").hasMatch()
+Tendril("(_string as $x where $x * 2 > 10)").match("hello").hasMatch()
 // => false (can't multiply string)
 ```

@@ -129,4 +129,18 @@ test/
   ...
 ```
 
-We have many `.md` documentation files that may be obsolete, tentative, or scratchpad-type notes. Ignore all of them except README.md.
+We have many `.md` documentation files that may be obsolete, tentative, or scratchpad-type notes. Ignore all of them except README.md and doc/cheat-sheet.md.
+
+## Documentation Notes
+
+**Authoritative documentation:** README.md and doc/cheat-sheet.md
+
+**Binding syntax:** `(pattern as $x)` or `(pattern as @x)` or `(pattern as %x)`
+
+**Guard syntax:** `(pattern as $x where expr)`
+
+**Optional fields:** `K?:V` (preferred) or `K:V ?`
+
+**Case-insensitive literals:** `hello/i` or `"hello"/i`
+
+**Regex:** `/pattern/flags`

@@ -250,8 +250,8 @@ Each field clause `K:V` defines a **slice**: the set of the object's properties 
 |------------|---------|
 | `K:V`      | At least one matching k:v pair exists |
 | `each K:V` | At least one matching k:v pair exists, AND no bad entries (all keys matching K must have values matching V) |
-| `K:V?`     | No existence requirement (use for optional binding) |
-| `each K:V ?` | No bad entries allowed (but key doesn't need to exist) |
+| `K?:V`     | No existence requirement (use for optional binding). `K:V ?` also works. |
+| `each K?:V` | No bad entries allowed (but key doesn't need to exist). `each K:V ?` also works. |
 
 The `each` keyword triggers **strong semantics**: if a key matches K, its value MUST match V, or the pattern fails.
 
@@ -268,7 +268,7 @@ The `each` keyword triggers **strong semantics**: if a key matches K, its value 
 { each /a.*/: 1 }   // matches {"ab":1, "xyz":99}
                    // "xyz" doesn't match /a.*/, so it's not a bad entry
 
-{ a: 1 ? }           // matches {} and {"a":1} and {"a":2}
+{ a?: 1 }            // matches {} and {"a":1} and {"a":2}
                    // No existence requirement - just for binding
 
 { each a: 1 }       // matches {"a":1} and {"a":1,"b":2}, but NOT {"a":2}
@@ -355,7 +355,7 @@ Negation uses lookahead syntax:
 
 ```
 { (! a:1) }           // key 'a' must not have value 1
-{ (! each a: 1 ?) }   // if 'a' exists, its value must not be 1.
+{ (! each a?: 1) }    // if 'a' exists, its value must not be 1.
 { (! a:1 b:2) }       // can't have BOTH a:1 and b:2 (one is OK)
 { (! a:1) (! b:2) }  // can't have a:1 AND can't have b:2
 ```
@@ -1145,8 +1145,8 @@ VALUE := ITEM
 # Object field semantics:
 # K:V          = weak: at least one k~K with v~V; bad entries (k~K, NOT v~V) allowed
 # each K:V     = strong: at least one k~K with v~V; bad entries forbidden
-# K:V?         = weak + optional: no existence requirement
-# each K:V ?   = strong + optional: no existence requirement, but bad entries forbidden
+# K?:V         = weak + optional: no existence requirement (K:V ? also works)
+# each K?:V    = strong + optional: no existence requirement, but bad entries forbidden
 # V -> %bucket = flow k:v pairs into bucket; V -> @bucket = flow values only (accumulates, does not unify)
 
 # KV quantifier counts the slice (not the bad set). Defaults are semantic, not syntactic.
@@ -1211,8 +1211,8 @@ In the following short forms, `each` signifies "no bad values" (strong semantics
 |------------|----------------------|---------|
 | `K:V`      | `K:V  #{1,} bad#{0,}`  | At least one matching k,v |
 | `each K:V` | `K:V  #{1,} bad#{0}` | At least one matching k,v, and no bad values |
-| `K:V?`     | `K:V  #{0,} bad#{0,}`  | No existence requirement (use for binding) |
-| `each K:V ?` | `K:V  #{0,} bad#{0}` | No bad values |
+| `K?:V`     | `K:V  #{0,} bad#{0,}`  | No existence requirement (use for binding) |
+| `each K?:V` | `K:V  #{0,} bad#{0}` | No bad values |
 
 > Note: The "Equivalent long form" column uses `bad#{...}` as notation to describe semantics, not actual syntax.
 

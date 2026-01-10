@@ -50,8 +50,8 @@ const RootKey = () => ({type: 'RootKey'}); // Special marker for leading ** in p
 const Guarded = (pat, guard) => ({type: 'Guarded', pat, guard}); // (PATTERN where EXPR) without binding
 
 // Bindings
-const SBind = (name, pat, guard = null) => ({type: 'SBind', name, pat, guard});  // $x=(pat) or $x=(pat where expr)
-const GroupBind = (name, pat, sliceKind = 'array') => ({type: 'GroupBind', name, pat, sliceKind});  // @x=(pat) for array, %x for object
+const SBind = (name, pat, guard = null) => ({type: 'SBind', name, pat, guard});  // (pat as $x) or (pat as $x where expr)
+const GroupBind = (name, pat, sliceKind = 'array') => ({type: 'GroupBind', name, pat, sliceKind});  // (pat as @x) for array, (pat as %x) for object
 const Flow = (pat, bucket, labelRef = null, sliceKind = 'object') => ({type: 'Flow', pat, bucket, labelRef, sliceKind});  // ->%bucket (k:v pairs) or ->@bucket (values only)
 // <collecting $k:$v in %bucket across ^L> or <collecting $v in @bucket across ^L>
 const Collecting = (pat, collectExpr, bucket, sliceKind, labelRef) => ({
@@ -632,7 +632,8 @@ function parseOGroup(p) {
   const eachTerm = p.bt('obj-each-term', () => {
     p.eat('each');
     const term = parseOTerm(p);
-    const optional = !!p.backtrack(() => { p.eat('?'); return true; });
+    // Optional via K?:V (from parseOTerm) or trailing K:V ?
+    const optional = term.optional || !!p.backtrack(() => { p.eat('?'); return true; });
     const result = OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, true);
     if (term.loc) result.loc = term.loc;
     return result;
@@ -640,7 +641,8 @@ function parseOGroup(p) {
   if (eachTerm) return eachTerm;
 
   const term = parseOTerm(p);
-  const optional = !!p.backtrack(() => { p.eat('?'); return true; });
+  // Optional via K?:V (from parseOTerm) or trailing K:V ?
+  const optional = term.optional || !!p.backtrack(() => { p.eat('?'); return true; });
   const result = OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, false);
   if (term.loc) result.loc = term.loc;  // preserve source location
   return result;
@@ -657,8 +659,9 @@ function parseOBodyUntil(p, ...stopTokens) {
 }
 
 function parseOTerm(p) {
-  // O_TERM := KEY BREADCRUMB* ':' VALUE O_KV_QUANT?
-  // Note: 'else !' suffix and '?' suffix are handled by parseOGroup
+  // O_TERM := KEY BREADCRUMB* '?'? ':' VALUE O_KV_QUANT?
+  // Note: 'else !' suffix and trailing '?' suffix are handled by parseOGroup
+  // The '?' before ':' (K?:V) is the preferred optional syntax
   return p.span(() => {
     // Leading ** means "start from root, match at any depth within the object".
     // Design: We peek (not eat) the ** here to set RootKey, then let parseBreadcrumb
@@ -672,11 +675,14 @@ function parseOTerm(p) {
     const breadcrumbs = [];
     for (let bc; (bc = parseBreadcrumb(p)); ) breadcrumbs.push(bc);
 
+    // Check for K?:V syntax (preferred optional field syntax)
+    const optional = !!p.maybe('?');
+
     p.eat(':');
     const val = parseItem(p);
     const quant = parseOQuant(p);
 
-    return OTerm(key, breadcrumbs, val, quant, false, false);
+    return OTerm(key, breadcrumbs, val, quant, optional, false);
   });
 }
 
