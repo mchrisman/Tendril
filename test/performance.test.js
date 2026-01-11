@@ -148,9 +148,9 @@ test('collapse adjacent equal arrays - simple case', () => {
     });
 
     // Get all solutions
-    const allSolutions = Tendril(pattern).find(data).solutions().toArray();
-    console.log(`  Total solutions: ${allSolutions.length}`);
-    allSolutions.forEach((sol, j) => {
+    const solutions = Tendril(pattern).find(data).solutions().toArray();
+    console.log(`  Total solutions: ${solutions.length}`);
+    solutions.forEach((sol, j) => {
       console.log(`    Solution ${j}: x=${JSON.stringify(sol.x)}, y=${JSON.stringify(sol.y)}`);
     });
   }

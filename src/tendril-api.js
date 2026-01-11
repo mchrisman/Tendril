@@ -942,7 +942,7 @@ class FilteredSolutionSet {
 
 /**
  * OnMatcher: Simple API for anchored matching.
- * pattern.on(data).test() / .solve() / .allSolutions() / .replace() / .mutate()
+ * pattern.on(data).test() / .solve() / .solutions() / .replace() / .mutate()
  */
 class OnMatcher {
   constructor(pattern, data) {
@@ -974,7 +974,7 @@ class OnMatcher {
   }
 
   /** All solutions as an array of plain objects. */
-  allSolutions() {
+  solutions() {
     const occSet = this._getOccSet();
     const out = [];
     for (const sol of occSet.solutions()) {
@@ -1129,7 +1129,7 @@ class PatternImpl {
 
   /**
    * on(data): Simple anchored matching API.
-   * Returns OnMatcher with .test(), .solve(), .allSolutions(), .replace(), .mutate()
+   * Returns OnMatcher with .test(), .solve(), .solutions(), .replace(), .mutate()
    */
   on(input) {
     return new OnMatcher(this, input);

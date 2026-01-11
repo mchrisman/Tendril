@@ -17,7 +17,7 @@ Update this file after every change, to reflect the *current* project (as noted,
 
 ## Start here
 
-Read the full contents of README.md and doc/cheat-sheet into your context at the start of the session or after every memory compaction to enhance your contextual understanding.
+Read the full contents of README.md and doc/core.md into your context at the start of the session or after every memory compaction to enhance your contextual understanding.
 
 ## Design Philosophy
 
@@ -176,4 +176,16 @@ test/
 
 ## Documentation Notes
 
-**Authoritative documentation:** README.md and doc/cheat-sheet.md
+**Authoritative documentation hierarchy:**
+
+- `README.md` — Project intro, quick examples, links
+- `doc/core.md` — Core language (10 minutes, 80% use cases)
+- `doc/advanced.md` — Advanced features (groups, guards, quantifiers)
+- `doc/arcane.md` — Expert features (lookaheads, labels, collecting)
+- `doc/reference.md` — Full grammar, detailed semantics
+- `doc/design.md` — Philosophy, language levels, roadmap
+
+**API Levels:**
+
+- Simple API: `.on(data)` and `.in(data)` — returns plain objects
+- Advanced API: `advancedMatch()` and `advancedFind()` — returns rich objects with full control

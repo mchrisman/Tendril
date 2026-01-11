@@ -200,7 +200,7 @@ export interface OnMatcher {
   solve(): Record<string, JsonValue> | null;
 
   /** All solutions as an array of plain objects. */
-  allSolutions(): Record<string, JsonValue>[];
+  solutions(): Record<string, JsonValue>[];
 
   /**
    * Replace the entire match.

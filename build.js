@@ -1,5 +1,5 @@
 import * as esbuild from 'esbuild';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -7,6 +7,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8'));
+
+// List all source files
+const sourceFiles = readdirSync(join(__dirname, 'src'))
+  .filter(f => f.endsWith('.js'))
+  .map(f => `src/${f}`);
+
+console.log('📦 Source files:');
+sourceFiles.forEach(f => console.log(`  • ${f}`));
+console.log('');
 
 const sharedConfig = {
   entryPoints: ['src/tendril-api.js'],

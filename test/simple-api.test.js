@@ -28,8 +28,8 @@ test('on().solve() returns empty object for match without bindings', () => {
   assert.deepEqual(result, {});
 });
 
-test('on().allSolutions() returns array of plain objects', () => {
-  const result = Tendril('{a: (1|2)}').on({a: 1}).allSolutions();
+test('on().solutions() returns array of plain objects', () => {
+  const result = Tendril('{a: (1|2)}').on({a: 1}).solutions();
   assert.ok(Array.isArray(result));
   assert.equal(result.length, 1);
 });

@@ -3,6 +3,7 @@
  * Structural pattern matching + relational logic for JSON-like graphs
  * @license MIT
  */
+"use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -36,6 +37,11 @@ __export(tendril_api_exports, {
 module.exports = __toCommonJS(tendril_api_exports);
 
 // src/tendril-util.js
+function sameValueZero(a, b) {
+  if (a === b)
+    return true;
+  return Number.isNaN(a) && Number.isNaN(b);
+}
 function deepEqual(a, b) {
   if (a === b)
     return true;
@@ -44,7 +50,7 @@ function deepEqual(a, b) {
   if (typeof a !== typeof b)
     return false;
   if (typeof a !== "object")
-    return Object.is(a, b);
+    return sameValueZero(a, b);
   if (Array.isArray(a)) {
     if (!Array.isArray(b))
       return false;
@@ -76,11 +82,11 @@ function tokenize(src) {
   const toks = [];
   let i = 0;
   const push = (k, v, len) => {
-    toks.push({ k, v, pos: i });
+    toks.push({ k, v, pos: i, len });
     i += len;
   };
   const reWS = /\s+/y;
-  const reNum = /\d+/y;
+  const reNum = /-?\d+(\.\d+)?/y;
   const reId = /[A-Za-z_][A-Za-z0-9_]*/y;
   while (i < src.length) {
     reWS.lastIndex = i;
@@ -110,30 +116,49 @@ function tokenize(src) {
       }
       if (src[j] !== q)
         throw syntax(`unterminated string`, src, i);
-      push("str", out, j + 1 - i);
+      const strEnd = j + 1;
+      if (src.slice(strEnd, strEnd + 2) === "/i") {
+        push("ci", { lower: out.toLowerCase(), desc: src.slice(i, strEnd + 2) }, strEnd + 2 - i);
+      } else {
+        push("str", out, strEnd - i);
+      }
       continue;
     }
     if (c === "/" && src[i + 1] !== "/") {
-      let found = false;
-      for (let j = i + 1; j < src.length && !found; ) {
-        j = src.indexOf("/", j);
-        if (j < 0)
+      let j = i + 1, inClass = false;
+      while (j < src.length) {
+        const ch = src[j];
+        if (ch === "\\") {
+          j += 2;
+        } else if (ch === "[") {
+          inClass = true;
+          j++;
+        } else if (ch === "]" && inClass) {
+          inClass = false;
+          j++;
+        } else if (ch === "/" && !inClass) {
           break;
-        let k = j + 1;
-        while (k < src.length && /[a-z]/i.test(src[k]))
-          k++;
-        const pattern = src.slice(i + 1, j);
-        const flags = src.slice(j + 1, k);
-        try {
-          new RegExp(pattern, flags);
-          push("re", { source: pattern, flags }, k - i);
-          found = true;
-        } catch {
+        } else {
           j++;
         }
       }
-      if (!found)
-        throw syntax(`unterminated or invalid regex`, src, i);
+      if (j >= src.length)
+        throw syntax(`unterminated regex literal`, src, i);
+      const pattern = src.slice(i + 1, j);
+      j++;
+      const flagStart = j;
+      while (j < src.length && /[a-z]/i.test(src[j]))
+        j++;
+      const flags = src.slice(flagStart, j);
+      try {
+        new RegExp(pattern, flags);
+      } catch (e) {
+        throw syntax(`invalid regex: /${pattern}/${flags}`, src, i);
+      }
+      if (flags.includes("g") || flags.includes("y")) {
+        throw syntax(`Regex flags 'g' and 'y' are not allowed (found /${pattern}/${flags})`, src, i);
+      }
+      push("re", { source: pattern, flags }, j - i);
       continue;
     }
     reNum.lastIndex = i;
@@ -146,8 +171,24 @@ function tokenize(src) {
     if (reId.test(src)) {
       const j = reId.lastIndex;
       const w = src.slice(i, j);
+      if (src.slice(j, j + 2) === "/i") {
+        push("ci", { lower: w.toLowerCase(), desc: src.slice(i, j + 2) }, j + 2 - i);
+        continue;
+      }
       if (w === "_") {
         push("any", "_", j - i);
+        continue;
+      }
+      if (w === "_string") {
+        push("any_string", "_string", j - i);
+        continue;
+      }
+      if (w === "_number") {
+        push("any_number", "_number", j - i);
+        continue;
+      }
+      if (w === "_boolean") {
+        push("any_boolean", "_boolean", j - i);
         continue;
       }
       if (w === "true") {
@@ -162,27 +203,42 @@ function tokenize(src) {
         push("null", null, j - i);
         continue;
       }
+      if (w[0] === "_") {
+        throw syntax(`identifiers cannot start with underscore: ${w}`, src, i);
+      }
       push("id", w, j - i);
       continue;
     }
-    if (c3 === "(?=") {
-      push("(?=", "(?=", 3);
+    if (c2 === "(?") {
+      push("(?", "(?", 2);
       continue;
     }
-    if (c3 === "(?!") {
-      push("(?!", "(?!", 3);
+    if (c2 === "(!") {
+      push("(!", "(!", 2);
       continue;
     }
-    if (c2 === "..") {
-      push("..", "..", 2);
+    if (c3 === "...") {
+      push("...", "...", 3);
       continue;
     }
-    if (c2 === "?:") {
-      push("?:", "?:", 2);
+    if (c === "\u2026") {
+      push("...", "...", 1);
+      continue;
+    }
+    if (c2 === "**") {
+      push("**", "**", 2);
+      continue;
+    }
+    if (c2 === "->") {
+      push("->", "->", 2);
       continue;
     }
     if (c2 === "??") {
       push("??", "??", 2);
+      continue;
+    }
+    if (c2 === "?+") {
+      push("?+", "?+", 2);
       continue;
     }
     if (c2 === "++") {
@@ -201,7 +257,31 @@ function tokenize(src) {
       push("*?", "*?", 2);
       continue;
     }
-    const single = "[](){}:,.$@=|*+?!-#".includes(c) ? c : null;
+    if (c2 === "<=") {
+      push("<=", "<=", 2);
+      continue;
+    }
+    if (c2 === ">=") {
+      push(">=", ">=", 2);
+      continue;
+    }
+    if (c2 === "==") {
+      push("==", "==", 2);
+      continue;
+    }
+    if (c2 === "!=") {
+      push("!=", "!=", 2);
+      continue;
+    }
+    if (c2 === "&&") {
+      push("&&", "&&", 2);
+      continue;
+    }
+    if (c2 === "||") {
+      push("||", "||", 2);
+      continue;
+    }
+    const single = "()[]{}<>:,.$@=|*+?!-#%&\xA7^".includes(c) ? c : null;
     if (single) {
       push(single, single, 1);
       continue;
@@ -244,12 +324,14 @@ ${caret}`);
   return err;
 }
 var Parser = class {
-  constructor(src, tokens = tokenize(src)) {
+  constructor(src, tokens = tokenize(src), opts = {}) {
     this.src = src;
     this.toks = tokens;
     this.i = 0;
     this._cut = null;
-    this.farthest = { i: 0, exp: /* @__PURE__ */ new Set() };
+    this.debug = opts.debug || null;
+    this.ctxStack = [];
+    this.farthest = { i: 0, exp: /* @__PURE__ */ new Set(), ctx: null, attempts: [] };
   }
   // --- cursor
   atEnd() {
@@ -275,11 +357,13 @@ var Parser = class {
   }
   // eat specific kind/value; when kind omitted, consumes current
   eat(kind, msg) {
+    var _a, _b;
     const t = this.toks[this.i];
     if (!t)
       return this.fail(msg || `unexpected end of input`);
     if (kind && !(t.k === kind || t.v === kind))
       return this.fail(msg || `expected ${kind}`);
+    (_b = (_a = this.debug) == null ? void 0 : _a.onEat) == null ? void 0 : _b.call(_a, t, this.i);
     this.i++;
     return t;
   }
@@ -310,26 +394,159 @@ var Parser = class {
     this._cut = m.cut;
   }
   fail(msg = "syntax error") {
-    var _a;
+    var _a, _b, _c;
     if (this.i >= this.farthest.i) {
-      const set = new Set(this.farthest.exp);
-      set.add(msg);
-      this.farthest = { i: this.i, exp: set };
+      if (this.i > this.farthest.i) {
+        this.farthest = { i: this.i, exp: /* @__PURE__ */ new Set(), ctx: null, attempts: [] };
+      }
+      this.farthest.exp.add(msg);
+      this.farthest.ctx = [...this.ctxStack];
     }
-    const pos = ((_a = this.toks[this.i]) == null ? void 0 : _a.pos) ?? this.src.length;
+    (_b = (_a = this.debug) == null ? void 0 : _a.onFail) == null ? void 0 : _b.call(_a, msg, this.i, [...this.ctxStack]);
+    const pos = ((_c = this.toks[this.i]) == null ? void 0 : _c.pos) ?? this.src.length;
     throw syntax(msg, this.src, pos);
   }
+  // ifPeek('{', parseobject)
+  // Peek first then try fn,
+  // return the output or null if it failed
+  ifPeek(next, fn) {
+    return this.peek(next) ? this.backtrack(fn) : null;
+  }
   // --- backtracking
+  // Restores parser state if fn() throws OR returns null/undefined.
+  // This makes "soft failure" (return null) safe by construction.
   backtrack(fn) {
     const save = this.mark();
     try {
-      return fn();
+      const result = fn();
+      if (result == null) {
+        this.restore(save);
+        return null;
+      }
+      return result;
     } catch (e) {
       if (this._cut != null && save.i >= this._cut)
         throw e;
       this.restore(save);
       return null;
     }
+  }
+  // --- context tracking for debugging
+  // Wraps fn in a named context, tracking entry/exit for debug purposes
+  ctx(label, fn) {
+    var _a, _b, _c, _d;
+    this.ctxStack.push(label);
+    (_b = (_a = this.debug) == null ? void 0 : _a.onEnter) == null ? void 0 : _b.call(_a, label, this.i);
+    let success = false;
+    try {
+      const result = fn();
+      success = result != null;
+      return result;
+    } finally {
+      (_d = (_c = this.debug) == null ? void 0 : _c.onExit) == null ? void 0 : _d.call(_c, label, this.i, success);
+      this.ctxStack.pop();
+    }
+  }
+  // Labeled backtrack: like backtrack() but records the attempt for debugging
+  bt(label, fn) {
+    var _a, _b, _c, _d;
+    const startIdx = this.i;
+    this.ctxStack.push(label);
+    (_b = (_a = this.debug) == null ? void 0 : _a.onEnter) == null ? void 0 : _b.call(_a, label, startIdx);
+    const save = this.mark();
+    let success = false;
+    try {
+      const result = fn();
+      if (result == null) {
+        this.recordAttempt(label, startIdx, false);
+        this.restore(save);
+        return null;
+      }
+      success = true;
+      this.recordAttempt(label, startIdx, true);
+      return result;
+    } catch (e) {
+      if (this._cut != null && save.i >= this._cut)
+        throw e;
+      this.recordAttempt(label, startIdx, false);
+      this.restore(save);
+      return null;
+    } finally {
+      (_d = (_c = this.debug) == null ? void 0 : _c.onExit) == null ? void 0 : _d.call(_c, label, this.i, success);
+      this.ctxStack.pop();
+    }
+  }
+  // Record a backtrack attempt at farthest position
+  // Uses startIdx (where attempt began) to attribute attempts correctly
+  recordAttempt(label, startIdx, success) {
+    var _a, _b;
+    (_b = (_a = this.debug) == null ? void 0 : _a.onBacktrack) == null ? void 0 : _b.call(_a, label, startIdx, success);
+    if (!success && startIdx >= this.farthest.i) {
+      if (startIdx > this.farthest.i) {
+        this.farthest.attempts = [];
+        this.farthest.i = startIdx;
+      }
+      if (!this.farthest.attempts.includes(label)) {
+        this.farthest.attempts.push(label);
+      }
+    }
+  }
+  // Wrap a parse function to capture source span on the returned AST node
+  span(fn) {
+    const startTok = this.toks[this.i];
+    const startIdx = this.i;
+    const result = fn();
+    if (result && typeof result === "object") {
+      const endTok = this.toks[this.i - 1] || startTok;
+      result.loc = {
+        start: (startTok == null ? void 0 : startTok.pos) ?? this.src.length,
+        end: ((endTok == null ? void 0 : endTok.pos) ?? this.src.length) + ((endTok == null ? void 0 : endTok.len) ?? 0),
+        startTok: startIdx,
+        endTok: this.i - 1
+      };
+    }
+    return result;
+  }
+  // Format a debug report from farthest failure info
+  formatReport() {
+    var _a;
+    const f = this.farthest;
+    const pos = ((_a = this.toks[f.i]) == null ? void 0 : _a.pos) ?? this.src.length;
+    let line = 1, col = 1;
+    for (let i = 0; i < pos; i++) {
+      if (this.src[i] === "\n") {
+        line++;
+        col = 1;
+      } else
+        col++;
+    }
+    const windowStart = Math.max(0, f.i - 3);
+    const windowEnd = Math.min(this.toks.length, f.i + 4);
+    const tokenWindow = this.toks.slice(windowStart, windowEnd).map((t, j) => {
+      const idx = windowStart + j;
+      const marker = idx === f.i ? ">>>" : "   ";
+      const val = typeof t.v === "string" ? `"${t.v}"` : t.v;
+      return `${marker} [${idx}] ${t.k}: ${val}`;
+    }).join("\n");
+    const lineStart = this.src.lastIndexOf("\n", pos - 1) + 1;
+    const lineEnd = this.src.indexOf("\n", pos);
+    const sourceLine = this.src.slice(lineStart, lineEnd === -1 ? void 0 : lineEnd);
+    const caret = " ".repeat(pos - lineStart) + "^";
+    const parts = [
+      `Parse error at line ${line}, column ${col}:`,
+      `  ${sourceLine}`,
+      `  ${caret}`,
+      "",
+      `Expected: ${[...f.exp].join(" | ")}`
+    ];
+    if (f.ctx && f.ctx.length > 0) {
+      parts.push(`Context: ${f.ctx.join(" > ")}`);
+    }
+    if (f.attempts && f.attempts.length > 0) {
+      parts.push(`Tried: ${f.attempts.join(", ")}`);
+    }
+    parts.push("", "Token window:", tokenWindow);
+    return parts.join("\n");
   }
   many(parseOne) {
     const out = [];
@@ -378,6 +595,9 @@ function cloneEnv(env) {
     e.set(k, v);
   return e;
 }
+function isBound(env, name) {
+  return env.has(name);
+}
 function bindScalar(env, name, val) {
   const cur = env.get(name);
   if (!cur) {
@@ -404,25 +624,299 @@ function makeRegExp(spec) {
   }
 }
 
+// src/tendril-el.js
+var ELit = (value) => ({ type: "ELit", value });
+var EVar = (name) => ({ type: "EVar", name });
+var EUnary = (op, arg) => ({ type: "EUnary", op, arg });
+var EBinary = (op, left, right) => ({ type: "EBinary", op, left, right });
+var ECall = (fn, args) => ({ type: "ECall", fn, args });
+var EL_FUNCTIONS = ["number", "string", "boolean", "size"];
+var PRECEDENCE = {
+  "||": 1,
+  "&&": 2,
+  "==": 3,
+  "!=": 3,
+  "<": 4,
+  ">": 4,
+  "<=": 4,
+  ">=": 4,
+  "+": 5,
+  "-": 5,
+  "*": 6,
+  "%": 6
+};
+function parseExpr(p) {
+  function parsePrimary() {
+    const tok = p.peek();
+    if (!tok)
+      p.fail("unexpected end of expression");
+    if (tok.k === "!") {
+      p.eat("!");
+      return EUnary("!", parsePrimary());
+    }
+    if (tok.k === "-") {
+      p.eat("-");
+      return EUnary("-", parsePrimary());
+    }
+    if (p.maybe("(")) {
+      const expr = parseExpression(0);
+      p.eat(")");
+      return expr;
+    }
+    if (p.peek("num")) {
+      return ELit(p.eat("num").v);
+    }
+    if (p.peek("bool")) {
+      return ELit(p.eat("bool").v);
+    }
+    if (p.peek("null")) {
+      p.eat("null");
+      return ELit(null);
+    }
+    if (p.peek("str")) {
+      return ELit(p.eat("str").v);
+    }
+    if (p.peek("any")) {
+      p.eat("any");
+      return EVar("_");
+    }
+    if (p.maybe("$")) {
+      const t = p.peek("id");
+      if (!t)
+        p.fail("expected variable name after $");
+      p.eat("id");
+      return EVar(t.v);
+    }
+    if (p.peek("id")) {
+      const name = p.cur().v;
+      if (EL_FUNCTIONS.includes(name)) {
+        p.eat("id");
+        p.eat("(");
+        const args = [];
+        if (!p.peek(")")) {
+          args.push(parseExpression(0));
+          while (p.maybe(",")) {
+            args.push(parseExpression(0));
+          }
+        }
+        p.eat(")");
+        return ECall(name, args);
+      }
+      p.fail(`unexpected identifier '${name}' in expression (variables must be prefixed with $)`);
+    }
+    p.fail(`unexpected token in expression: '${tok.v || tok.k}'`);
+  }
+  function parseExpression(minPrec) {
+    let left = parsePrimary();
+    while (true) {
+      const t = p.peek();
+      if (!t)
+        break;
+      const prec = PRECEDENCE[t.k];
+      if (prec === void 0 || prec < minPrec)
+        break;
+      const op = p.eat().k;
+      const right = parseExpression(prec + 1);
+      left = EBinary(op, left, right);
+    }
+    return left;
+  }
+  return parseExpression(0);
+}
+function evaluateExpr(ast, bindings) {
+  function getVar(name) {
+    if (bindings instanceof Map) {
+      if (!bindings.has(name)) {
+        throw new Error(`Unbound variable in guard: $${name}`);
+      }
+      const entry = bindings.get(name);
+      return entry.kind === "scalar" ? entry.value : entry.value;
+    }
+    if (!(name in bindings)) {
+      throw new Error(`Unbound variable in guard: $${name}`);
+    }
+    return bindings[name];
+  }
+  function evaluate(node) {
+    switch (node.type) {
+      case "ELit":
+        return node.value;
+      case "EVar":
+        return getVar(node.name);
+      case "EUnary":
+        const arg = evaluate(node.arg);
+        switch (node.op) {
+          case "!":
+            return !arg;
+          case "-":
+            return -arg;
+          default:
+            throw new Error(`Unknown unary operator: ${node.op}`);
+        }
+      case "EBinary": {
+        if (node.op === "&&") {
+          const left2 = evaluate(node.left);
+          if (!left2)
+            return false;
+          return !!evaluate(node.right);
+        }
+        if (node.op === "||") {
+          const left2 = evaluate(node.left);
+          if (left2)
+            return true;
+          return !!evaluate(node.right);
+        }
+        const left = evaluate(node.left);
+        const right = evaluate(node.right);
+        switch (node.op) {
+          case "+":
+            if (typeof left === "string" && typeof right === "string") {
+              return left + right;
+            }
+            if (typeof left !== "number" || typeof right !== "number") {
+              throw new Error(`Cannot add ${typeof left} and ${typeof right}`);
+            }
+            return left + right;
+          case "-":
+            if (typeof left !== "number" || typeof right !== "number") {
+              throw new Error(`Cannot subtract ${typeof left} and ${typeof right}`);
+            }
+            return left - right;
+          case "*":
+            if (typeof left !== "number" || typeof right !== "number") {
+              throw new Error(`Cannot multiply ${typeof left} and ${typeof right}`);
+            }
+            return left * right;
+          case "%":
+            if (typeof left !== "number" || typeof right !== "number") {
+              throw new Error(`Cannot modulo ${typeof left} and ${typeof right}`);
+            }
+            if (right === 0) {
+              throw new Error(`Modulo by zero`);
+            }
+            return left % right;
+          case "<":
+            return left < right;
+          case ">":
+            return left > right;
+          case "<=":
+            return left <= right;
+          case ">=":
+            return left >= right;
+          case "==":
+            return sameValueZero(left, right);
+          case "!=":
+            return !sameValueZero(left, right);
+          default:
+            throw new Error(`Unknown binary operator: ${node.op}`);
+        }
+      }
+      case "ECall": {
+        const args = node.args.map(evaluate);
+        switch (node.fn) {
+          case "number":
+            if (args.length !== 1)
+              throw new Error(`number() takes 1 argument`);
+            const n = Number(args[0]);
+            if (Number.isNaN(n) && typeof args[0] !== "number") {
+              throw new Error(`Cannot convert ${typeof args[0]} to number`);
+            }
+            return n;
+          case "string":
+            if (args.length !== 1)
+              throw new Error(`string() takes 1 argument`);
+            return String(args[0]);
+          case "boolean":
+            if (args.length !== 1)
+              throw new Error(`boolean() takes 1 argument`);
+            return Boolean(args[0]);
+          case "size":
+            if (args.length !== 1)
+              throw new Error(`size() takes 1 argument`);
+            const val = args[0];
+            if (typeof val === "string")
+              return val.length;
+            if (Array.isArray(val))
+              return val.length;
+            if (val && typeof val === "object")
+              return Object.keys(val).length;
+            throw new Error(`size() requires string, array, or object`);
+          default:
+            throw new Error(`Unknown function: ${node.fn}`);
+        }
+      }
+      default:
+        throw new Error(`Unknown expression node type: ${node.type}`);
+    }
+  }
+  return evaluate(ast);
+}
+function getExprVariables(ast) {
+  const vars = /* @__PURE__ */ new Set();
+  function walk(node) {
+    switch (node.type) {
+      case "EVar":
+        vars.add(node.name);
+        break;
+      case "EUnary":
+        walk(node.arg);
+        break;
+      case "EBinary":
+        walk(node.left);
+        walk(node.right);
+        break;
+      case "ECall":
+        node.args.forEach(walk);
+        break;
+    }
+  }
+  walk(ast);
+  return vars;
+}
+
 // src/tendril-parser.js
-function parsePattern(src) {
-  const p = new Parser(src);
-  const ast = parseRootPattern(p);
-  if (!p.atEnd())
-    p.fail("trailing input after pattern");
-  return ast;
+function parsePattern(src, opts = {}) {
+  const p = new Parser(src, void 0, opts);
+  try {
+    const ast = parseRootPattern(p);
+    if (!p.atEnd())
+      p.fail("trailing input after pattern");
+    validateAST(ast, src);
+    return ast;
+  } catch (e) {
+    if (p.farthest) {
+      e.parseReport = p.formatReport();
+    }
+    throw e;
+  }
 }
 var Any = () => ({ type: "Any" });
+var TypedAny = (kind) => ({ type: "TypedAny", kind });
 var Lit = (v) => ({ type: "Lit", value: v });
-var Re = (r) => ({ type: "Re", re: r });
+var StringPattern = (kind, desc, matchFn) => ({ type: "StringPattern", kind, desc, matchFn });
 var Bool = (v) => ({ type: "Bool", value: v });
 var Null = () => ({ type: "Null" });
 var RootKey = () => ({ type: "RootKey" });
-var SBind = (name, pat) => ({ type: "SBind", name, pat });
-var GroupBind = (name, pat) => ({ type: "GroupBind", name, pat });
-var Arr = (items) => ({ type: "Arr", items });
-var Obj = (terms, spread = null) => ({ type: "Obj", terms, spread });
-var Alt = (alts) => ({ type: "Alt", alts });
+var Guarded = (pat, guard2) => ({ type: "Guarded", pat, guard: guard2 });
+var SBind = (name, pat, guard2 = null) => ({ type: "SBind", name, pat, guard: guard2 });
+var GroupBind = (name, pat, sliceKind = "array") => ({ type: "GroupBind", name, pat, sliceKind });
+var Flow = (pat, bucket, labelRef = null, sliceKind = "object") => ({ type: "Flow", pat, bucket, labelRef, sliceKind });
+var Collecting = (pat, collectExpr, bucket, sliceKind, labelRef) => ({
+  type: "Collecting",
+  pat,
+  // the pattern this directive is attached to
+  collectExpr,
+  // {key: varName, value: varName} for k:v or {value: varName} for value-only
+  bucket,
+  // bucket name
+  sliceKind,
+  // 'object' or 'array'
+  labelRef
+  // required label reference
+});
+var Arr = (items, label = null) => ({ type: "Arr", items, label });
+var Obj = (terms, spread = null, label = null) => ({ type: "Obj", terms, spread, label });
+var Alt = (alts, prioritized = false) => ({ type: "Alt", alts, prioritized });
 var Look = (neg, pat) => ({ type: "Look", neg, pat });
 var Quant = (sub, op, min = null, max = null) => ({
   type: "Quant",
@@ -432,20 +926,23 @@ var Quant = (sub, op, min = null, max = null) => ({
   min,
   max
 });
-var OTerm = (key, breadcrumbs, op, val, quant) => ({
+var OTerm = (key, breadcrumbs, val, quant, optional = false, strong = false) => ({
   type: "OTerm",
   key,
   // ITEM
   breadcrumbs,
   // Breadcrumb[]
-  op,
-  // '=' or '?='
   val,
   // ITEM
-  quant
+  quant,
   // null or {min, max}
+  optional,
+  // true if '?' suffix (K:V?)
+  strong
+  // true if 'else !' suffix - triggers strong semantics (no bad entries)
 });
 var Spread = (quant) => ({ type: "Spread", quant });
+var SlicePattern = (kind, content) => ({ type: "SlicePattern", kind, content });
 var Breadcrumb = (kind, key, quant) => ({
   type: "Breadcrumb",
   kind,
@@ -455,427 +952,983 @@ var Breadcrumb = (kind, key, quant) => ({
   quant
   // null or {op: '?'|'+'|'*', min, max}
 });
-function parseRootPattern(p) {
-  return parseItem(p);
+function eatVarName(p) {
+  const t = p.peek("id");
+  if (t) {
+    p.eat("id");
+    return t.v;
+  }
+  p.fail("expected variable name");
 }
-function parseItem(p) {
-  let left = parseItemTerm(p);
-  if (p.peek("|")) {
-    const alts = [left];
-    while (p.maybe("|")) {
-      alts.push(parseItemTerm(p));
-    }
-    return Alt(alts);
-  }
-  return left;
-}
-function parseItemTerm(p) {
-  if (p.peek("(?=") || p.peek("(?!")) {
-    return parseLookahead(p);
-  }
-  if (p.peek("(")) {
-    p.eat("(");
-    const inner = parseItem(p);
-    p.eat(")");
-    return inner;
-  }
-  if (p.peek("$")) {
-    p.eat("$");
-    const name = p.eat("id").v;
-    if (p.maybe("=")) {
-      p.eat("(");
-      const pat = parseItem(p);
+function parseParenWithBindingAndGuard(p, parseInner, stopTokens = []) {
+  if (!p.maybe("("))
+    return null;
+  const inner = parseInner(p, [")", "as", "where", ...stopTokens]);
+  if (p.maybe("as")) {
+    if (p.peek("$")) {
+      p.eat("$");
+      const name = eatVarName(p);
+      let guard2 = null;
+      if (p.maybe("where")) {
+        guard2 = parseExpr(p);
+      }
       p.eat(")");
-      return SBind(name, pat);
+      return SBind(name, inner, guard2);
     }
-    return SBind(name, Any());
+    if (p.peek("@")) {
+      p.eat("@");
+      const name = eatVarName(p);
+      if (p.peek("where")) {
+        p.fail("guard expressions are not supported on group bindings (@var)");
+      }
+      p.eat(")");
+      return GroupBind(name, inner);
+    }
+    p.fail('expected $var or @var after "as"');
+  }
+  if (p.maybe("where")) {
+    const guard2 = parseExpr(p);
+    p.eat(")");
+    return Guarded(inner, guard2);
+  }
+  p.eat(")");
+  return inner;
+}
+function withOptionalFlow(p, node) {
+  if (!p.peek("->"))
+    return node;
+  return p.span(() => {
+    p.eat("->");
+    let sliceKind;
+    if (p.peek("%")) {
+      p.eat("%");
+      sliceKind = "object";
+    } else {
+      p.eat("@");
+      sliceKind = "array";
+    }
+    const bucket = eatVarName(p);
+    let labelRef = null;
+    if (p.peek("<")) {
+      p.eat("<");
+      p.eat("^");
+      labelRef = eatVarName(p);
+      p.eat(">");
+    }
+    return Flow(node, bucket, labelRef, sliceKind);
+  });
+}
+function withOptionalCollecting(p, node) {
+  if (!p.peek("<"))
+    return node;
+  const next = p.toks[p.i + 1];
+  if (!next || next.k !== "id" || next.v !== "collecting")
+    return node;
+  return p.span(() => {
+    p.eat("<");
+    p.eat("id");
+    p.eat("$");
+    const firstVar = eatVarName(p);
+    let collectExpr;
+    if (p.peek(":")) {
+      p.eat(":");
+      p.eat("$");
+      const valueVar = eatVarName(p);
+      collectExpr = { key: firstVar, value: valueVar };
+    } else {
+      collectExpr = { value: firstVar };
+    }
+    if (!p.peek("id") || p.toks[p.i].v !== "in") {
+      p.fail("expected 'in' after collecting expression");
+    }
+    p.eat("id");
+    let sliceKind;
+    if (p.peek("%")) {
+      p.eat("%");
+      sliceKind = "object";
+    } else if (p.peek("@")) {
+      p.eat("@");
+      sliceKind = "array";
+    } else {
+      p.fail("expected '%' or '@' after 'in'");
+    }
+    const bucket = eatVarName(p);
+    if (!p.peek("id") || p.toks[p.i].v !== "across") {
+      p.fail("expected 'across ^label' - the across clause is required");
+    }
+    p.eat("id");
+    p.eat("^");
+    const labelRef = eatVarName(p);
+    p.eat(">");
+    return Collecting(node, collectExpr, bucket, sliceKind, labelRef);
+  });
+}
+function parseRootPattern(p) {
+  if (p.peek("%")) {
+    const next = p.toks[p.i + 1];
+    if (next && next.k === "{") {
+      return parseObjectSlicePattern(p);
+    }
   }
   if (p.peek("@")) {
-    p.eat("@");
-    const name = p.eat("id").v;
-    if (p.maybe("=")) {
-      p.eat("(");
-      const pat = parseAGroup(p);
-      p.eat(")");
-      return GroupBind(name, pat);
+    const next = p.toks[p.i + 1];
+    if (next && next.k === "[") {
+      return parseArraySlicePattern(p);
     }
-    return GroupBind(name, Quant(Any(), "*", 0, Infinity));
   }
-  if (p.maybe("any")) {
+  return parseItem(p);
+}
+function parseObjectSlicePattern(p) {
+  p.eat("%");
+  p.eat("{");
+  const groups = [];
+  while (!p.peek("}")) {
+    groups.push(parseOGroup(p));
+    p.maybe(",");
+  }
+  if (groups.length === 0) {
+    p.fail("empty object slice pattern %{ } is not allowed");
+  }
+  p.eat("}");
+  return SlicePattern("object", { type: "OGroup", groups });
+}
+function parseArraySlicePattern(p) {
+  p.eat("@");
+  p.eat("[");
+  const items = parseABody(p, "]");
+  if (items.length === 0) {
+    p.fail("empty array slice pattern @[ ] is not allowed");
+  }
+  p.eat("]");
+  const content = items.length === 1 ? items[0] : { type: "Seq", items };
+  return SlicePattern("array", content);
+}
+function parseItem(p) {
+  return p.span(() => parseItemInner(p));
+}
+function parseItemInner(p) {
+  const first = parseItemTerm(p);
+  const altChain = p.backtrack(() => {
+    p.eat("|");
+    const alts = [first, parseItemTerm(p)];
+    while (p.backtrack(() => {
+      p.eat("|");
+      return true;
+    })) {
+      alts.push(parseItemTerm(p));
+    }
+    return Alt(alts, false);
+  });
+  if (altChain) {
+    if (p.backtrack(() => {
+      p.eat("else");
+      return true;
+    })) {
+      p.fail("cannot mix '|' and 'else' without parentheses");
+    }
+    return altChain;
+  }
+  const elseChain = p.backtrack(() => {
+    p.eat("else");
+    if (p.peek("!"))
+      return null;
+    const alts = [first, parseItemTerm(p)];
+    while (p.backtrack(() => {
+      p.eat("else");
+      if (p.peek("!"))
+        return null;
+      return true;
+    })) {
+      alts.push(parseItemTerm(p));
+    }
+    return Alt(alts, true);
+  });
+  if (elseChain) {
+    if (p.backtrack(() => {
+      p.eat("|");
+      return true;
+    })) {
+      p.fail("cannot mix '|' and 'else' without parentheses");
+    }
+    return elseChain;
+  }
+  return first;
+}
+function parseItemTerm(p) {
+  const core = parseItemTermCore(p);
+  const withFlow = withOptionalFlow(p, core);
+  return withOptionalCollecting(p, withFlow);
+}
+function parseItemTermCore(p) {
+  return p.bt("lookahead", () => parseLookahead(p)) || parseParenWithBindingAndGuard(p, () => parseItem(p)) || p.bt("$bind", () => {
+    p.eat("$");
+    return SBind(eatVarName(p), Any());
+  }) || p.bt("@bind", () => {
+    p.eat("@");
+    return GroupBind(eatVarName(p), Quant(Any(), "*", 0, Infinity));
+  }) || p.bt("any", () => {
+    p.eat("any");
     return Any();
-  }
-  if (p.peek("num")) {
-    return Lit(p.eat("num").v);
-  }
-  if (p.peek("bool")) {
-    return Bool(p.eat("bool").v);
-  }
-  if (p.peek("null")) {
+  }) || p.bt("any_string", () => {
+    p.eat("any_string");
+    return TypedAny("string");
+  }) || p.bt("any_number", () => {
+    p.eat("any_number");
+    return TypedAny("number");
+  }) || p.bt("any_boolean", () => {
+    p.eat("any_boolean");
+    return TypedAny("boolean");
+  }) || p.bt("number", () => Lit(p.eat("num").v)) || p.bt("boolean", () => Bool(p.eat("bool").v)) || p.bt("null", () => {
     p.eat("null");
     return Null();
-  }
-  if (p.peek("str")) {
-    return Lit(p.eat("str").v);
-  }
-  if (p.peek("id")) {
-    return Lit(p.eat("id").v);
-  }
-  if (p.peek("re")) {
+  }) || p.bt("string", () => Lit(p.eat("str").v)) || p.bt("identifier", () => Lit(p.eat("id").v)) || p.bt("regex", () => {
     const { source, flags } = p.eat("re").v;
-    return Re(makeRegExp({ source, flags }));
-  }
-  if (p.peek("{")) {
-    return parseObj(p);
-  }
-  if (p.peek("[")) {
-    return parseArr(p);
-  }
-  p.fail("expected item (literal, wildcard, $var, @var, array, object, or parenthesized expression)");
+    const re = makeRegExp({ source, flags });
+    return StringPattern("regex", `/${source}/${flags}`, (s) => typeof s === "string" && re.test(s));
+  }) || p.bt("case-insensitive", () => {
+    const { lower, desc } = p.eat("ci").v;
+    return StringPattern("ci", desc, (s) => typeof s === "string" && s.toLowerCase() === lower);
+  }) || p.bt("labeled-obj", () => {
+    p.eat("\xA7");
+    const label = eatVarName(p);
+    return parseObj(p, label);
+  }) || p.bt("labeled-arr", () => {
+    p.eat("\xA7");
+    const label = eatVarName(p);
+    return parseArr(p, label);
+  }) || p.bt("object", () => parseObj(p)) || p.bt("array", () => parseArr(p)) || p.fail("expected item");
 }
 function parseLookahead(p) {
-  let neg = false;
-  if (p.peek("(?=")) {
-    p.eat("(?=");
-  } else if (p.peek("(?!")) {
-    p.eat("(?!");
-    neg = true;
-  } else {
-    p.fail("expected (?= or (?! for lookahead");
-  }
-  const pat = parseAGroup(p);
-  p.eat(")");
-  return Look(neg, pat);
+  return p.backtrack(() => {
+    p.eat("(?");
+    const pat = parseAGroup(p);
+    p.eat(")");
+    return Look(false, pat);
+  }) || p.backtrack(() => {
+    p.eat("(!");
+    const pat = parseAGroup(p);
+    p.eat(")");
+    return Look(true, pat);
+  });
 }
 function parseObjectLookahead(p) {
-  let neg = false;
-  if (p.peek("(?=")) {
-    p.eat("(?=");
-  } else if (p.peek("(?!")) {
-    p.eat("(?!");
-    neg = true;
-  } else {
-    p.fail("expected (?= or (?! for object lookahead");
-  }
-  const pat = parseOGroup(p);
-  p.eat(")");
-  return { type: "OLook", neg, pat };
+  return p.backtrack(() => {
+    p.eat("(?");
+    const pat = parseOGroup(p);
+    p.eat(")");
+    return { type: "OLook", neg: false, pat };
+  }) || p.backtrack(() => {
+    p.eat("(!");
+    const pat = parseOGroup(p);
+    p.eat(")");
+    return { type: "OLook", neg: true, pat };
+  });
 }
-function parseABody(p, stopToken) {
+function parseABody(p, ...stopTokens) {
   const items = [];
-  while (!p.peek(stopToken)) {
+  while (!stopTokens.some((t) => p.peek(t))) {
     items.push(parseAGroup(p));
     p.maybe(",");
   }
   return items;
 }
-function parseArr(p) {
-  p.eat("[");
-  const items = parseABody(p, "]");
-  p.eat("]");
-  return Arr(items);
+function parseArr(p, label = null) {
+  return p.span(() => {
+    p.eat("[");
+    const items = parseABody(p, "]");
+    p.eat("]");
+    return Arr(items, label);
+  });
 }
 function parseAGroup(p) {
-  if (p.peek("..")) {
-    p.eat("..");
-    const quant = p.backtrack(() => parseAQuant(p));
-    return Spread(quant ? `${quant.op}` : null);
-  }
-  let base = parseAGroupBase(p);
-  const q = p.backtrack(() => parseAQuant(p));
-  if (q) {
-    base = Quant(base, q.op, q.min, q.max);
-  }
-  if (p.peek("|")) {
-    const alts = [base];
-    while (p.maybe("|")) {
-      let alt = parseAGroupBase(p);
-      const q2 = p.backtrack(() => parseAQuant(p));
-      if (q2) {
-        alt = Quant(alt, q2.op, q2.min, q2.max);
-      }
-      alts.push(alt);
+  const spread = p.backtrack(() => {
+    p.eat("...");
+    const q = parseAQuant(p);
+    if (q)
+      p.fail(`Quantifiers on '...' are not allowed (found '...${q.op}')`);
+    return Spread(null);
+  });
+  if (spread)
+    return spread;
+  const parseBaseWithQuant = () => {
+    const base = parseAGroupBase(p);
+    const q = parseAQuant(p);
+    return q ? Quant(base, q.op, q.min, q.max) : base;
+  };
+  const first = parseBaseWithQuant();
+  if (p.backtrack(() => {
+    p.eat("|");
+    return true;
+  })) {
+    const alts = [first, parseBaseWithQuant()];
+    while (p.backtrack(() => {
+      p.eat("|");
+      return true;
+    })) {
+      alts.push(parseBaseWithQuant());
     }
-    return Alt(alts);
+    if (p.backtrack(() => {
+      p.eat("else");
+      return true;
+    })) {
+      p.fail("cannot mix '|' and 'else' without parentheses");
+    }
+    return Alt(alts, false);
   }
-  return base;
+  if (p.backtrack(() => {
+    p.eat("else");
+    return true;
+  })) {
+    const alts = [first, parseBaseWithQuant()];
+    while (p.backtrack(() => {
+      p.eat("else");
+      return true;
+    })) {
+      alts.push(parseBaseWithQuant());
+    }
+    if (p.backtrack(() => {
+      p.eat("|");
+      return true;
+    })) {
+      p.fail("cannot mix '|' and 'else' without parentheses");
+    }
+    return Alt(alts, true);
+  }
+  return first;
 }
 function parseAGroupBase(p) {
-  if (p.peek("(?=") || p.peek("(?!")) {
-    return parseLookahead(p);
-  }
-  if (p.peek("(")) {
-    p.eat("(");
-    const items = parseABody(p, ")");
-    p.eat(")");
-    if (items.length === 1)
-      return items[0];
-    return { type: "Seq", items };
-  }
-  if (p.peek("@")) {
-    p.eat("@");
-    const name = p.eat("id").v;
-    if (p.maybe("=")) {
-      p.eat("(");
-      const items = parseABody(p, ")");
-      p.eat(")");
-      const pat = items.length === 1 ? items[0] : { type: "Seq", items };
-      return GroupBind(name, pat);
-    }
-    return GroupBind(name, Quant(Any(), "*", 0, Infinity));
-  }
-  if (p.peek("$")) {
-    p.eat("$");
-    const name = p.eat("id").v;
-    if (p.maybe("=")) {
-      p.eat("(");
-      const items = parseABody(p, ")");
-      p.eat(")");
-      const pat = items.length === 1 ? items[0] : { type: "Seq", items };
-      return SBind(name, pat);
-    }
-    return SBind(name, Any());
-  }
-  return parseItemTerm(p);
+  return p.bt("arr-lookahead", () => parseLookahead(p)) || parseParenWithBindingAndGuard(p, (p2, stopTokens) => {
+    const items = parseABody(p2, ...stopTokens);
+    return items.length === 1 ? items[0] : { type: "Seq", items };
+  }) || parseItemTerm(p);
 }
 function parseAQuant(p) {
-  if (p.maybe("??"))
+  return p.backtrack(() => {
+    p.eat("?+");
+    return { op: "?+", min: 0, max: 1 };
+  }) || p.backtrack(() => {
+    p.eat("??");
     return { op: "??", min: 0, max: 1 };
-  if (p.maybe("?"))
+  }) || p.backtrack(() => {
+    p.eat("?");
     return { op: "?", min: 0, max: 1 };
-  if (p.maybe("++"))
-    return { op: "++", min: 1, max: null };
-  if (p.maybe("+?"))
-    return { op: "+?", min: 1, max: null };
-  if (p.maybe("+"))
-    return { op: "+", min: 1, max: null };
-  if (p.maybe("*+"))
-    return { op: "*+", min: 0, max: null };
-  if (p.maybe("*?"))
-    return { op: "*?", min: 0, max: null };
-  if (p.maybe("*"))
-    return { op: "*", min: 0, max: null };
-  if (p.maybe("{")) {
-    let min = null, max = null;
-    if (p.maybe(",")) {
-      min = 0;
-      max = p.eat("num").v;
-    } else {
-      min = p.eat("num").v;
-      if (p.maybe(",")) {
-        if (p.peek("num")) {
-          max = p.eat("num").v;
-        } else {
-          max = null;
-        }
-      } else {
-        max = min;
-      }
-    }
+  }) || p.backtrack(() => {
+    p.eat("++");
+    return { op: "++", min: 1, max: Infinity };
+  }) || p.backtrack(() => {
+    p.eat("+?");
+    return { op: "+?", min: 1, max: Infinity };
+  }) || p.backtrack(() => {
+    p.eat("+");
+    return { op: "+", min: 1, max: Infinity };
+  }) || p.backtrack(() => {
+    p.eat("*+");
+    return { op: "*+", min: 0, max: Infinity };
+  }) || p.backtrack(() => {
+    p.eat("*?");
+    return { op: "*?", min: 0, max: Infinity };
+  }) || p.backtrack(() => {
+    p.eat("*");
+    return { op: "*", min: 0, max: Infinity };
+  }) || p.backtrack(() => {
+    p.eat("{");
+    p.eat(",");
+    const max = eatNonNegInt(p, "quantifier");
     p.eat("}");
-    return { op: `{${min},${max ?? ""}}`, min, max };
-  }
-  p.fail("expected quantifier");
+    return { op: `{0,${max}}`, min: 0, max };
+  }) || p.backtrack(() => {
+    p.eat("{");
+    const min = eatNonNegInt(p, "quantifier");
+    p.eat(",");
+    const max = eatNonNegInt(p, "quantifier");
+    p.eat("}");
+    return { op: `{${min},${max}}`, min, max };
+  }) || p.backtrack(() => {
+    p.eat("{");
+    const min = eatNonNegInt(p, "quantifier");
+    p.eat(",");
+    p.eat("}");
+    return { op: `{${min},}`, min, max: Infinity };
+  }) || p.backtrack(() => {
+    p.eat("{");
+    const n = eatNonNegInt(p, "quantifier");
+    p.eat("}");
+    return { op: `{${n}}`, min: n, max: n };
+  });
 }
-function parseObj(p) {
-  p.eat("{");
-  const terms = [];
-  while (true) {
-    const group = p.backtrack(() => {
-      if (p.peek("}"))
-        return null;
-      const s = parseOGroup(p);
-      p.maybe(",");
-      return s;
-    });
-    if (!group)
-      break;
-    terms.push(group);
-  }
-  const remnant = parseORemnant(p);
-  p.eat("}");
-  return Obj(terms, remnant);
+function parseObj(p, label = null) {
+  return p.span(() => {
+    p.eat("{");
+    const terms = [];
+    while (true) {
+      const group = p.backtrack(() => {
+        if (p.peek("}"))
+          return null;
+        const s = parseOGroup(p);
+        p.maybe(",");
+        return s;
+      });
+      if (!group)
+        break;
+      terms.push(group);
+    }
+    const remnant = parseORemnant(p);
+    p.eat("}");
+    return Obj(terms, remnant, label);
+  });
 }
 function parseORemnant(p) {
-  const bindRemnant = p.backtrack(() => {
-    if (!p.peek("@"))
-      return null;
-    p.eat("@");
-    const name = p.eat("id").v;
-    if (!p.maybe("="))
-      return null;
+  return p.bt("remainder-bind", () => {
     p.eat("(");
-    if (!(p.peek("id") && p.peek().v === "remainder"))
-      return null;
-    p.eat("id");
-    const quant = p.maybe("?") ? "?" : null;
+    p.eat("%");
+    const q = p.backtrack(() => {
+      p.eat("?");
+      return { min: 0, max: Infinity };
+    }) || parseRemainderQuant(p);
+    p.eat("as");
+    p.eat("%");
+    const name = eatVarName(p);
     p.eat(")");
     p.maybe(",");
-    return GroupBind(name, Spread(quant));
-  });
-  if (bindRemnant)
-    return bindRemnant;
-  const bareRemnant = p.backtrack(() => {
-    if (!(p.peek("id") && p.peek().v === "remainder"))
-      return null;
-    p.eat("id");
-    const quant = p.maybe("?") ? "?" : null;
+    return GroupBind(name, Spread(q), "object");
+  }) || p.bt("remainder", () => {
+    p.eat("%");
+    const q = p.backtrack(() => {
+      p.eat("?");
+      return { min: 0, max: Infinity };
+    }) || parseRemainderQuant(p);
     p.maybe(",");
-    return Spread(quant);
-  });
-  if (bareRemnant)
-    return bareRemnant;
-  const negRemnant = p.backtrack(() => {
-    if (!p.peek("(?!"))
-      return null;
-    p.eat("(?!");
-    if (!(p.peek("id") && p.peek().v === "remainder"))
-      return null;
-    p.eat("id");
+    return Spread(q);
+  }) || p.bt("no-remainder", () => {
+    p.eat("(!");
+    p.eat("%");
     p.eat(")");
     p.maybe(",");
     return { type: "OLook", neg: true, pat: Spread(null) };
   });
-  if (negRemnant)
-    return negRemnant;
-  if (p.peek("..")) {
-    p.fail('bare ".." not allowed in objects; use "remainder" or "@x=(remainder)" instead');
-  }
-  return null;
+}
+function parseRemainderQuant(p) {
+  return p.backtrack(() => {
+    p.eat("#");
+    p.eat("?");
+    return { min: 0, max: Infinity };
+  }) || p.backtrack(() => {
+    p.eat("#");
+    p.eat("{");
+    p.eat(",");
+    const max = eatNonNegInt(p, "%");
+    p.eat("}");
+    return { min: 0, max };
+  }) || p.backtrack(() => {
+    p.eat("#");
+    p.eat("{");
+    const min = eatNonNegInt(p, "%");
+    p.eat(",");
+    const max = eatNonNegInt(p, "%");
+    p.eat("}");
+    if (max < min)
+      p.fail("% quantifier upper < lower");
+    return { min, max };
+  }) || p.backtrack(() => {
+    p.eat("#");
+    p.eat("{");
+    const min = eatNonNegInt(p, "%");
+    p.eat(",");
+    p.eat("}");
+    return { min, max: Infinity };
+  }) || p.backtrack(() => {
+    p.eat("#");
+    p.eat("{");
+    const n = eatNonNegInt(p, "%");
+    p.eat("}");
+    return { min: n, max: n };
+  });
 }
 function parseOGroup(p) {
-  if (p.peek("(?=") || p.peek("(?!")) {
-    return parseObjectLookahead(p);
-  }
-  const groupResult = p.backtrack(() => {
+  const look = p.bt("obj-lookahead", () => parseObjectLookahead(p));
+  if (look)
+    return look;
+  const groupWithBind = p.bt("obj-group-bind", () => {
     p.eat("(");
-    const groups = [];
-    while (!p.peek(")")) {
-      groups.push(parseOGroup(p));
-      p.maybe(",");
-    }
+    const groups = parseOBodyUntil(p, ")", "as");
+    p.eat("as");
+    p.eat("%");
+    const name = eatVarName(p);
+    p.eat(")");
+    return GroupBind(name, { type: "OGroup", groups }, "object");
+  });
+  if (groupWithBind)
+    return groupWithBind;
+  const groupPlain = p.bt("obj-group", () => {
+    p.eat("(");
+    const groups = parseOBodyUntil(p, ")");
     p.eat(")");
     return { type: "OGroup", groups };
   });
-  if (groupResult)
-    return groupResult;
-  if (p.peek("@")) {
-    p.eat("@");
-    const name = p.eat("id").v;
-    if (p.maybe("=")) {
-      p.eat("(");
-      const groups = [];
-      while (!p.peek(")")) {
-        groups.push(parseOGroup(p));
-        p.maybe(",");
-      }
-      p.eat(")");
-      return GroupBind(name, { type: "OGroup", groups });
-    }
-    p.fail("bare @x not allowed in objects; use @x=(remainder) to bind residual keys");
+  if (groupPlain)
+    return groupPlain;
+  const eachTerm = p.bt("obj-each-term", () => {
+    p.eat("each");
+    const term2 = parseOTerm(p);
+    const optional2 = term2.optional || !!p.backtrack(() => {
+      p.eat("?");
+      return true;
+    });
+    const result2 = OTerm(term2.key, term2.breadcrumbs, term2.val, term2.quant, optional2, true);
+    if (term2.loc)
+      result2.loc = term2.loc;
+    return result2;
+  });
+  if (eachTerm)
+    return eachTerm;
+  const term = parseOTerm(p);
+  const optional = term.optional || !!p.backtrack(() => {
+    p.eat("?");
+    return true;
+  });
+  const result = OTerm(term.key, term.breadcrumbs, term.val, term.quant, optional, false);
+  if (term.loc)
+    result.loc = term.loc;
+  return result;
+}
+function parseOBodyUntil(p, ...stopTokens) {
+  const groups = [];
+  while (!stopTokens.some((t) => p.peek(t))) {
+    groups.push(parseOGroup(p));
+    p.maybe(",");
   }
-  return parseOTerm(p);
+  return groups;
 }
 function parseOTerm(p) {
-  let key;
-  const breadcrumbs = [];
-  if (p.peek("..")) {
-    key = RootKey();
-  } else {
-    key = parseItem(p);
-  }
-  while (p.peek(".") || p.peek("..") || p.peek("[")) {
-    const bc = parseBreadcrumb(p);
-    if (bc)
+  return p.span(() => {
+    const key = p.peek("**") ? RootKey() : parseItem(p);
+    const breadcrumbs = [];
+    for (let bc; bc = parseBreadcrumb(p); )
       breadcrumbs.push(bc);
-    else
-      break;
-  }
-  let op = null;
-  const questOp = p.backtrack(() => {
-    if (!p.maybe("?"))
-      return null;
-    if (p.maybe("?:"))
-      return "?:";
-    if (p.maybe(":"))
-      return "?:";
-    return null;
+    const optional = !!p.maybe("?");
+    p.eat(":");
+    const val = parseItem(p);
+    const quant = parseOQuant(p);
+    return OTerm(key, breadcrumbs, val, quant, optional, false);
   });
-  if (questOp) {
-    op = questOp;
-  } else if (p.maybe("?:")) {
-    op = "?:";
-  } else if (p.maybe(":")) {
-    op = ":";
-  } else {
-    p.fail("expected : or ?: in object term");
-  }
-  const val = parseItem(p);
-  const quant = parseOQuant(p);
-  return OTerm(key, breadcrumbs, op, val, quant);
 }
 function parseBreadcrumb(p) {
-  if (p.peek("..")) {
-    p.eat("..");
-    if (p.peek(":") || p.peek("?:") || p.peek("?")) {
+  return p.bt("bc-skip", () => {
+    p.eat("**");
+    if (p.peek(":"))
       return Breadcrumb("skip", Any(), null);
-    }
-    const key = parseItem(p);
-    return Breadcrumb("skip", key, null);
-  }
-  if (p.peek(".")) {
+    p.maybe(".");
+    return Breadcrumb("skip", parseItem(p), null);
+  }) || p.bt("bc-dot-skip", () => {
     p.eat(".");
-    const key = parseItem(p);
-    return Breadcrumb("dot", key, null);
-  }
-  if (p.peek("[")) {
+    p.eat("**");
+    if (p.peek(":"))
+      return Breadcrumb("skip", Any(), null);
+    p.maybe(".");
+    return Breadcrumb("skip", parseItem(p), null);
+  }) || p.bt("bc-dot", () => {
+    p.eat(".");
+    return Breadcrumb("dot", parseItem(p), null);
+  }) || p.bt("bc-bracket", () => {
     p.eat("[");
     const key = parseItem(p);
     p.eat("]");
     return Breadcrumb("bracket", key, null);
-  }
-  return null;
+  });
 }
 function parseOQuant(p) {
-  if (!p.peek("#"))
-    return null;
-  p.eat("#");
-  if (p.maybe("?")) {
-    return { min: 0, max: null };
+  return p.backtrack(() => {
+    p.eat("#");
+    p.eat("?");
+    return { min: 0, max: Infinity };
+  }) || p.backtrack(() => {
+    p.eat("#");
+    p.eat("{");
+    p.eat(",");
+    const max = eatNonNegInt(p, "O_QUANT");
+    p.eat("}");
+    return { min: 0, max };
+  }) || p.backtrack(() => {
+    p.eat("#");
+    p.eat("{");
+    const min = eatNonNegInt(p, "O_QUANT");
+    p.eat(",");
+    const max = eatNonNegInt(p, "O_QUANT");
+    p.eat("}");
+    if (max < min)
+      p.fail("O_QUANT upper < lower");
+    return { min, max };
+  }) || p.backtrack(() => {
+    p.eat("#");
+    p.eat("{");
+    const min = eatNonNegInt(p, "O_QUANT");
+    p.eat(",");
+    p.eat("}");
+    return { min, max: Infinity };
+  }) || p.backtrack(() => {
+    p.eat("#");
+    p.eat("{");
+    const n = eatNonNegInt(p, "O_QUANT");
+    p.eat("}");
+    return { min: n, max: n };
+  });
+}
+function eatNonNegInt(p, context = "quantifier") {
+  const tok = p.eat("num", `expected non-negative integer in ${context}`);
+  const v = tok.v;
+  if (!Number.isInteger(v) || v < 0) {
+    p.fail(`${context} requires non-negative integer, got ${v}`);
   }
-  if (!p.peek("{"))
-    p.fail("expected { or ? after #");
-  p.eat("{");
-  const min = p.eat("num").v;
-  let max = min;
-  if (p.maybe(",")) {
-    if (p.peek("num")) {
-      max = p.eat("num").v;
-    } else {
-      max = null;
+  return v;
+}
+function validateAST(ast, src = null) {
+  const sliceBindings = /* @__PURE__ */ new Map();
+  const bucketScopes = /* @__PURE__ */ new Map();
+  const definedLabels = /* @__PURE__ */ new Set();
+  function collectLabels(node) {
+    if (!node || typeof node !== "object")
+      return;
+    if ((node.type === "Obj" || node.type === "Arr") && node.label) {
+      definedLabels.add(node.label);
+    }
+    for (const key of Object.keys(node)) {
+      const val = node[key];
+      if (Array.isArray(val)) {
+        for (const item of val)
+          collectLabels(item);
+      } else if (val && typeof val === "object") {
+        collectLabels(val);
+      }
     }
   }
-  p.eat("}");
-  if (max !== null && max < min)
-    p.fail("O_QUANT upper < lower");
-  return { min, max };
+  collectLabels(ast);
+  let implicitScopeCounter = 0;
+  function checkSliceConflict(name, kind, loc) {
+    const existing = sliceBindings.get(name);
+    if (existing) {
+      if (existing.kind !== kind) {
+        const existingSigil = existing.kind === "object" ? "%" : "@";
+        const newSigil = kind === "object" ? "%" : "@";
+        let msg = `Slice name conflict: '${name}' used as both ${existingSigil}${name} and ${newSigil}${name}`;
+        if (src && loc) {
+          msg += `
+  at: ${src.slice(loc.start, loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+    } else {
+      sliceBindings.set(name, { kind, loc });
+    }
+  }
+  function checkBucketScope(bucketName, scope, loc, sigil) {
+    const existing = bucketScopes.get(bucketName);
+    if (existing) {
+      if (existing.scope !== scope) {
+        let msg = `Bucket name conflict: '${sigil}${bucketName}' used in different scopes`;
+        if (src && loc) {
+          msg += `
+  at: ${src.slice(loc.start, loc.end)}`;
+        }
+        if (src && existing.loc) {
+          msg += `
+  previously at: ${src.slice(existing.loc.start, existing.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+    } else {
+      bucketScopes.set(bucketName, { scope, loc });
+    }
+  }
+  function check(node, ctx) {
+    if (!node || typeof node !== "object")
+      return;
+    const { inContainer, implicitScope } = ctx;
+    if (node.type === "Flow") {
+      if (!inContainer) {
+        const sigil2 = node.sliceKind === "object" ? "%" : "@";
+        let msg = `Flow operator ->${sigil2}${node.bucket} can only be used inside an object or array pattern`;
+        if (src && node.loc) {
+          msg += `
+  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+      let scope;
+      const sigil = node.sliceKind === "object" ? "%" : "@";
+      if (node.labelRef) {
+        if (!definedLabels.has(node.labelRef)) {
+          let msg = `Flow operator ->${sigil}${node.bucket}<^${node.labelRef}> references unknown label '${node.labelRef}'`;
+          if (src && node.loc) {
+            msg += `
+  at: ${src.slice(node.loc.start, node.loc.end)}`;
+          }
+          throw new Error(msg);
+        }
+        scope = `label:${node.labelRef}`;
+      } else {
+        if (implicitScope === null) {
+          let msg = `Flow operator ->${sigil}${node.bucket} requires enclosing 'each' clause (or explicit <^label>)`;
+          if (src && node.loc) {
+            msg += `
+  at: ${src.slice(node.loc.start, node.loc.end)}`;
+          }
+          throw new Error(msg);
+        }
+        scope = `implicit:${implicitScope}`;
+      }
+      checkSliceConflict(node.bucket, node.sliceKind || "object", node.loc);
+      checkBucketScope(node.bucket, scope, node.loc, sigil);
+    }
+    if (node.type === "Collecting") {
+      if (!inContainer) {
+        const sigil2 = node.sliceKind === "object" ? "%" : "@";
+        let msg = `<collecting> directive can only be used inside an object or array pattern`;
+        if (src && node.loc) {
+          msg += `
+  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+      if (node.collectExpr.key !== void 0 && node.sliceKind !== "object") {
+        let msg = `key:value collection requires %bucket (object slice), not @bucket`;
+        if (src && node.loc) {
+          msg += `
+  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+      if (node.collectExpr.key === void 0 && node.sliceKind !== "array") {
+        let msg = `value-only collection requires @bucket (array slice), not %bucket`;
+        if (src && node.loc) {
+          msg += `
+  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+      if (!definedLabels.has(node.labelRef)) {
+        let msg = `<collecting> references unknown label '${node.labelRef}'`;
+        if (src && node.loc) {
+          msg += `
+  at: ${src.slice(node.loc.start, node.loc.end)}`;
+        }
+        throw new Error(msg);
+      }
+      const sigil = node.sliceKind === "object" ? "%" : "@";
+      const scope = `label:${node.labelRef}`;
+      checkSliceConflict(node.bucket, node.sliceKind, node.loc);
+      checkBucketScope(node.bucket, scope, node.loc, sigil);
+    }
+    if (node.type === "GroupBind") {
+      checkSliceConflict(node.name, node.sliceKind || "array", node.loc);
+    }
+    const inChild = inContainer || node.type === "Obj" || node.type === "Arr";
+    switch (node.type) {
+      case "Obj":
+        for (const term of node.terms || [])
+          check(term, { inContainer: inChild, implicitScope });
+        if (node.spread)
+          check(node.spread, { inContainer: inChild, implicitScope });
+        break;
+      case "Arr":
+        for (const item of node.items || [])
+          check(item, { inContainer: inChild, implicitScope });
+        break;
+      case "OTerm":
+        check(node.key, { inContainer: inChild, implicitScope });
+        if (node.strong) {
+          const newScope = `each_${implicitScopeCounter++}`;
+          check(node.val, { inContainer: inChild, implicitScope: newScope });
+        } else {
+          check(node.val, { inContainer: inChild, implicitScope });
+        }
+        for (const bc of node.breadcrumbs || [])
+          check(bc.key, { inContainer: inChild, implicitScope });
+        break;
+      case "Alt":
+        for (const alt of node.alts || [])
+          check(alt, { inContainer: inChild, implicitScope });
+        break;
+      case "Quant":
+      case "Look":
+      case "SBind":
+      case "GroupBind":
+      case "Flow":
+      case "Collecting":
+      case "Guarded":
+        check(node.pat || node.sub, { inContainer: inChild, implicitScope });
+        break;
+      case "Seq":
+        for (const item of node.items || [])
+          check(item, { inContainer: inChild, implicitScope });
+        break;
+      case "OGroup":
+        for (const g of node.groups || [])
+          check(g, { inContainer: inChild, implicitScope });
+        break;
+      case "SlicePattern":
+        check(node.content, { inContainer: true, implicitScope });
+        break;
+    }
+  }
+  check(ast, { inContainer: false, implicitScope: null });
 }
-Parser.prototype.peekAt = function(offset, kind) {
-  const idx = this.i + offset;
-  if (idx >= this.toks.length)
-    return false;
-  return this.toks[idx].k === kind;
-};
 
 // src/tendril-engine.js
+var StopSearch = class extends Error {
+  constructor(payload) {
+    super("StopSearch");
+    this.payload = payload;
+  }
+};
 function newSolution() {
-  return { env: /* @__PURE__ */ new Map(), sites: /* @__PURE__ */ new Map() };
+  return { env: /* @__PURE__ */ new Map(), sites: /* @__PURE__ */ new Map(), guards: [], bucketStack: [], labels: /* @__PURE__ */ new Map() };
 }
 function cloneSolution(sol) {
   const sites = /* @__PURE__ */ new Map();
   for (const [k, v] of sol.sites) {
     sites.set(k, [...v]);
   }
-  return { env: cloneEnv(sol.env), sites };
+  const bucketStack = sol.bucketStack.map((level) => {
+    const clonedLevel = /* @__PURE__ */ new Map();
+    for (const [name, entries] of level) {
+      clonedLevel.set(name, { ...entries });
+    }
+    return clonedLevel;
+  });
+  return {
+    env: cloneEnv(sol.env),
+    sites,
+    guards: sol.guards ? [...sol.guards] : [],
+    bucketStack,
+    labels: new Map([...sol.labels].map(([name, info]) => [name, { ...info }]))
+  };
+}
+function pushBucketLevel(sol) {
+  sol.bucketStack.push(/* @__PURE__ */ new Map());
+}
+function addToBucket(sol, bucketName, key, value, bucketLevel = null, sliceKind = "object") {
+  if (sol.bucketStack.length === 0) {
+    throw new Error(`Flow ->${sliceKind === "object" ? "%" : "@"}${bucketName} used outside of K:V context`);
+  }
+  const levelIndex = bucketLevel !== null ? bucketLevel : sol.bucketStack.length - 1;
+  if (levelIndex < 0 || levelIndex >= sol.bucketStack.length) {
+    throw new Error(`Invalid bucket level ${levelIndex} (stack size: ${sol.bucketStack.length})`);
+  }
+  const level = sol.bucketStack[levelIndex];
+  if (!level.has(bucketName)) {
+    level.set(bucketName, { kind: sliceKind, entries: sliceKind === "object" ? {} : [] });
+  }
+  const bucket = level.get(bucketName);
+  if (bucket.kind !== sliceKind) {
+    throw new Error(`Bucket '${bucketName}' used with both % and @ sigils - pick one`);
+  }
+  if (sliceKind === "object") {
+    if (Object.prototype.hasOwnProperty.call(bucket.entries, key)) {
+      return false;
+    }
+    bucket.entries[key] = value;
+  } else {
+    bucket.entries.push(value);
+  }
+  return true;
+}
+function finalizeBucketLevel(solutions) {
+  if (solutions.length === 0)
+    return solutions;
+  const merged = /* @__PURE__ */ new Map();
+  let hasCollision = false;
+  for (const state of solutions) {
+    const sol = state.sol || state;
+    if (sol.bucketStack.length === 0)
+      continue;
+    const top = sol.bucketStack[sol.bucketStack.length - 1];
+    for (const [name, bucket] of top) {
+      if (!merged.has(name)) {
+        merged.set(name, { kind: bucket.kind, entries: bucket.kind === "object" ? {} : [] });
+      }
+      const mergedBucket = merged.get(name);
+      if (bucket.kind === "object") {
+        for (const [key, value] of Object.entries(bucket.entries)) {
+          if (Object.prototype.hasOwnProperty.call(mergedBucket.entries, key)) {
+            const existing = mergedBucket.entries[key];
+            if (!sameValueZero(existing, value) && JSON.stringify(existing) !== JSON.stringify(value)) {
+              hasCollision = true;
+            }
+          } else {
+            mergedBucket.entries[key] = value;
+          }
+        }
+      } else {
+        mergedBucket.entries.push(...bucket.entries);
+      }
+    }
+  }
+  if (hasCollision) {
+    for (const state of solutions) {
+      const sol = state.sol || state;
+      if (sol.bucketStack.length > 0) {
+        sol.bucketStack.pop();
+      }
+    }
+    return [];
+  }
+  const surviving = [];
+  for (const state of solutions) {
+    const sol = state.sol || state;
+    if (sol.bucketStack.length > 0) {
+      sol.bucketStack.pop();
+    }
+    let bindOk = true;
+    for (const [name, bucket] of merged) {
+      const groupValue = bucket.kind === "object" ? Group.object(bucket.entries) : Group.array(...bucket.entries);
+      if (!bindGroup(sol.env, name, groupValue)) {
+        bindOk = false;
+        break;
+      }
+    }
+    if (bindOk) {
+      surviving.push(state);
+    }
+  }
+  return surviving;
+}
+function addGuard(sol, guard2, varName) {
+  if (!guard2)
+    return;
+  const requiredVars = getExprVariables(guard2);
+  sol.guards.push({ guard: guard2, varName, requiredVars });
+}
+function checkGuards(sol) {
+  for (const { guard: guard2, varName, requiredVars } of sol.guards) {
+    let allBound = true;
+    for (const v of requiredVars) {
+      if (!isBound(sol.env, v)) {
+        allBound = false;
+        break;
+      }
+    }
+    if (!allBound) {
+      continue;
+    }
+    try {
+      const result = evaluateExpr(guard2, sol.env);
+      if (!result) {
+        return false;
+      }
+    } catch (e) {
+      return false;
+    }
+  }
+  return true;
+}
+function allGuardsClosed(sol) {
+  for (const { requiredVars } of sol.guards) {
+    for (const v of requiredVars) {
+      if (!isBound(sol.env, v))
+        return false;
+    }
+  }
+  return true;
 }
 function recordScalarSite(sol, varName, path, valueRef) {
   if (!sol.sites.has(varName)) {
@@ -895,13 +1948,70 @@ function recordGroupSite(sol, varName, path, groupStart, groupEnd, valueRefs) {
     valueRefs: [...valueRefs]
   });
 }
+function patternHasBindings(ast) {
+  if (!ast || typeof ast !== "object")
+    return false;
+  if ("_hasBindings" in ast)
+    return ast._hasBindings;
+  let result = false;
+  if (ast.type === "SBind" || ast.type === "GroupBind") {
+    result = true;
+  } else {
+    if (ast.pat && patternHasBindings(ast.pat))
+      result = true;
+    else if (ast.val && patternHasBindings(ast.val))
+      result = true;
+    else if (ast.items) {
+      for (const item of ast.items) {
+        if (patternHasBindings(item)) {
+          result = true;
+          break;
+        }
+      }
+    }
+    if (!result && ast.alts) {
+      for (const alt of ast.alts) {
+        if (patternHasBindings(alt)) {
+          result = true;
+          break;
+        }
+      }
+    }
+    if (!result && ast.groups) {
+      for (const group of ast.groups) {
+        if (patternHasBindings(group)) {
+          result = true;
+          break;
+        }
+      }
+    }
+    if (!result && ast.terms) {
+      for (const term of ast.terms) {
+        if (patternHasBindings(term)) {
+          result = true;
+          break;
+        }
+        if (term.key && patternHasBindings(term.key)) {
+          result = true;
+          break;
+        }
+        if (term.val && patternHasBindings(term.val)) {
+          result = true;
+          break;
+        }
+      }
+    }
+  }
+  ast._hasBindings = result;
+  return result;
+}
 function match(ast, input, opts = {}) {
   const maxSteps = opts.maxSteps ?? 2e6;
   const debug = opts.debug;
   const ctx = { steps: 0, maxSteps, debug };
   const solutions = [];
   matchItem(ast, input, [], newSolution(), (sol) => solutions.push(sol), ctx);
-  return solutions.map((sol) => {
+  return solutions.filter((sol) => allGuardsClosed(sol) && checkGuards(sol)).map((sol) => {
     const bindings = Object.fromEntries(
       Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
     );
@@ -927,12 +2037,94 @@ function scan(ast, input, opts = {}) {
     }
   }
   scanValue(input, []);
-  return solutions.map((sol) => {
+  return solutions.filter((sol) => allGuardsClosed(sol) && checkGuards(sol)).map((sol) => {
     const bindings = Object.fromEntries(
       Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
     );
     return { bindings, sites: sol.sites };
   });
+}
+function matchExists(ast, input, opts = {}) {
+  const maxSteps = opts.maxSteps ?? 2e6;
+  const debug = opts.debug;
+  const ctx = { steps: 0, maxSteps, debug };
+  try {
+    matchItem(ast, input, [], newSolution(), (sol) => {
+      if (allGuardsClosed(sol) && checkGuards(sol)) {
+        throw new StopSearch(true);
+      }
+    }, ctx);
+    return false;
+  } catch (e) {
+    if (e instanceof StopSearch)
+      return true;
+    throw e;
+  }
+}
+function scanExists(ast, input, opts = {}) {
+  const maxSteps = opts.maxSteps ?? 2e6;
+  const debug = opts.debug;
+  const ctx = { steps: 0, maxSteps, debug };
+  function scanValue(value, path) {
+    guard(ctx);
+    matchItem(ast, value, path, newSolution(), (sol) => {
+      if (allGuardsClosed(sol) && checkGuards(sol)) {
+        throw new StopSearch(true);
+      }
+    }, ctx);
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        scanValue(value[i], [...path, i]);
+      }
+    } else if (value && typeof value === "object") {
+      for (const key of Object.keys(value)) {
+        scanValue(value[key], [...path, key]);
+      }
+    }
+  }
+  try {
+    scanValue(input, []);
+    return false;
+  } catch (e) {
+    if (e instanceof StopSearch)
+      return true;
+    throw e;
+  }
+}
+function scanFirst(ast, input, opts = {}) {
+  const maxSteps = opts.maxSteps ?? 2e6;
+  const debug = opts.debug;
+  const ctx = { steps: 0, maxSteps, debug };
+  function scanValue(value, path) {
+    guard(ctx);
+    matchItem(ast, value, path, newSolution(), (sol) => {
+      if (allGuardsClosed(sol) && checkGuards(sol)) {
+        throw new StopSearch(sol);
+      }
+    }, ctx);
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        scanValue(value[i], [...path, i]);
+      }
+    } else if (value && typeof value === "object") {
+      for (const key of Object.keys(value)) {
+        scanValue(value[key], [...path, key]);
+      }
+    }
+  }
+  try {
+    scanValue(input, []);
+    return null;
+  } catch (e) {
+    if (e instanceof StopSearch) {
+      const sol = e.payload;
+      const bindings = Object.fromEntries(
+        Array.from(sol.env.entries()).map(([k, v]) => [k, v.value])
+      );
+      return { bindings, sites: sol.sites };
+    }
+    throw e;
+  }
 }
 function matchItem(item, node, path, sol, emit, ctx) {
   var _a, _b;
@@ -959,38 +2151,142 @@ function matchItem(item, node, path, sol, emit, ctx) {
       case "Any":
         emit(cloneSolution(sol));
         return;
-      case "Lit":
-        if (Object.is(node, item.value))
+      case "TypedAny":
+        if (typeof node === item.kind)
           emit(cloneSolution(sol));
         return;
-      case "Re":
-        if (item.re.test(String(node)))
+      case "Lit":
+        if (sameValueZero(node, item.value))
+          emit(cloneSolution(sol));
+        return;
+      case "StringPattern":
+        if (item.matchFn(node))
           emit(cloneSolution(sol));
         return;
       case "Bool":
-        if (Object.is(node, item.value))
+        if (sameValueZero(node, item.value))
           emit(cloneSolution(sol));
         return;
       case "Null":
         if (node === null)
           emit(cloneSolution(sol));
         return;
+      case "Fail":
+        return;
+      case "Flow": {
+        const sliceKind = item.sliceKind || "object";
+        const sigil = sliceKind === "object" ? "%" : "@";
+        matchItem(item.pat, node, path, sol, (s2) => {
+          let flowKey;
+          let bucketLevel = null;
+          if (item.labelRef) {
+            if (!s2.labels.has(item.labelRef)) {
+              throw new Error(
+                `Flow operator ->${sigil}${item.bucket}<^${item.labelRef}> references unknown label '${item.labelRef}'`
+              );
+            }
+            const labelInfo = s2.labels.get(item.labelRef);
+            if (labelInfo.key === void 0) {
+              throw new Error(
+                `Flow operator ->${sigil}${item.bucket}<^${item.labelRef}> references label '${item.labelRef}' which was not in a K:V iteration context`
+              );
+            }
+            flowKey = labelInfo.key;
+            bucketLevel = labelInfo.bucketLevel;
+          } else {
+            flowKey = ctx.flowKey;
+          }
+          if (flowKey !== void 0) {
+            if (!addToBucket(s2, item.bucket, flowKey, node, bucketLevel, sliceKind)) {
+              return;
+            }
+          }
+          emit(s2);
+        }, ctx);
+        return;
+      }
+      case "Collecting": {
+        const sliceKind = item.sliceKind;
+        const sigil = sliceKind === "object" ? "%" : "@";
+        matchItem(item.pat, node, path, sol, (s2) => {
+          if (!s2.labels.has(item.labelRef)) {
+            emit(s2);
+            return;
+          }
+          const labelInfo = s2.labels.get(item.labelRef);
+          const bucketLevel = labelInfo.bucketLevel;
+          const collectExpr = item.collectExpr;
+          let collectKey, collectValue;
+          if (collectExpr.key !== void 0 && !s2.env.has(collectExpr.key)) {
+            emit(s2);
+            return;
+          }
+          if (!s2.env.has(collectExpr.value)) {
+            emit(s2);
+            return;
+          }
+          if (collectExpr.key !== void 0) {
+            const keyBinding = s2.env.get(collectExpr.key);
+            collectKey = keyBinding.kind === "scalar" ? keyBinding.value : keyBinding;
+          }
+          const valueBinding = s2.env.get(collectExpr.value);
+          collectValue = valueBinding.kind === "scalar" ? valueBinding.value : valueBinding;
+          if (sliceKind === "object") {
+            if (!addToBucket(s2, item.bucket, collectKey, collectValue, bucketLevel, "object")) {
+              return;
+            }
+          } else {
+            if (!addToBucket(s2, item.bucket, null, collectValue, bucketLevel, "array")) {
+              return;
+            }
+          }
+          emit(s2);
+        }, ctx);
+        return;
+      }
       case "Alt": {
-        for (const sub of item.alts) {
-          matchItem(sub, node, path, sol, emit, ctx);
-          guard(ctx);
+        if (item.prioritized) {
+          for (const sub of item.alts) {
+            let any = false;
+            matchItem(sub, node, path, sol, (s) => {
+              any = true;
+              emit(s);
+            }, ctx);
+            if (any)
+              return;
+            guard(ctx);
+          }
+        } else {
+          for (const sub of item.alts) {
+            matchItem(sub, node, path, sol, emit, ctx);
+            guard(ctx);
+          }
         }
         return;
       }
       case "Look": {
-        let matchedSol = null;
-        matchItem(item.pat, node, path, cloneSolution(sol), (s2) => {
-          if (!matchedSol)
-            matchedSol = s2;
-        }, ctx);
-        const matched2 = matchedSol !== null;
-        if (matched2 && !item.neg || !matched2 && item.neg) {
-          emit(matched2 ? matchedSol : cloneSolution(sol));
+        const hasBindings = patternHasBindings(item.pat);
+        if (item.neg) {
+          let matched2 = false;
+          matchItem(item.pat, node, path, cloneSolution(sol), () => {
+            matched2 = true;
+          }, ctx);
+          if (!matched2) {
+            emit(cloneSolution(sol));
+          }
+        } else if (hasBindings) {
+          matchItem(item.pat, node, path, cloneSolution(sol), (s2) => {
+            emit(s2);
+          }, ctx);
+        } else {
+          let matchedSol = null;
+          matchItem(item.pat, node, path, cloneSolution(sol), (s2) => {
+            if (!matchedSol)
+              matchedSol = s2;
+          }, ctx);
+          if (matchedSol) {
+            emit(matchedSol);
+          }
         }
         return;
       }
@@ -1006,6 +2302,9 @@ function matchItem(item, node, path, sol, emit, ctx) {
             if ((_a2 = ctx.debug) == null ? void 0 : _a2.onBind) {
               ctx.debug.onBind("scalar", item.name, node);
             }
+            addGuard(s3, item.guard, item.name);
+            if (!checkGuards(s3))
+              return;
             emit(s3);
           }
         }, ctx);
@@ -1014,16 +2313,48 @@ function matchItem(item, node, path, sol, emit, ctx) {
       case "GroupBind": {
         throw new Error("Group binding @x cannot appear at top level");
       }
+      case "Guarded": {
+        matchItem(item.pat, node, path, sol, (s2) => {
+          const guardEnv = new Map(s2.env);
+          guardEnv.set("_", { kind: "scalar", value: node });
+          try {
+            if (evaluateExpr(item.guard, guardEnv)) {
+              emit(s2);
+            }
+          } catch (e) {
+          }
+        }, ctx);
+        return;
+      }
       case "Arr": {
         if (!Array.isArray(node))
           return;
-        matchArray(item.items, node, path, sol, emit, ctx);
+        if (item.label) {
+          const s2 = cloneSolution(sol);
+          pushBucketLevel(s2);
+          if (ctx.flowKey !== void 0) {
+            s2.labels.set(item.label, { key: ctx.flowKey, bucketLevel: s2.bucketStack.length - 1 });
+          } else {
+            s2.labels.set(item.label, { key: void 0, bucketLevel: s2.bucketStack.length - 1 });
+          }
+          const collected = [];
+          matchArray(item.items, node, path, s2, (s3) => {
+            collected.push(s3);
+          }, ctx);
+          if (collected.length > 0) {
+            const finalized = finalizeBucketLevel(collected);
+            for (const s of finalized)
+              emit(s);
+          }
+        } else {
+          matchArray(item.items, node, path, sol, emit, ctx);
+        }
         return;
       }
       case "Obj": {
         if (!isObject(node))
           return;
-        matchObject(item.terms, item.spread, node, path, sol, emit, ctx);
+        matchObject(item.terms, item.spread, node, path, sol, emit, ctx, null, item.label);
         return;
       }
       case "Paren": {
@@ -1035,194 +2366,221 @@ function matchItem(item, node, path, sol, emit, ctx) {
     }
   }
 }
+function matchArrayItemWithRange(item, arr, startIdx, path, sol, onMatch, ctx) {
+  guard(ctx);
+  switch (item.type) {
+    case "Spread": {
+      const { min, max } = parseQuantRange(item.quant);
+      const maxK = Math.min(max, arr.length - startIdx);
+      for (let k = min; k <= maxK; k++) {
+        onMatch(cloneSolution(sol), startIdx + k);
+        if (ctx.steps > ctx.maxSteps)
+          break;
+      }
+      return;
+    }
+    case "Seq": {
+      matchArraySeqWithRange(item.items, arr, startIdx, path, sol, onMatch, ctx);
+      return;
+    }
+    case "Alt": {
+      let anyEmitted = false;
+      for (const branch of item.alts) {
+        if (item.prioritized && anyEmitted)
+          break;
+        if (ctx.steps > ctx.maxSteps)
+          break;
+        guard(ctx);
+        let inner = branch;
+        while (inner.type === "Paren")
+          inner = inner.item;
+        matchArrayItemWithRange(inner, arr, startIdx, path, sol, (s, endIdx) => {
+          anyEmitted = true;
+          onMatch(s, endIdx);
+        }, ctx);
+      }
+      return;
+    }
+    case "Quant": {
+      const m = item.min !== null ? item.min : 0;
+      const n = item.max !== null ? item.max : Infinity;
+      quantWithRange(item.sub, arr, startIdx, m, n, item.op || "?", path, sol, onMatch, ctx);
+      return;
+    }
+    case "GroupBind": {
+      matchArrayItemWithRange(item.pat, arr, startIdx, path, sol, (s2, endIdx) => {
+        var _a;
+        const slice = arr.slice(startIdx, endIdx);
+        const s3 = cloneSolution(s2);
+        const groupValue = Group.array(...slice);
+        if (bindGroup(s3.env, item.name, groupValue)) {
+          recordGroupSite(s3, item.name, path, startIdx, endIdx, slice);
+          if ((_a = ctx.debug) == null ? void 0 : _a.onBind) {
+            ctx.debug.onBind("group", item.name, groupValue);
+          }
+          onMatch(s3, endIdx);
+        }
+      }, ctx);
+      return;
+    }
+    case "SBind": {
+      if (item.pat.type === "Seq") {
+        matchArraySeqWithRange(item.pat.items, arr, startIdx, path, sol, (s2, endIdx) => {
+          var _a;
+          if (endIdx - startIdx === 1) {
+            const s3 = cloneSolution(s2);
+            const element = arr[startIdx];
+            if (bindScalar(s3.env, item.name, element)) {
+              recordScalarSite(s3, item.name, [...path, startIdx], element);
+              if ((_a = ctx.debug) == null ? void 0 : _a.onBind) {
+                ctx.debug.onBind("scalar", item.name, element);
+              }
+              addGuard(s3, item.guard, item.name);
+              if (checkGuards(s3)) {
+                onMatch(s3, endIdx);
+              }
+            }
+          }
+        }, ctx);
+        return;
+      }
+      if (startIdx < arr.length) {
+        matchItem(item, arr[startIdx], [...path, startIdx], sol, (s2) => {
+          onMatch(s2, startIdx + 1);
+        }, ctx);
+      }
+      return;
+    }
+    case "Look": {
+      const remainingGroup = arr.slice(startIdx);
+      const patternItems = [item.pat, { type: "Spread", quant: null }];
+      if (item.neg) {
+        let matched = false;
+        matchArray(patternItems, remainingGroup, [...path, startIdx], cloneSolution(sol), () => {
+          matched = true;
+        }, ctx);
+        if (!matched) {
+          onMatch(sol, startIdx);
+        }
+      } else {
+        const hasBindings = patternHasBindings(item.pat);
+        if (hasBindings) {
+          matchArray(patternItems, remainingGroup, [...path, startIdx], sol, (s2) => {
+            onMatch(s2, startIdx);
+          }, ctx);
+        } else {
+          let matchedSol = null;
+          matchArray(patternItems, remainingGroup, [...path, startIdx], sol, (s2) => {
+            if (!matchedSol)
+              matchedSol = s2;
+          }, ctx);
+          if (matchedSol) {
+            onMatch(matchedSol, startIdx);
+          }
+        }
+      }
+      return;
+    }
+    default: {
+      if (startIdx < arr.length) {
+        matchItem(item, arr[startIdx], [...path, startIdx], sol, (s2) => {
+          onMatch(s2, startIdx + 1);
+        }, ctx);
+      }
+      return;
+    }
+  }
+}
+function matchArraySeqWithRange(items, arr, startIdx, path, sol, onMatch, ctx) {
+  function step(ixItem, ixArr, sIn) {
+    guard(ctx);
+    if (ixItem === items.length) {
+      onMatch(sIn, ixArr);
+      return;
+    }
+    matchArrayItemWithRange(items[ixItem], arr, ixArr, path, sIn, (s2, endIdx) => {
+      step(ixItem + 1, endIdx, s2);
+    }, ctx);
+  }
+  step(0, startIdx, sol);
+}
+function quantWithRange(sub, arr, startIdx, m, n, op, path, sol, onMatch, ctx) {
+  const maxRep = Math.min(n, arr.length - startIdx);
+  const isPossessive = op === "++" || op === "*+" || op === "?+";
+  let frontier = [{ idx: startIdx, sol: cloneSolution(sol), reps: 0 }];
+  for (let r = 0; r < m; r++) {
+    const next = [];
+    for (const st of frontier) {
+      if (st.idx >= arr.length)
+        continue;
+      matchItem(sub, arr[st.idx], [...path, st.idx], st.sol, (s2) => {
+        next.push({ idx: st.idx + 1, sol: s2, reps: st.reps + 1 });
+      }, ctx);
+    }
+    frontier = next;
+    if (!frontier.length)
+      return;
+  }
+  if (isPossessive) {
+    for (let r = m; r < maxRep; r++) {
+      const grown = [];
+      for (const st of frontier) {
+        if (st.idx >= arr.length)
+          continue;
+        matchItem(sub, arr[st.idx], [...path, st.idx], st.sol, (s2) => {
+          grown.push({ idx: st.idx + 1, sol: s2, reps: st.reps + 1 });
+        }, ctx);
+      }
+      if (!grown.length)
+        break;
+      frontier = grown;
+    }
+    for (const st of frontier) {
+      onMatch(st.sol, st.idx);
+    }
+  } else {
+    const allFrontiers = [frontier];
+    for (let r = m; r < maxRep; r++) {
+      const grown = [];
+      for (const st of frontier) {
+        if (st.idx >= arr.length)
+          continue;
+        matchItem(sub, arr[st.idx], [...path, st.idx], st.sol, (s2) => {
+          grown.push({ idx: st.idx + 1, sol: s2, reps: st.reps + 1 });
+        }, ctx);
+      }
+      if (!grown.length)
+        break;
+      frontier = grown;
+      allFrontiers.push(frontier);
+    }
+    for (let i = allFrontiers.length - 1; i >= 0; i--) {
+      for (const st of allFrontiers[i]) {
+        onMatch(st.sol, st.idx);
+      }
+    }
+  }
+}
 function matchArray(items, arr, path, sol, emit, ctx) {
   const last = items[items.length - 1];
   const hadTrailingSpread = last && last.type === "Spread" && last.quant == null;
   if (hadTrailingSpread) {
     items = items.slice(0, -1);
   }
-  stepItems(0, 0, sol);
-  function stepItems(ixItem, ixArr, sIn) {
-    guard(ctx);
-    if (ixItem === items.length) {
-      if (hadTrailingSpread || ixArr === arr.length) {
-        emit(cloneSolution(sIn));
-      }
-      return;
+  matchArraySeqWithRange(items, arr, 0, path, sol, (s, endIdx) => {
+    if (hadTrailingSpread || endIdx === arr.length) {
+      emit(cloneSolution(s));
     }
-    const it = items[ixItem];
-    if (it.type === "Spread") {
-      const { min, max } = parseQuantRange(it.quant);
-      const maxK = Math.min(max, arr.length - ixArr);
-      for (let k = min; k <= maxK; k++) {
-        stepItems(ixItem + 1, ixArr + k, sIn);
-        if (ctx.steps > ctx.maxSteps)
-          break;
-      }
-      return;
-    }
-    if (it.type === "GroupBind") {
-      return matchArrayGroupBind(it, ixItem, ixArr, sIn);
-    }
-    if (it.type === "Quant") {
-      const min = it.min !== null ? it.min : 0;
-      const max = it.max !== null ? it.max : Infinity;
-      const op = it.op || "?";
-      return quantOnArray(it.sub, min, max, op, ixItem, ixArr, sIn);
-    }
-    if (it.type === "Look") {
-      let matchedSol = null;
-      const remainingGroup = arr.slice(ixArr);
-      const testSol = it.neg ? cloneSolution(sIn) : sIn;
-      const patternItems = [it.pat];
-      const lastItem = patternItems[patternItems.length - 1];
-      const alreadyUnanchored = lastItem && lastItem.type === "Spread";
-      if (!alreadyUnanchored) {
-        patternItems.push({ type: "Spread", quant: null });
-      }
-      matchArray(patternItems, remainingGroup, [...path, ixArr], testSol, (s2) => {
-        if (!matchedSol)
-          matchedSol = s2;
-      }, ctx);
-      const matched = matchedSol !== null;
-      if (matched && !it.neg || !matched && it.neg) {
-        const continueSol = matched && !it.neg ? matchedSol : sIn;
-        stepItems(ixItem + 1, ixArr, continueSol);
-      }
-      return;
-    }
-    if (ixArr >= arr.length)
-      return;
-    matchItem(it, arr[ixArr], [...path, ixArr], sIn, (s2) => {
-      stepItems(ixItem + 1, ixArr + 1, s2);
-    }, ctx);
-  }
-  function matchArrayGroupBind(groupBind, ixItem, ixArr, sIn) {
-    const maxK = arr.length - ixArr;
-    if (groupBind.pat.type === "Seq") {
-      for (let k = maxK; k >= 0; k--) {
-        const testGroup = arr.slice(ixArr, ixArr + k);
-        matchArray(groupBind.pat.items, testGroup, [...path, ixArr], sIn, (s2) => {
-          var _a;
-          const group = testGroup;
-          const s3 = cloneSolution(s2);
-          const groupValue = Group.array(...group);
-          if (bindGroup(s3.env, groupBind.name, groupValue)) {
-            recordGroupSite(s3, groupBind.name, path, ixArr, ixArr + k, group);
-            if ((_a = ctx.debug) == null ? void 0 : _a.onBind) {
-              ctx.debug.onBind("group", groupBind.name, groupValue);
-            }
-            stepItems(ixItem + 1, ixArr + k, s3);
-          }
-        }, ctx);
-      }
-      return;
-    }
-    if (groupBind.pat.type === "Quant") {
-      const { sub, min, max, op } = groupBind.pat;
-      const m = min !== null ? min : 0;
-      const n = max !== null ? max : Infinity;
-      const quantOp = op || "?";
-      return quantOnArray(sub, m, n, quantOp, ixItem, ixArr, sIn, (st) => {
-        var _a;
-        const start = ixArr;
-        const end = st.idx;
-        const group = arr.slice(start, end);
-        const s2 = cloneSolution(st.sol);
-        const groupValue = Group.array(...group);
-        if (bindGroup(s2.env, groupBind.name, groupValue)) {
-          recordGroupSite(s2, groupBind.name, path, start, end, group);
-          if ((_a = ctx.debug) == null ? void 0 : _a.onBind) {
-            ctx.debug.onBind("group", groupBind.name, groupValue);
-          }
-          stepItems(ixItem + 1, end, s2);
-        }
-      });
-    } else {
-      if (ixArr < arr.length) {
-        matchItem(groupBind.pat, arr[ixArr], [...path, ixArr], sIn, (s2) => {
-          var _a;
-          const group = [arr[ixArr]];
-          const s3 = cloneSolution(s2);
-          const groupValue = Group.array(...group);
-          if (bindGroup(s3.env, groupBind.name, groupValue)) {
-            recordGroupSite(s3, groupBind.name, path, ixArr, ixArr + 1, group);
-            if ((_a = ctx.debug) == null ? void 0 : _a.onBind) {
-              ctx.debug.onBind("group", groupBind.name, groupValue);
-            }
-            stepItems(ixItem + 1, ixArr + 1, s3);
-          }
-        }, ctx);
-      }
-    }
-  }
-  function quantOnArray(sub, m, n, op, ixItem, ixArr, sIn, cont) {
-    const maxRep = Math.min(n, arr.length - ixArr);
-    const isPossessive = op && (op.startsWith("*{") || op.endsWith("+"));
-    const continueWith = cont ? (st) => cont(st) : (st) => stepItems(ixItem + 1, st.idx, st.sol);
-    let frontier = [{ idx: ixArr, sol: cloneSolution(sIn), reps: 0 }];
-    for (let r = 0; r < m; r++) {
-      const next = [];
-      for (const st of frontier) {
-        const { idx, sol: sol2 } = st;
-        if (idx >= arr.length)
-          continue;
-        matchItem(sub, arr[idx], [...path, idx], sol2, (s2) => {
-          next.push({ idx: idx + 1, sol: s2, reps: st.reps + 1 });
-        }, ctx);
-      }
-      frontier = next;
-      if (!frontier.length)
-        return;
-    }
-    if (isPossessive) {
-      for (let r = m; r < maxRep; r++) {
-        const grown = [];
-        for (const st of frontier) {
-          const { idx, sol: sol2 } = st;
-          if (idx >= arr.length)
-            continue;
-          matchItem(sub, arr[idx], [...path, idx], sol2, (s2) => {
-            grown.push({ idx: idx + 1, sol: s2, reps: st.reps + 1 });
-          }, ctx);
-        }
-        if (!grown.length)
-          break;
-        frontier = grown;
-      }
-      for (const st of frontier) {
-        continueWith(st);
-      }
-    } else {
-      const allFrontiers = [frontier];
-      for (let r = m; r < maxRep; r++) {
-        const grown = [];
-        for (const st of frontier) {
-          const { idx, sol: sol2 } = st;
-          if (idx >= arr.length)
-            continue;
-          matchItem(sub, arr[idx], [...path, idx], sol2, (s2) => {
-            grown.push({ idx: idx + 1, sol: s2, reps: st.reps + 1 });
-          }, ctx);
-        }
-        if (!grown.length)
-          break;
-        frontier = grown;
-        allFrontiers.push(frontier);
-      }
-      for (let i = allFrontiers.length - 1; i >= 0; i--) {
-        for (const st of allFrontiers[i]) {
-          continueWith(st);
-        }
-      }
-    }
-  }
+  }, ctx);
 }
-function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = null) {
-  var _a, _b, _c, _d, _e;
+function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = null, objLabel = null) {
+  var _a, _b, _c, _d;
   guard(ctx);
   const DEBUG = false;
-  let solutions = [{ sol: cloneSolution(sol), testedKeys: /* @__PURE__ */ new Set() }];
+  let solutions = [{ sol: cloneSolution(sol), testedKeys: /* @__PURE__ */ new Set(), coveredKeys: /* @__PURE__ */ new Set() }];
+  if (objLabel) {
+    pushBucketLevel(solutions[0].sol);
+  }
   if (DEBUG)
     console.log(`[matchObject] obj keys:`, Object.keys(obj), `terms:`, terms.length);
   for (const term of terms) {
@@ -1230,9 +2588,9 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
       const isSpread = term.pat.type === "Spread";
       const next2 = [];
       for (const state of solutions) {
-        const { sol: s0, testedKeys } = state;
+        const { sol: s0, testedKeys, coveredKeys = /* @__PURE__ */ new Set() } = state;
         if (isSpread) {
-          const residualKeys = Object.keys(obj).filter((k) => !testedKeys.has(k));
+          const residualKeys = Object.keys(obj).filter((k) => !coveredKeys.has(k));
           const residualObj = {};
           for (const k of residualKeys) {
             residualObj[k] = obj[k];
@@ -1252,7 +2610,7 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
             if ((_a = ctx.debug) == null ? void 0 : _a.onBind) {
               ctx.debug.onBind("group", term.name, groupValue);
             }
-            next2.push({ sol: s2, testedKeys: new Set(testedKeys) });
+            next2.push({ sol: s2, testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys) });
           }
         } else {
           if (term.pat.type !== "OGroup") {
@@ -1287,10 +2645,12 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
                   ctx.debug.onBind("group", term.name, groupValue);
                 }
                 const newTestedKeys = new Set(testedKeys);
+                const newCoveredKeys = new Set(coveredKeys);
                 for (const k of matchedKeys) {
                   newTestedKeys.add(k);
+                  newCoveredKeys.add(k);
                 }
-                next2.push({ sol: s3, testedKeys: newTestedKeys });
+                next2.push({ sol: s3, testedKeys: newTestedKeys, coveredKeys: newCoveredKeys });
               }
             },
             ctx,
@@ -1305,9 +2665,15 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     if (term.type === "OGroup") {
       const next2 = [];
       for (const state of solutions) {
+        const { coveredKeys = /* @__PURE__ */ new Set() } = state;
+        const groupMatchedKeys = /* @__PURE__ */ new Set();
         matchObject(term.groups, null, obj, path, state.sol, (s2) => {
-          next2.push({ sol: s2, testedKeys: new Set(state.testedKeys) });
-        }, ctx);
+          const newCoveredKeys = new Set(coveredKeys);
+          for (const k of groupMatchedKeys) {
+            newCoveredKeys.add(k);
+          }
+          next2.push({ sol: s2, testedKeys: new Set(state.testedKeys), coveredKeys: newCoveredKeys });
+        }, ctx, groupMatchedKeys);
       }
       solutions = next2;
       continue;
@@ -1315,26 +2681,38 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     if (term.type === "OLook") {
       const next2 = [];
       for (const state of solutions) {
-        const { sol: s0, testedKeys } = state;
+        const { sol: s0, testedKeys, coveredKeys = /* @__PURE__ */ new Set() } = state;
         if (term.neg && term.pat.type === "Spread") {
-          const residualKeys = Object.keys(obj).filter((k) => !testedKeys.has(k));
+          const residualKeys = Object.keys(obj).filter((k) => !coveredKeys.has(k));
           const noResiduals = residualKeys.length === 0;
           if (noResiduals) {
-            next2.push({ sol: cloneSolution(s0), testedKeys: new Set(testedKeys) });
+            next2.push({ sol: cloneSolution(s0), testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys) });
+          }
+        } else if (term.neg) {
+          let matched = false;
+          const lookaheadTestedKeys = new Set(testedKeys);
+          matchObjectGroup(term.pat, obj, path, cloneSolution(s0), () => {
+            matched = true;
+          }, ctx, lookaheadTestedKeys);
+          if (!matched) {
+            next2.push({ sol: cloneSolution(s0), testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys) });
           }
         } else {
-          let matchedSol = null;
+          const hasBindings = patternHasBindings(term.pat);
           const lookaheadTestedKeys = new Set(testedKeys);
-          matchObjectGroup(term.pat, obj, path, cloneSolution(s0), (s2) => {
-            if (!matchedSol)
-              matchedSol = s2;
-          }, ctx, lookaheadTestedKeys);
-          const matched = matchedSol !== null;
-          if (matched && !term.neg || !matched && term.neg) {
-            next2.push({
-              sol: matched ? matchedSol : cloneSolution(s0),
-              testedKeys: new Set(testedKeys)
-            });
+          if (hasBindings) {
+            matchObjectGroup(term.pat, obj, path, cloneSolution(s0), (s2) => {
+              next2.push({ sol: s2, testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys) });
+            }, ctx, lookaheadTestedKeys);
+          } else {
+            let matchedSol = null;
+            matchObjectGroup(term.pat, obj, path, cloneSolution(s0), (s2) => {
+              if (!matchedSol)
+                matchedSol = s2;
+            }, ctx, lookaheadTestedKeys);
+            if (matchedSol) {
+              next2.push({ sol: matchedSol, testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys) });
+            }
           }
         }
       }
@@ -1344,58 +2722,16 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     if (term.type !== "OTerm") {
       throw new Error(`Expected OTerm, GroupBind, OLook, or OGroup, got ${term.type}`);
     }
-    if (term.op === "?:") {
-      const next2 = [];
+    const isStrong = term.strong === true;
+    const isOptional = term.optional === true;
+    if (isStrong) {
       for (const state of solutions) {
-        const { sol: s0, testedKeys } = state;
-        if (term.key.type === "RootKey") {
-          const s1 = cloneSolution(s0);
-          navigateBreadcrumbs(
-            term.breadcrumbs,
-            obj,
-            path,
-            s1,
-            (finalNode, finalPath, s2) => {
-              matchItem(term.val, finalNode, finalPath, s2, (s3) => {
-                next2.push({ sol: s3, testedKeys: new Set(testedKeys) });
-              }, ctx);
-            },
-            ctx
-          );
-          continue;
-        }
-        const keys = objectKeysMatching(obj, term.key, s0.env);
-        if (keys.length > 0) {
-          for (const k of keys) {
-            const s1 = cloneSolution(s0);
-            const newTestedKeys = new Set(testedKeys);
-            newTestedKeys.add(k);
-            if (!bindKeyVariables(term.key, k, s1, path)) {
-              continue;
-            }
-            navigateBreadcrumbs(
-              term.breadcrumbs,
-              obj[k],
-              [...path, k],
-              s1,
-              (finalNode, finalPath, s2) => {
-                matchItem(term.val, finalNode, finalPath, s2, (s3) => {
-                  next2.push({ sol: s3, testedKeys: newTestedKeys });
-                }, ctx);
-              },
-              ctx
-            );
-          }
-        } else {
-          next2.push({ sol: cloneSolution(s0), testedKeys: new Set(testedKeys) });
-        }
+        pushBucketLevel(state.sol);
       }
-      solutions = next2;
-      continue;
     }
     let next = [];
     for (const state of solutions) {
-      const { sol: s0, testedKeys } = state;
+      const { sol: s0, testedKeys, coveredKeys = /* @__PURE__ */ new Set() } = state;
       if (term.key.type === "RootKey") {
         const s1 = cloneSolution(s0);
         navigateBreadcrumbs(
@@ -1405,49 +2741,108 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
           s1,
           (finalNode, finalPath, s2) => {
             matchItem(term.val, finalNode, finalPath, s2, (s3) => {
-              next.push({ sol: s3, testedKeys: new Set(testedKeys) });
+              next.push({ sol: s3, testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys) });
             }, ctx);
           },
           ctx
         );
         continue;
       }
-      const keys = objectKeysMatching(obj, term.key, s0.env);
+      const matchingKeys = objectKeysMatching(obj, term.key, s0.env);
       if (DEBUG)
-        console.log(`[matchObject] term.key:`, term.key, `matched keys:`, keys);
-      if (term.op === ":" && keys.length === 0) {
+        console.log(`[matchObject] term.key:`, term.key, `matched keys:`, matchingKeys);
+      const newCoveredKeys = new Set(coveredKeys);
+      for (const k of matchingKeys) {
+        newCoveredKeys.add(k);
+      }
+      const sliceKeys = [];
+      const badKeys = [];
+      for (const k of matchingKeys) {
+        let valueMatches = false;
+        const testSol = cloneSolution(s0);
+        if (objLabel) {
+          testSol.labels.set(objLabel, { key: k, bucketLevel: testSol.bucketStack.length - 1 });
+        }
+        if (term.breadcrumbs && term.breadcrumbs.length > 0) {
+          navigateBreadcrumbs(
+            term.breadcrumbs,
+            obj[k],
+            [...path, k],
+            testSol,
+            (finalNode, finalPath, s2) => {
+              matchItem(term.val, finalNode, finalPath, s2, () => {
+                valueMatches = true;
+              }, ctx);
+            },
+            ctx
+          );
+        } else {
+          matchItem(term.val, obj[k], [...path, k], testSol, () => {
+            valueMatches = true;
+          }, ctx);
+        }
+        if (valueMatches) {
+          sliceKeys.push(k);
+        } else {
+          badKeys.push(k);
+        }
+      }
+      if (DEBUG)
+        console.log(`[matchObject] slice:`, sliceKeys, `bad:`, badKeys);
+      const sliceCount = sliceKeys.length;
+      const quant = term.quant;
+      const minSlice = quant ? quant.min : isOptional ? 0 : 1;
+      const maxSlice = quant ? quant.max : null;
+      if (sliceCount < minSlice) {
+        if (DEBUG)
+          console.log(`[matchObject] failed: slice count ${sliceCount} < min ${minSlice}`);
         continue;
       }
-      for (const k of keys) {
+      if (maxSlice !== null && sliceCount > maxSlice) {
         if (DEBUG)
-          console.log(`[matchObject] processing key '${k}', breadcrumbs:`, ((_b = term.breadcrumbs) == null ? void 0 : _b.length) || 0);
-        const s1 = cloneSolution(s0);
-        const newTestedKeys = new Set(testedKeys);
-        newTestedKeys.add(k);
-        if (!bindKeyVariables(term.key, k, s1, path)) {
-          continue;
+          console.log(`[matchObject] failed: slice count ${sliceCount} > max ${maxSlice}`);
+        continue;
+      }
+      if (isStrong && badKeys.length > 0) {
+        if (DEBUG)
+          console.log(`[matchObject] failed: bad entries exist with strong semantics (else !)`);
+        continue;
+      }
+      if (sliceKeys.length > 0) {
+        for (const k of sliceKeys) {
+          const s1 = cloneSolution(s0);
+          const newTestedKeys = new Set(testedKeys);
+          newTestedKeys.add(k);
+          if (objLabel) {
+            s1.labels.set(objLabel, { key: k, bucketLevel: s1.bucketStack.length - 1 });
+          }
+          if (!bindKeyVariables(term.key, k, s1, path)) {
+            continue;
+          }
+          const savedFlowKey = ctx.flowKey;
+          ctx.flowKey = k;
+          navigateBreadcrumbs(
+            term.breadcrumbs,
+            obj[k],
+            [...path, k],
+            s1,
+            (finalNode, finalPath, s2) => {
+              matchItem(term.val, finalNode, finalPath, s2, (s3) => {
+                next.push({ sol: s3, testedKeys: newTestedKeys, coveredKeys: newCoveredKeys });
+              }, ctx);
+            },
+            ctx
+          );
+          ctx.flowKey = savedFlowKey;
         }
-        if (DEBUG)
-          console.log(`[matchObject] obj[${k}]:`, obj[k]);
-        navigateBreadcrumbs(
-          term.breadcrumbs,
-          obj[k],
-          [...path, k],
-          s1,
-          (finalNode, finalPath, s2) => {
-            if (DEBUG)
-              console.log(`[matchObject] reached final node:`, finalNode, `matching against:`, term.val);
-            matchItem(term.val, finalNode, finalPath, s2, (s3) => {
-              if (DEBUG)
-                console.log(`[matchObject] value matched!`);
-              next.push({ sol: s3, testedKeys: newTestedKeys });
-            }, ctx);
-          },
-          ctx
-        );
+      } else {
+        next.push({ sol: cloneSolution(s0), testedKeys: new Set(testedKeys), coveredKeys: newCoveredKeys });
       }
     }
     solutions = next;
+    if (isStrong && solutions.length > 0) {
+      solutions = finalizeBucketLevel(solutions);
+    }
     if (!solutions.length)
       break;
   }
@@ -1455,12 +2850,12 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     if (spread.type === "OLook") {
       const next = [];
       for (const state of solutions) {
-        const { sol: s0, testedKeys } = state;
+        const { sol: s0, testedKeys, coveredKeys = /* @__PURE__ */ new Set() } = state;
         if (spread.neg && spread.pat.type === "Spread") {
-          const residualKeys = Object.keys(obj).filter((k) => !testedKeys.has(k));
+          const residualKeys = Object.keys(obj).filter((k) => !coveredKeys.has(k));
           const noResiduals = residualKeys.length === 0;
           if (noResiduals) {
-            next.push({ sol: cloneSolution(s0), testedKeys: new Set(testedKeys) });
+            next.push({ sol: cloneSolution(s0), testedKeys: new Set(testedKeys), coveredKeys: new Set(coveredKeys) });
           }
         } else {
           throw new Error("General lookahead on remainder not yet implemented");
@@ -1470,10 +2865,10 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
     } else if (spread.type === "GroupBind") {
       const next = [];
       for (const state of solutions) {
-        const { sol: s0, testedKeys } = state;
-        const residualKeys = Object.keys(obj).filter((k) => !testedKeys.has(k));
-        let { min, max } = parseQuantRange((_c = spread.pat) == null ? void 0 : _c.quant);
-        if (!((_d = spread.pat) == null ? void 0 : _d.quant)) {
+        const { sol: s0, testedKeys, coveredKeys = /* @__PURE__ */ new Set() } = state;
+        const residualKeys = Object.keys(obj).filter((k) => !coveredKeys.has(k));
+        let { min, max } = parseQuantRange((_b = spread.pat) == null ? void 0 : _b.quant);
+        if (!((_c = spread.pat) == null ? void 0 : _c.quant)) {
           min = 1;
           max = Infinity;
         } else if (spread.pat.quant === "?") {
@@ -1499,27 +2894,30 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
             keys: residualKeys,
             valueRefs: residualObj
           });
-          if ((_e = ctx.debug) == null ? void 0 : _e.onBind) {
+          if ((_d = ctx.debug) == null ? void 0 : _d.onBind) {
             ctx.debug.onBind("group", spread.name, groupValue);
           }
-          next.push({ sol: s2, testedKeys });
+          next.push({ sol: s2, testedKeys, coveredKeys });
         }
       }
       solutions = next;
     } else {
       const next = [];
       for (const state of solutions) {
-        const { sol: s0, testedKeys } = state;
+        const { sol: s0, testedKeys, coveredKeys = /* @__PURE__ */ new Set() } = state;
         let { min, max } = parseQuantRange(spread.quant);
         if (!spread.quant)
           min = 1;
-        const untestedCount = Object.keys(obj).filter((k) => !testedKeys.has(k)).length;
-        if (untestedCount >= min && (max === null || untestedCount <= max)) {
+        const uncoveredCount = Object.keys(obj).filter((k) => !coveredKeys.has(k)).length;
+        if (uncoveredCount >= min && (max === null || uncoveredCount <= max)) {
           next.push(state);
         }
       }
       solutions = next;
     }
+  }
+  if (objLabel && solutions.length > 0) {
+    solutions = finalizeBucketLevel(solutions);
   }
   if (outMatchedKeys) {
     for (const state of solutions) {
@@ -1636,6 +3034,12 @@ function navigateSingleBreadcrumb(bc, restBreadcrumbs, node, path, sol, emit, ct
 }
 function navigateSkipLevels(keyPattern, restBreadcrumbs, node, path, sol, emit, ctx) {
   guard(ctx);
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i++) {
+      navigateSkipLevels(keyPattern, restBreadcrumbs, node[i], [...path, i], sol, emit, ctx);
+    }
+    return;
+  }
   if (!isObject(node))
     return;
   if (keyPattern.type === "SBind") {
@@ -1667,7 +3071,7 @@ function navigateSkipLevels(keyPattern, restBreadcrumbs, node, path, sol, emit, 
   }
   for (const k of Object.keys(node)) {
     const child = node[k];
-    if (isObject(child)) {
+    if (isObject(child) || Array.isArray(child)) {
       navigateSkipLevels(keyPattern, restBreadcrumbs, child, [...path, k], sol, emit, ctx);
     }
   }
@@ -1701,10 +3105,12 @@ function keyMatches(pat, key) {
   switch (pat.type) {
     case "Any":
       return true;
+    case "TypedAny":
+      return pat.kind === "string";
     case "Lit":
       return Object.is(String(key), String(pat.value));
-    case "Re":
-      return pat.re.test(String(key));
+    case "StringPattern":
+      return pat.matchFn(String(key));
     case "SBind":
       if (pat.pat) {
         return keyMatches(pat.pat, key);
@@ -1723,11 +3129,19 @@ function bindKeyVariables(keyPat, key, sol, path) {
         return false;
       }
       recordScalarSite(sol, keyPat.name, path, key);
+      addGuard(sol, keyPat.guard, keyPat.name);
+      if (!checkGuards(sol))
+        return false;
       return true;
     case "Alt":
       for (const alt of keyPat.alts) {
-        if (keyMatches(alt, key)) {
-          return bindKeyVariables(alt, key, sol, path);
+        if (!keyMatches(alt, key))
+          continue;
+        const snapshot = cloneSolution(sol);
+        if (bindKeyVariables(alt, key, snapshot, path)) {
+          sol.env = snapshot.env;
+          sol.sites = snapshot.sites;
+          return true;
         }
       }
       return false;
@@ -1742,7 +3156,7 @@ function parseQuantRange(quant) {
   if (!quant)
     return { min: 0, max: Infinity };
   if (typeof quant === "object" && "min" in quant && "max" in quant) {
-    return { min: quant.min, max: quant.max === null ? Infinity : quant.max };
+    return { min: quant.min, max: quant.max };
   }
   if (quant === "?")
     return { min: 0, max: 1 };
@@ -1787,7 +3201,31 @@ function compile(pattern) {
     return hit;
   }
   let ast = parsePattern(String(pattern));
-  ast = { type: "SBind", name: "0", pat: ast };
+  let isSlicePattern = false;
+  if (ast.type === "SlicePattern") {
+    isSlicePattern = true;
+    if (ast.kind === "object") {
+      ast = {
+        type: "Obj",
+        terms: [{ type: "GroupBind", name: "0", pat: ast.content }],
+        spread: null
+      };
+    } else if (ast.kind === "array") {
+      ast = {
+        type: "Arr",
+        items: [
+          { type: "Spread", quant: null },
+          { type: "GroupBind", name: "0", pat: ast.content },
+          { type: "Spread", quant: null }
+        ]
+      };
+    }
+  } else {
+    ast = { type: "SBind", name: "0", pat: ast };
+  }
+  if (isSlicePattern) {
+    ast._isSlicePattern = true;
+  }
   _cache.set(pattern, ast);
   if (_cache.size > CACHE_MAX) {
     const k = _cache.keys().next().value;
@@ -1858,48 +3296,17 @@ function cloneDeep(v) {
   }
   return v;
 }
-function groupToPublicValue(v) {
-  if (!v || typeof v !== "object" || !v._type || !v._value)
-    return v;
-  if (v._type === "array") {
-    return v._value.slice ? v._value.slice() : [...v._value];
-  }
-  if (v._type === "object") {
-    return { ...v._value };
-  }
-  return v;
-}
-function normalizeBindings(rawBindings, { includeWhole = false } = {}) {
-  const out = {};
-  for (const [k, v] of Object.entries(rawBindings)) {
-    if (k === "0" && !includeWhole)
-      continue;
-    out[k] = groupToPublicValue(v);
-  }
-  return out;
-}
 function getAt(root, path) {
   let current = root;
-  for (const key of path) {
+  for (const key of path)
     current = current[key];
-  }
   return current;
 }
 function setAtMutate(root, path, value) {
   let current = root;
-  for (let i = 0; i < path.length - 1; i++) {
+  for (let i = 0; i < path.length - 1; i++)
     current = current[path[i]];
-  }
   current[path[path.length - 1]] = value;
-}
-function projectBindings(b, vars) {
-  const out = {};
-  for (const v of vars) {
-    const key = v.startsWith("$") ? v.slice(1) : v;
-    if (Object.prototype.hasOwnProperty.call(b, key))
-      out[key] = b[key];
-  }
-  return out;
 }
 function stableKey(v) {
   const seen = /* @__PURE__ */ new WeakMap();
@@ -1930,16 +3337,45 @@ function stableKey(v) {
   };
   return JSON.stringify(enc(v));
 }
-function applyEdits(root, edits) {
+function siteKey(site) {
+  if (site.kind === "scalar") {
+    return JSON.stringify(["scalar", site.path]);
+  }
+  if (site.groupStart !== void 0) {
+    return JSON.stringify(["group-array", site.path, site.groupStart, site.groupEnd]);
+  }
+  if (site.keys !== void 0) {
+    return JSON.stringify(["group-object", site.path, [...site.keys].sort()]);
+  }
+  return JSON.stringify(["unknown", site.path]);
+}
+function applyEdits(root, edits, opts = {}) {
+  const failures = [];
   if (edits.length === 0)
-    return root;
+    return { result: root, failures };
+  const onCASFailure = opts.onCASFailure || null;
   let result = root;
+  function handleCASFailure(edit, expected, actual) {
+    const failure = {
+      site: edit.site,
+      siteKey: siteKey(edit.site),
+      expected,
+      actual,
+      to: edit.to
+    };
+    if (onCASFailure) {
+      const action = onCASFailure(failure);
+      if (action === "force")
+        return true;
+    }
+    failures.push(failure);
+    return false;
+  }
   const editsByPath = /* @__PURE__ */ new Map();
   for (const edit of edits) {
     const pathKey = JSON.stringify(edit.site.path);
-    if (!editsByPath.has(pathKey)) {
+    if (!editsByPath.has(pathKey))
       editsByPath.set(pathKey, []);
-    }
     editsByPath.get(pathKey).push(edit);
   }
   for (const [, pathEdits] of editsByPath) {
@@ -1947,11 +3383,19 @@ function applyEdits(root, edits) {
     const splices = pathEdits.filter((e) => e.site.kind === "group");
     for (const edit of sets) {
       const current = getAt(result, edit.site.path);
-      if (deepEqual(current, edit.site.valueRef)) {
-        if (edit.site.path.length === 0) {
+      const matches2 = deepEqual(current, edit.site.valueRef);
+      if (matches2) {
+        if (edit.site.path.length === 0)
           result = edit.to;
-        } else {
+        else
           setAtMutate(result, edit.site.path, edit.to);
+      } else {
+        const shouldForce = handleCASFailure(edit, edit.site.valueRef, current);
+        if (shouldForce) {
+          if (edit.site.path.length === 0)
+            result = edit.to;
+          else
+            setAtMutate(result, edit.site.path, edit.to);
         }
       }
     }
@@ -1967,438 +3411,131 @@ function applyEdits(root, edits) {
             continue;
           const start = edit.site.groupStart + offset;
           const end = edit.site.groupEnd + offset;
-          let allMatch = true;
-          for (let i = 0; i < edit.site.valueRefs.length; i++) {
-            if (!deepEqual(arr[start + i], edit.site.valueRefs[i])) {
-              allMatch = false;
-              break;
-            }
-          }
+          const actualSlice = arr.slice(start, end);
+          let allMatch = actualSlice.length === edit.site.valueRefs.length;
           if (allMatch) {
-            if (!edit.to || !(edit.to instanceof Group) || edit.to._type !== "array") {
-              throw new Error(
-                "Array group variable replacement must use Group.array() internally."
-              );
+            for (let i = 0; i < edit.site.valueRefs.length; i++) {
+              if (!deepEqual(actualSlice[i], edit.site.valueRefs[i])) {
+                allMatch = false;
+                break;
+              }
             }
-            const elements = edit.to._value;
-            const oldLength = end - start;
-            const newLength = elements.length;
-            arr.splice(start, oldLength, ...elements);
-            offset += newLength - oldLength;
           }
+          if (!allMatch) {
+            const shouldForce = handleCASFailure(edit, edit.site.valueRefs, actualSlice);
+            if (!shouldForce)
+              continue;
+          }
+          if (!edit.to || !(edit.to instanceof Group) || edit.to._type !== "array") {
+            throw new Error("Internal error: array group splice requires Group.array");
+          }
+          const elements = edit.to._value;
+          const oldLength = end - start;
+          const newLength = elements.length;
+          arr.splice(start, oldLength, ...elements);
+          offset += newLength - oldLength;
         }
       }
       for (const edit of objectSplices) {
         const obj = getAt(result, edit.site.path);
         if (typeof obj !== "object" || obj === null || Array.isArray(obj))
           continue;
+        const actualProps = {};
         let allMatch = true;
         for (const key of edit.site.keys) {
+          actualProps[key] = obj[key];
           if (!deepEqual(obj[key], edit.site.valueRefs[key])) {
             allMatch = false;
-            break;
           }
         }
-        if (allMatch) {
-          if (!edit.to || !(edit.to instanceof Group) || edit.to._type !== "object") {
-            throw new Error(
-              "Object group variable replacement must use Group.object() internally."
-            );
-          }
-          const newProps = edit.to._value;
-          for (const key of edit.site.keys) {
-            delete obj[key];
-          }
-          Object.assign(obj, newProps);
+        if (!allMatch) {
+          const shouldForce = handleCASFailure(edit, edit.site.valueRefs, actualProps);
+          if (!shouldForce)
+            continue;
         }
+        if (!edit.to || !(edit.to instanceof Group) || edit.to._type !== "object") {
+          throw new Error("Internal error: object group splice requires Group.object");
+        }
+        const newProps = edit.to._value;
+        for (const key of edit.site.keys)
+          delete obj[key];
+        Object.assign(obj, newProps);
       }
     }
   }
-  return result;
+  return { result, failures };
 }
-var Match = class {
-  constructor(root, path, rawSolutions, matchSet) {
-    var _a;
-    this._root = root;
-    this._path = path;
-    this._rawSolutions = rawSolutions;
-    this._matchSet = matchSet;
-    this._solutions = rawSolutions.map((raw) => new Solution(raw, this, matchSet));
-    const zeroSites = ((_a = rawSolutions[0]) == null ? void 0 : _a.sites.get("0")) || [];
-    this._zeroSite = zeroSites[0] || null;
+function collectEditsFromPlan(sol, planOrFn, edits) {
+  const plan = typeof planOrFn === "function" ? planOrFn(sol) || {} : planOrFn || {};
+  const sitesMap = sol._sites;
+  for (const [varNameRaw, valueSpec] of Object.entries(plan)) {
+    const varName = varNameRaw.startsWith("$") || varNameRaw.startsWith("@") ? varNameRaw.slice(1) : varNameRaw;
+    const sites = sitesMap.get(varName) || [];
+    if (!sites.length)
+      continue;
+    const value = typeof valueSpec === "function" ? valueSpec(sol) : valueSpec;
+    for (const site of sites)
+      edits.push({ site, to: convertValueForSite(site, value) });
   }
-  path() {
-    return [...this._path];
-  }
-  value() {
-    if (!this._zeroSite)
-      return void 0;
-    return getAt(this._root, this._zeroSite.path);
-  }
-  /**
-   * Iterator of Solution objects for this match.
-   */
-  solutions() {
-    const sols = this._solutions;
-    return {
-      [Symbol.iterator]() {
-        let i = 0;
-        return {
-          next() {
-            if (i >= sols.length)
-              return { done: true };
-            return { value: sols[i++], done: false };
-          }
-        };
-      }
-    };
-  }
-  /**
-   * Pure replace: returns a NEW root with this match replaced.
-   * Uses first solution of this match.
-   */
-  replace(replOrFn) {
-    if (!this._zeroSite)
-      return this._root;
-    const firstSol = this._solutions[0] || null;
-    const to = typeof replOrFn === "function" ? replOrFn(firstSol) : replOrFn;
-    const edits = [{ site: this._zeroSite, to }];
-    const cloned = cloneDeep(this._root);
-    return applyEdits(cloned, edits);
-  }
-  /**
-   * Mutating edit: modifies variables in-place for this match.
-   *
-   * Forms:
-   *   edit("x", $ => $.x * 2)
-   *   edit($ => ({ x: $.y, y: $.x }))
-   *   edit({ x: $ => $.y, y: $ => $.x })
-   */
-  edit(arg1, arg2) {
-    const { planFactory } = normalizeEditArgs(arg1, arg2);
-    const edits = [];
-    for (const sol of this._solutions) {
-      const plan = planFactory(sol) || {};
+}
+function collectAllSiteEdits(occurrences, planOrFn, opts = {}) {
+  const per = opts.per || "site";
+  const editsBySiteKey = /* @__PURE__ */ new Map();
+  const conflicts = [];
+  for (const occ of occurrences) {
+    const sols = per === "occurrence" ? occ._solutions.length ? [occ._solutions[0]] : [] : occ._solutions;
+    for (const sol of sols) {
+      const plan = typeof planOrFn === "function" ? planOrFn(sol) || {} : planOrFn || {};
       const sitesMap = sol._sites;
       for (const [varNameRaw, valueSpec] of Object.entries(plan)) {
-        const varName = varNameRaw.startsWith("$") ? varNameRaw.slice(1) : varNameRaw;
+        const varName = varNameRaw.startsWith("$") || varNameRaw.startsWith("@") ? varNameRaw.slice(1) : varNameRaw;
         const sites = sitesMap.get(varName) || [];
+        if (!sites.length)
+          continue;
+        const value = typeof valueSpec === "function" ? valueSpec(sol) : valueSpec;
         for (const site of sites) {
-          const to = convertValueForSite(site, valueSpec);
-          edits.push({ site, to });
-        }
-      }
-    }
-    return applyEdits(this._root, edits);
-  }
-};
-var Solution = class {
-  constructor(rawSolution, match2, matchSet) {
-    this._match = match2;
-    this._matchSet = matchSet;
-    this._rawSolution = rawSolution;
-    this._sites = rawSolution.sites;
-    const publicBindings = normalizeBindings(rawSolution.bindings, { includeWhole: false });
-    this._bindings = publicBindings;
-    for (const [k, v] of Object.entries(publicBindings)) {
-      this[k] = v;
-    }
-    Object.defineProperty(this, "toObject", {
-      value: () => ({ ...this._bindings }),
-      enumerable: false
-    });
-  }
-  /**
-   * Iterator of Match objects with these bindings.
-   * Searches across all matches in the MatchSet for equivalent bindings.
-   */
-  matches() {
-    const myKey = stableKey(this._bindings);
-    const matchSet = this._matchSet;
-    return {
-      [Symbol.iterator]() {
-        const allMatches = [];
-        for (const m of matchSet) {
-          for (const s of m._solutions) {
-            if (stableKey(s._bindings) === myKey) {
-              allMatches.push(m);
-              break;
+          const key = siteKey(site);
+          const to = convertValueForSite(site, value);
+          if (editsBySiteKey.has(key)) {
+            const existing = editsBySiteKey.get(key);
+            if (!deepEqual(existing.to, to)) {
+              conflicts.push({
+                siteKey: key,
+                site,
+                existing: existing.to,
+                attempted: to,
+                existingSol: existing.firstSol,
+                attemptedSol: sol
+              });
             }
-          }
-        }
-        let i = 0;
-        return {
-          next() {
-            if (i >= allMatches.length)
-              return { done: true };
-            return { value: allMatches[i++], done: false };
-          }
-        };
-      }
-    };
-  }
-};
-var SolutionSet = class {
-  constructor(matchSet) {
-    this._matchSet = matchSet;
-  }
-  [Symbol.iterator]() {
-    const matches2 = this._matchSet._matches;
-    const seen = /* @__PURE__ */ new Set();
-    let mi = 0;
-    let si = 0;
-    let currentMatch = matches2[0] || null;
-    return {
-      next() {
-        while (true) {
-          if (!currentMatch)
-            return { done: true };
-          if (si >= currentMatch._solutions.length) {
-            mi++;
-            if (mi >= matches2.length)
-              return { done: true };
-            currentMatch = matches2[mi];
-            si = 0;
-            continue;
-          }
-          const sol = currentMatch._solutions[si++];
-          const key = stableKey(sol._bindings);
-          if (seen.has(key))
-            continue;
-          seen.add(key);
-          return { value: sol, done: false };
-        }
-      }
-    };
-  }
-  filter(pred) {
-    const filtered = [];
-    for (const sol of this) {
-      if (pred(sol))
-        filtered.push(sol);
-    }
-    return new FilteredSolutionSet(filtered);
-  }
-  take(n) {
-    const limited = [];
-    let count = 0;
-    for (const sol of this) {
-      if (count >= n)
-        break;
-      limited.push(sol);
-      count++;
-    }
-    return new FilteredSolutionSet(limited);
-  }
-  first() {
-    const it = this[Symbol.iterator]();
-    const n = it.next();
-    return n.done ? null : n.value;
-  }
-  toArray() {
-    return Array.from(this);
-  }
-  count() {
-    let c = 0;
-    for (const _ of this)
-      c++;
-    return c;
-  }
-};
-var FilteredSolutionSet = class _FilteredSolutionSet {
-  constructor(solutions) {
-    this._solutions = solutions;
-  }
-  [Symbol.iterator]() {
-    return this._solutions[Symbol.iterator]();
-  }
-  filter(pred) {
-    const filtered = this._solutions.filter(pred);
-    return new _FilteredSolutionSet(filtered);
-  }
-  take(n) {
-    const limited = this._solutions.slice(0, n);
-    return new _FilteredSolutionSet(limited);
-  }
-  first() {
-    return this._solutions[0] || null;
-  }
-  toArray() {
-    return [...this._solutions];
-  }
-  count() {
-    return this._solutions.length;
-  }
-};
-var MatchSet = class _MatchSet {
-  constructor(root, matchGroups) {
-    this._root = root;
-    this._matches = matchGroups.map(
-      (g) => new Match(root, g.path, g.rawSolutions, this)
-    );
-  }
-  // Iterable of Match
-  [Symbol.iterator]() {
-    return this._matches[Symbol.iterator]();
-  }
-  matches() {
-    return this;
-  }
-  hasMatch() {
-    return this._matches.length > 0;
-  }
-  /**
-   * Returns a SolutionSet of unique Solution objects across all matches.
-   * "Uniqueness" is based on structural equality of bindings.
-   */
-  solutions() {
-    return new SolutionSet(this);
-  }
-  /**
-   * Filter matches by predicate.
-   * Returns a new MatchSet containing only matches that satisfy the predicate.
-   */
-  filter(pred) {
-    const filtered = this._matches.filter(pred);
-    return new _MatchSet(
-      this._root,
-      filtered.map((m) => ({ path: m._path, rawSolutions: m._rawSolutions }))
-    );
-  }
-  /**
-   * Take first n matches.
-   * Returns a new MatchSet containing at most n matches.
-   */
-  take(n) {
-    const limited = this._matches.slice(0, n);
-    return new _MatchSet(
-      this._root,
-      limited.map((m) => ({ path: m._path, rawSolutions: m._rawSolutions }))
-    );
-  }
-  /**
-   * Get the first match, or null if none.
-   */
-  first() {
-    return this._matches[0] || null;
-  }
-  /**
-   * Count the number of matches.
-   */
-  count() {
-    return this._matches.length;
-  }
-  /**
-   * Convert matches to array.
-   */
-  toArray() {
-    return [...this._matches];
-  }
-  /**
-   * Pure replaceAll: returns a NEW root with replacements applied.
-   *
-   * Overloads:
-   *   replaceAll(value)               // replace each $0 with value
-   *   replaceAll(solution => value)   // value derived from first solution of each match
-   */
-  replaceAll(replOrFn) {
-    if (!this._matches.length)
-      return this._root;
-    const edits = [];
-    for (const match2 of this._matches) {
-      if (!match2._zeroSite)
-        continue;
-      const firstSol = match2._solutions[0] || null;
-      const to = typeof replOrFn === "function" ? replOrFn(firstSol) : replOrFn;
-      edits.push({ site: match2._zeroSite, to });
-    }
-    const cloned = cloneDeep(this._root);
-    return applyEdits(cloned, edits);
-  }
-  /**
-   * Mutating editAll.
-   *
-   * Forms:
-   *   editAll("x", $ => $.x * 2)
-   *   editAll($ => ({ x: $.y, y: $.x }))
-   *   editAll({ x: $ => $.y, y: $ => $.x })
-   *
-   * Replacements apply to variable sites ($ and @),
-   * with @-bindings exposed as plain arrays/objects.
-   */
-  editAll(arg1, arg2) {
-    const { planFactory } = normalizeEditArgs(arg1, arg2);
-    const edits = [];
-    for (const match2 of this._matches) {
-      for (const sol of match2._solutions) {
-        const plan = planFactory(sol) || {};
-        const sitesMap = sol._sites;
-        for (const [varNameRaw, valueSpec] of Object.entries(plan)) {
-          const varName = varNameRaw.startsWith("$") ? varNameRaw.slice(1) : varNameRaw;
-          const sites = sitesMap.get(varName) || [];
-          if (!sites.length)
-            continue;
-          for (const site of sites) {
-            const to = convertValueForSite(site, valueSpec);
-            edits.push({ site, to });
+          } else {
+            editsBySiteKey.set(key, { site, to, firstSol: sol });
           }
         }
       }
     }
-    return applyEdits(this._root, edits);
   }
-};
-function normalizeEditArgs(arg1, arg2) {
-  if (typeof arg1 === "string" && typeof arg2 === "function") {
-    const name = arg1;
-    const fn = arg2;
-    return {
-      planFactory: (sol) => ({ [name]: fn(sol) })
-    };
-  }
-  if (typeof arg1 === "function" && arg2 === void 0) {
-    const fn = arg1;
-    return {
-      planFactory: (sol) => fn(sol) || {}
-    };
-  }
-  if (arg1 && typeof arg1 === "object" && arg2 === void 0) {
-    const template = arg1;
-    return {
-      planFactory: (sol) => {
-        const out = {};
-        for (const [k, v] of Object.entries(template)) {
-          out[k] = typeof v === "function" ? v(sol) : v;
-        }
-        return out;
-      }
-    };
-  }
-  throw new TypeError('editAll expects ("var", fn) | (fn) | (planObject)');
+  const edits = Array.from(editsBySiteKey.values()).map((e) => ({ site: e.site, to: e.to }));
+  return { edits, conflicts };
 }
 function convertValueForSite(site, value) {
-  if (site.kind === "scalar") {
+  if (site.kind === "scalar")
     return value;
-  }
   const isArrayGroup = site.groupStart !== void 0;
   const isObjectGroup = site.keys !== void 0;
   if (isArrayGroup) {
-    if (value instanceof Group && value._type === "array") {
+    if (value instanceof Group && value._type === "array")
       return value;
-    }
-    if (Array.isArray(value)) {
+    if (Array.isArray(value))
       return Group.array(...value);
-    }
     return Group.array(value);
   }
   if (isObjectGroup) {
-    if (value instanceof Group && value._type === "object") {
+    if (value instanceof Group && value._type === "object")
       return value;
-    }
-    if (value && typeof value === "object" && !Array.isArray(value)) {
+    if (value && typeof value === "object" && !Array.isArray(value))
       return Group.object(value);
-    }
-    throw new TypeError("Object group replacement expects a plain object or internal Group.object()");
+    throw new TypeError("Object group replacement expects a plain object");
   }
   return value;
 }
@@ -2419,6 +3556,507 @@ function groupByZeroPath(rawSolutions) {
   }
   return Array.from(map.values());
 }
+function normalizeBindings(rawBindings, { includeWhole = false } = {}) {
+  const out = {};
+  for (const [k, v] of Object.entries(rawBindings)) {
+    if (k === "0" && !includeWhole)
+      continue;
+    out[k] = groupToPublicValue(v);
+  }
+  return out;
+}
+function groupToPublicValue(v) {
+  if (!v || typeof v !== "object" || !v._type || !v._value)
+    return v;
+  if (v._type === "array")
+    return v._value.slice ? v._value.slice() : [...v._value];
+  if (v._type === "object")
+    return { ...v._value };
+  return v;
+}
+var Occurrence = class {
+  constructor(root, path, rawSolutions, matchSet) {
+    var _a;
+    this._root = root;
+    this._path = path;
+    this._rawSolutions = rawSolutions;
+    this._matchSet = matchSet;
+    this._solutions = rawSolutions.map((raw) => new Solution(raw, this, matchSet));
+    const zeroSites = ((_a = rawSolutions[0]) == null ? void 0 : _a.sites.get("0")) || [];
+    this._zeroSite = zeroSites[0] || null;
+  }
+  path() {
+    return [...this._path];
+  }
+  value() {
+    if (!this._zeroSite)
+      return void 0;
+    return getAt(this._root, this._zeroSite.path);
+  }
+  solutions() {
+    const sols = this._solutions;
+    return {
+      [Symbol.iterator]() {
+        let i = 0;
+        return {
+          next() {
+            if (i >= sols.length)
+              return { done: true };
+            return { value: sols[i++], done: false };
+          }
+        };
+      }
+    };
+  }
+  /**
+   * replace(replOrFn, {mutate?, onCASFailure?}):
+   * Replaces $0 for THIS occurrence using the first solution (deterministic).
+   * Default is pure (returns new root); pass {mutate:true} to edit in-place.
+   */
+  replace(replOrFn, opts = {}) {
+    if (!this._zeroSite)
+      return this._root;
+    const mutate = !!opts.mutate;
+    const firstSol = this._solutions[0] || null;
+    const to = typeof replOrFn === "function" ? replOrFn(firstSol) : replOrFn;
+    const edits = [{ site: this._zeroSite, to }];
+    const target = mutate ? this._root : cloneDeep(this._root);
+    const { result, failures } = applyEdits(target, edits, { onCASFailure: opts.onCASFailure });
+    if (failures.length > 0 && typeof result === "object" && result !== null) {
+      Object.defineProperty(result, "_editFailures", { value: failures, enumerable: false });
+    }
+    return result;
+  }
+  /**
+   * edit(plan, {mutate?, per?, onConflict?, onCASFailure?}):
+   * Applies variable edits for THIS occurrence.
+   *
+   * Options:
+   *   per: 'site' (default) | 'occurrence'
+   *     - 'site': all solutions for this occurrence, dedupe by site
+   *     - 'occurrence': first solution only
+   */
+  edit(planOrFn, opts = {}) {
+    const mutate = !!opts.mutate;
+    const per = opts.per || "site";
+    const { edits, conflicts } = collectAllSiteEdits([this], planOrFn, { per });
+    if (conflicts.length > 0 && opts.onConflict) {
+      for (const c of conflicts)
+        opts.onConflict(c);
+    }
+    const target = mutate ? this._root : cloneDeep(this._root);
+    const { result, failures } = applyEdits(target, edits, { onCASFailure: opts.onCASFailure });
+    if ((failures.length > 0 || conflicts.length > 0) && typeof result === "object" && result !== null) {
+      if (failures.length > 0) {
+        Object.defineProperty(result, "_editFailures", { value: failures, enumerable: false });
+      }
+      if (conflicts.length > 0) {
+        Object.defineProperty(result, "_editConflicts", { value: conflicts, enumerable: false });
+      }
+    }
+    return result;
+  }
+};
+var Solution = class {
+  constructor(rawSolution, occ, matchSet) {
+    Object.defineProperties(this, {
+      _occ: { value: occ, enumerable: false },
+      _matchSet: { value: matchSet, enumerable: false },
+      _raw: { value: rawSolution, enumerable: false },
+      _sites: { value: rawSolution.sites, enumerable: false },
+      _bindings: { value: null, writable: true, enumerable: false },
+      toObject: { value: () => ({ ...this._bindings }), enumerable: false }
+    });
+    const publicBindings = normalizeBindings(rawSolution.bindings, { includeWhole: false });
+    this._bindings = publicBindings;
+    for (const [k, v] of Object.entries(publicBindings))
+      this[k] = v;
+  }
+  bindings() {
+    return { ...this._bindings };
+  }
+  occurrence() {
+    return this._occ;
+  }
+  sites(name) {
+    const n = name.startsWith("$") || name.startsWith("@") ? name.slice(1) : name;
+    return (this._sites.get(n) || []).slice();
+  }
+  /**
+   * edit(plan, {mutate?, onCASFailure?}):
+   * Applies edits using THIS solution only (no site deduplication needed for single solution).
+   */
+  edit(planOrFn, opts = {}) {
+    const mutate = !!opts.mutate;
+    const target = mutate ? this._occ._root : cloneDeep(this._occ._root);
+    const edits = [];
+    collectEditsFromPlan(this, planOrFn, edits);
+    const { result, failures } = applyEdits(target, edits, { onCASFailure: opts.onCASFailure });
+    if (failures.length > 0 && typeof result === "object" && result !== null) {
+      Object.defineProperty(result, "_editFailures", { value: failures, enumerable: false });
+    }
+    return result;
+  }
+  /**
+   * replace(replOrFn, {mutate?, onCASFailure?}):
+   * Replaces $0 for this occurrence using THIS solution.
+   */
+  replace(replOrFn, opts = {}) {
+    if (!this._occ._zeroSite)
+      return this._occ._root;
+    const mutate = !!opts.mutate;
+    const to = typeof replOrFn === "function" ? replOrFn(this) : replOrFn;
+    const edits = [{ site: this._occ._zeroSite, to }];
+    const target = mutate ? this._occ._root : cloneDeep(this._occ._root);
+    const { result, failures } = applyEdits(target, edits, { onCASFailure: opts.onCASFailure });
+    if (failures.length > 0 && typeof result === "object" && result !== null) {
+      Object.defineProperty(result, "_editFailures", { value: failures, enumerable: false });
+    }
+    return result;
+  }
+  /**
+   * occurrences():
+   * Iterate all occurrences in the match set that contain an equivalent binding set.
+   * NOTE: This enumerates all occurrences.
+   */
+  occurrences() {
+    const myKey = stableKey(this._bindings);
+    const matchSet = this._matchSet;
+    return {
+      [Symbol.iterator]() {
+        const all = [];
+        for (const occ of matchSet) {
+          for (const s of occ._solutions) {
+            if (stableKey(s._bindings) === myKey) {
+              all.push(occ);
+              break;
+            }
+          }
+        }
+        let i = 0;
+        return {
+          next() {
+            if (i >= all.length)
+              return { done: true };
+            return { value: all[i++], done: false };
+          }
+        };
+      }
+    };
+  }
+};
+var OccurrenceSet = class _OccurrenceSet {
+  constructor(root, groups) {
+    this._root = root;
+    this._occurrences = groups.map((g) => new Occurrence(root, g.path, g.rawSolutions, this));
+  }
+  [Symbol.iterator]() {
+    return this._occurrences[Symbol.iterator]();
+  }
+  occurrences() {
+    return this;
+  }
+  first() {
+    return this._occurrences[0] || null;
+  }
+  take(n) {
+    const sliced = this._occurrences.slice(0, n);
+    const groups = sliced.map((o) => ({ path: o._path, rawSolutions: o._rawSolutions }));
+    return new _OccurrenceSet(this._root, groups);
+  }
+  filter(pred) {
+    const filtered = this._occurrences.filter(pred);
+    const groups = filtered.map((o) => ({ path: o._path, rawSolutions: o._rawSolutions }));
+    return new _OccurrenceSet(this._root, groups);
+  }
+  toArray() {
+    return [...this._occurrences];
+  }
+  count() {
+    return this._occurrences.length;
+  }
+  hasMatch() {
+    return this._occurrences.length > 0;
+  }
+  /**
+   * solutions(): returns a SolutionSet of unique solutions across all occurrences.
+   */
+  solutions() {
+    return new SolutionSet(this);
+  }
+  /**
+   * replaceAll(replOrFn, {mutate?, onCASFailure?}):
+   * Replaces $0 for each occurrence using the first solution of that occurrence.
+   * This is inherently "per occurrence" since $0 is the whole match.
+   */
+  replaceAll(replOrFn, opts = {}) {
+    if (!this._occurrences.length)
+      return this._root;
+    const mutate = !!opts.mutate;
+    const edits = [];
+    for (const occ of this._occurrences) {
+      if (!occ._zeroSite)
+        continue;
+      const firstSol = occ._solutions[0] || null;
+      const rawTo = typeof replOrFn === "function" ? replOrFn(firstSol) : replOrFn;
+      const to = convertValueForSite(occ._zeroSite, rawTo);
+      edits.push({ site: occ._zeroSite, to });
+    }
+    const target = mutate ? this._root : cloneDeep(this._root);
+    const { result, failures } = applyEdits(target, edits, { onCASFailure: opts.onCASFailure });
+    if (failures.length > 0 && typeof result === "object" && result !== null) {
+      Object.defineProperty(result, "_editFailures", { value: failures, enumerable: false });
+    }
+    return result;
+  }
+  /**
+   * editAll(planOrFn, opts):
+   * Edits every bound *site* you referenced, wherever it occurs.
+   *
+   * Options:
+   *   per: 'site' (default) | 'occurrence'
+   *     - 'site': iterates all solutions, dedupes by site identity.
+   *       This is the right default for redaction, normalization, "change every X".
+   *     - 'occurrence': uses first solution per occurrence only.
+   *       Useful for $0-focused edits or when you want one edit per match location.
+   *   mutate: boolean (default false) - mutate in place vs return copy
+   *   onConflict: (conflict) => void - called for planning-time conflicts (same site, different values)
+   *   onCASFailure: (failure) => 'skip' | 'force' - called for apply-time CAS failures
+   */
+  editAll(planOrFn, opts = {}) {
+    if (!this._occurrences.length)
+      return this._root;
+    const mutate = !!opts.mutate;
+    const { edits, conflicts } = collectAllSiteEdits(this._occurrences, planOrFn, { per: opts.per });
+    if (conflicts.length > 0 && opts.onConflict) {
+      for (const c of conflicts)
+        opts.onConflict(c);
+    }
+    const target = mutate ? this._root : cloneDeep(this._root);
+    const { result, failures } = applyEdits(target, edits, { onCASFailure: opts.onCASFailure });
+    if ((failures.length > 0 || conflicts.length > 0) && typeof result === "object" && result !== null) {
+      if (failures.length > 0) {
+        Object.defineProperty(result, "_editFailures", { value: failures, enumerable: false });
+      }
+      if (conflicts.length > 0) {
+        Object.defineProperty(result, "_editConflicts", { value: conflicts, enumerable: false });
+      }
+    }
+    return result;
+  }
+};
+var SolutionSet = class {
+  constructor(occSet) {
+    this._occSet = occSet;
+  }
+  [Symbol.iterator]() {
+    const occs = this._occSet._occurrences;
+    const seen = /* @__PURE__ */ new Set();
+    let oi = 0;
+    let si = 0;
+    let curOcc = occs[0] || null;
+    return {
+      next() {
+        while (true) {
+          if (!curOcc)
+            return { done: true };
+          if (si >= curOcc._solutions.length) {
+            oi++;
+            if (oi >= occs.length)
+              return { done: true };
+            curOcc = occs[oi];
+            si = 0;
+            continue;
+          }
+          const sol = curOcc._solutions[si++];
+          const key = stableKey(sol._bindings);
+          if (seen.has(key))
+            continue;
+          seen.add(key);
+          return { value: sol, done: false };
+        }
+      }
+    };
+  }
+  first() {
+    const it = this[Symbol.iterator]();
+    const n = it.next();
+    return n.done ? null : n.value;
+  }
+  toArray() {
+    return Array.from(this);
+  }
+  count() {
+    let c = 0;
+    for (const _ of this)
+      c++;
+    return c;
+  }
+  filter(pred) {
+    const out = [];
+    for (const sol of this)
+      if (pred(sol))
+        out.push(sol);
+    return new FilteredSolutionSet(out, this._occSet);
+  }
+  take(n) {
+    const out = [];
+    let c = 0;
+    for (const sol of this) {
+      if (c++ >= n)
+        break;
+      out.push(sol);
+    }
+    return new FilteredSolutionSet(out, this._occSet);
+  }
+};
+var FilteredSolutionSet = class _FilteredSolutionSet {
+  constructor(solutions, occSet) {
+    this._solutions = solutions;
+    this._occSet = occSet;
+  }
+  [Symbol.iterator]() {
+    return this._solutions[Symbol.iterator]();
+  }
+  first() {
+    return this._solutions[0] || null;
+  }
+  toArray() {
+    return [...this._solutions];
+  }
+  count() {
+    return this._solutions.length;
+  }
+  filter(pred) {
+    return new _FilteredSolutionSet(this._solutions.filter(pred), this._occSet);
+  }
+  take(n) {
+    return new _FilteredSolutionSet(this._solutions.slice(0, n), this._occSet);
+  }
+};
+var OnMatcher = class {
+  constructor(pattern, data) {
+    this._pattern = pattern;
+    this._data = data;
+    this._occSet = null;
+  }
+  _getOccSet() {
+    if (!this._occSet) {
+      this._occSet = this._pattern.advancedMatch(this._data);
+    }
+    return this._occSet;
+  }
+  /** Boolean: does the pattern match the data at root? */
+  test() {
+    return this._pattern.hasMatch(this._data);
+  }
+  /**
+   * First solution as a plain object, or null if no match.
+   * Empty object {} means "matched but no bindings".
+   */
+  solve() {
+    const occSet = this._getOccSet();
+    const sol = occSet.solutions().first();
+    return sol ? sol.toObject() : null;
+  }
+  /** All solutions as an array of plain objects. */
+  solutions() {
+    const occSet = this._getOccSet();
+    const out = [];
+    for (const sol of occSet.solutions()) {
+      out.push(sol.toObject());
+    }
+    return out;
+  }
+  /**
+   * Replace the entire match.
+   * @param replacement - value or function (bindings) => value
+   */
+  replace(replacement) {
+    const occSet = this._getOccSet();
+    if (!occSet.hasMatch())
+      return this._data;
+    return occSet.replaceAll(replacement, { mutate: false });
+  }
+  /**
+   * Mutate (edit in place) specific bindings.
+   * @param mutation - {varName: value|fn, ...} or function (bindings) => {...}
+   */
+  mutate(mutation) {
+    const occSet = this._getOccSet();
+    if (!occSet.hasMatch())
+      return this._data;
+    return occSet.editAll(mutation, { mutate: false });
+  }
+};
+var InMatcher = class {
+  constructor(pattern, data) {
+    this._pattern = pattern;
+    this._data = data;
+    this._occSet = null;
+  }
+  _getOccSet() {
+    if (!this._occSet) {
+      this._occSet = this._pattern.advancedFind(this._data);
+    }
+    return this._occSet;
+  }
+  /** Count of matching occurrences. */
+  count() {
+    return this._getOccSet().count();
+  }
+  /**
+   * Array of {path, fragment, bindings} for each occurrence.
+   * Uses first solution per occurrence (with warning if multiple solutions).
+   */
+  locations() {
+    const occSet = this._getOccSet();
+    const results = [];
+    for (const occ of occSet) {
+      const sols = [...occ.solutions()];
+      if (sols.length > 1) {
+        console.warn(
+          `Tendril: occurrence at path ${JSON.stringify(occ.path())} has ${sols.length} solutions; using first. Consider refining your pattern for deterministic results.`
+        );
+      }
+      const firstSol = sols[0] || null;
+      results.push({
+        path: occ.path(),
+        fragment: occ.value(),
+        bindings: firstSol ? firstSol.toObject() : {}
+      });
+    }
+    return results;
+  }
+  /**
+   * Replace all occurrences.
+   * @param replacement - value or function (bindings) => value
+   */
+  replace(replacement) {
+    const occSet = this._getOccSet();
+    if (!occSet.hasMatch())
+      return this._data;
+    for (const occ of occSet) {
+      const solCount = [...occ.solutions()].length;
+      if (solCount > 1) {
+        console.warn(
+          `Tendril: occurrence at path ${JSON.stringify(occ.path())} has ${solCount} solutions; using first for replacement. Consider refining your pattern.`
+        );
+      }
+    }
+    return occSet.replaceAll(replacement, { mutate: false });
+  }
+  /**
+   * Mutate (surgically edit) specific bindings across all occurrences.
+   * @param mutation - {varName: value|fn, ...} or function (bindings) => {...}
+   */
+  mutate(mutation) {
+    const occSet = this._getOccSet();
+    if (!occSet.hasMatch())
+      return this._data;
+    return occSet.editAll(mutation, { mutate: false });
+  }
+};
 var PatternImpl = class _PatternImpl {
   constructor(pattern) {
     this._pattern = String(pattern);
@@ -2441,9 +4079,8 @@ var PatternImpl = class _PatternImpl {
     return p;
   }
   _getAst() {
-    if (!this._ast) {
+    if (!this._ast)
       this._ast = compile(this._pattern);
-    }
     return this._ast;
   }
   _buildOpts() {
@@ -2452,45 +4089,81 @@ var PatternImpl = class _PatternImpl {
       opts.debug = this._debug;
     return opts;
   }
+  // ==================== Simple API ====================
   /**
-   * match(data): anchored match at the root.
-   * Returns a MatchSet (possibly empty; at most one distinct path: []).
+   * on(data): Simple anchored matching API.
+   * Returns OnMatcher with .test(), .solve(), .solutions(), .replace(), .mutate()
    */
-  match(input) {
-    const ast = this._getAst();
-    const rawSolutions = match(ast, input, this._buildOpts());
-    const groups = groupByZeroPath(rawSolutions);
-    return new MatchSet(input, groups);
+  on(input) {
+    return new OnMatcher(this, input);
   }
   /**
-   * find(data): scan for matches at any depth.
-   * Returns a MatchSet over all occurrences.
+   * in(data): Simple search-within API.
+   * Returns InMatcher with .count(), .locations(), .replace(), .mutate()
    */
-  find(input) {
+  in(input) {
+    return new InMatcher(this, input);
+  }
+  // ==================== Advanced API ====================
+  /**
+   * advancedMatch(data): anchored match at the root.
+   * Returns an OccurrenceSet (possibly empty; at most one occurrence: []).
+   */
+  advancedMatch(input) {
+    const ast = this._getAst();
+    if (ast._isSlicePattern) {
+      throw new Error("Slice patterns (@{ } and @[ ]) require advancedFind() or first(), not advancedMatch()");
+    }
+    const rawSolutions = match(ast, input, this._buildOpts());
+    const groups = groupByZeroPath(rawSolutions);
+    return new OccurrenceSet(input, groups);
+  }
+  /**
+   * advancedFind(data): scan for matches at any depth.
+   * Returns an OccurrenceSet over all occurrences.
+   */
+  advancedFind(input) {
     const ast = this._getAst();
     const rawSolutions = scan(ast, input, this._buildOpts());
     const groups = groupByZeroPath(rawSolutions);
-    return new MatchSet(input, groups);
+    return new OccurrenceSet(input, groups);
+  }
+  // Legacy aliases for backwards compatibility (will be deprecated)
+  match(input) {
+    return this.advancedMatch(input);
+  }
+  find(input) {
+    return this.advancedFind(input);
   }
   /**
-   * first(data): convenience — MatchSet restricted to the first found match (if any).
+   * first(data): first occurrence only (scan + stop).
+   * Returns OccurrenceSet with 0 or 1 occurrence.
    */
   first(input) {
-    const all = this.find(input);
-    if (!all._matches.length)
-      return new MatchSet(input, []);
-    const firstGroup = [{
-      path: all._matches[0]._path,
-      rawSolutions: all._matches[0]._rawSolutions
-    }];
-    return new MatchSet(input, firstGroup);
+    const ast = this._getAst();
+    const rawSol = scanFirst(ast, input, this._buildOpts());
+    if (!rawSol)
+      return new OccurrenceSet(input, []);
+    const zeroSites = rawSol.sites.get("0") || [];
+    const path = zeroSites.length ? zeroSites[0].path : [];
+    return new OccurrenceSet(input, [{ path, rawSolutions: [rawSol] }]);
+  }
+  // ------------- Short-circuit methods (fast paths) -------------
+  hasMatch(input) {
+    const ast = this._getAst();
+    if (ast._isSlicePattern) {
+      throw new Error("Slice patterns (@{ } and @[ ]) require in() or advancedFind(), not on()/advancedMatch()/hasMatch()");
+    }
+    return matchExists(ast, input, this._buildOpts());
+  }
+  hasAnyMatch(input) {
+    const ast = this._getAst();
+    return scanExists(ast, input, this._buildOpts());
   }
 };
 function Tendril(pattern) {
   if (typeof pattern !== "string") {
-    throw new TypeError(
-      `Tendril(): pattern must be a string, got ${typeof pattern}`
-    );
+    throw new TypeError(`Tendril(): pattern must be a string, got ${typeof pattern}`);
   }
   return new PatternImpl(pattern);
 }
@@ -2502,8 +4175,7 @@ function firstSolutionObject(solutionsIterable) {
   return n.value.toObject();
 }
 function matches(pattern, input) {
-  const mset = Tendril(pattern).match(input);
-  return mset.hasMatch();
+  return Tendril(pattern).match(input).hasMatch();
 }
 function extract(pattern, input) {
   const mset = Tendril(pattern).match(input);
@@ -2513,23 +4185,31 @@ function extract(pattern, input) {
 function extractAll(pattern, input) {
   const mset = Tendril(pattern).match(input);
   const out = [];
-  for (const sol of mset.solutions()) {
+  for (const sol of mset.solutions())
     out.push(sol.toObject());
-  }
   return out;
 }
 function replace(pattern, input, builder) {
-  return Tendril(pattern).first(input).replaceAll(builder);
+  const occ = Tendril(pattern).first(input).first();
+  if (!occ)
+    return input;
+  return occ.replace(builder, { mutate: false });
 }
 function replaceAll(pattern, input, builder) {
-  return Tendril(pattern).find(input).replaceAll(builder);
+  return Tendril(pattern).find(input).replaceAll(builder, { mutate: false });
 }
 function uniqueMatches(pattern, input, ...vars) {
   const mset = Tendril(pattern).match(input);
   const out = [];
   const seen = /* @__PURE__ */ new Set();
   for (const sol of mset.solutions()) {
-    const projected = projectBindings(sol._bindings, vars);
+    const obj = sol.toObject();
+    const projected = {};
+    for (const v of vars) {
+      const key2 = v.startsWith("$") || v.startsWith("@") ? v.slice(1) : v;
+      if (Object.prototype.hasOwnProperty.call(obj, key2))
+        projected[key2] = obj[key2];
+    }
     const key = stableKey(projected);
     if (seen.has(key))
       continue;
