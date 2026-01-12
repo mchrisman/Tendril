@@ -1093,7 +1093,7 @@ class InMatcher {
 class PatternImpl {
   constructor(pattern) {
     this._pattern = String(pattern);
-    this._ast = null;
+    this._ast = compile(pattern);  // Compile eagerly
     this._opts = {};
     this._debug = null;
   }

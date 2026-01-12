@@ -406,7 +406,14 @@ function parseItemTermCore(p) {
       || p.bt('boolean', () => Bool(p.eat('bool').v))
       || p.bt('null', () => { p.eat('null'); return Null(); })
       || p.bt('string', () => Lit(p.eat('str').v))
-      || p.bt('identifier', () => Lit(p.eat('id').v))
+      || p.bt('identifier', () => {
+           const tok = p.eat('id');
+           const reserved = ['as', 'where', 'else', 'each'];
+           if (reserved.includes(tok.v)) {
+             p.fail(`'${tok.v}' is a reserved word; use "${tok.v}" to match it as a string`);
+           }
+           return Lit(tok.v);
+         })
       || p.bt('regex', () => {
            const {source, flags} = p.eat('re').v;
            const re = makeRegExp({source, flags});
