@@ -174,11 +174,12 @@ test/
 ```
 
 
-## Documentation Notes
+### Documentation Notes
 
 **Authoritative documentation hierarchy:**
 
 - `README.md` — Project intro, quick examples, links
+- `README-old.md` — The most complete document, includes grammar
 - `doc/core.md` — Core language (10 minutes, 80% use cases)
 - `doc/advanced.md` — Advanced features (groups, guards, quantifiers)
 - `doc/arcane.md` — Expert features (lookaheads, labels, collecting)
