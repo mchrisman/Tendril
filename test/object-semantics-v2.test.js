@@ -93,26 +93,26 @@ test('each K:V with wildcard key - all values must match', () => {
   assert.ok(!matches('{each _:1}', {})); // Existence still required
 });
 
-// ==================== K:V? (optional - no existence assertion) ====================
+// ==================== K?:V (optional - if key exists, value must match) ====================
 
-test('K:V? with literal key - optional existence', () => {
-  // {a:1?} means "if 'a' exists with value 1, that's in the slice; no assertion"
-  assert.ok(matches('{a:1?}', {}), 'K:V? should match empty object');
-  assert.ok(matches('{a:1?}', {a: 1}), 'K:V? should match when key exists with right value');
+test('K?:V with literal key - optional but validated', () => {
+  // {a?:1} means "if 'a' doesn't exist, OK; if it exists, value must be 1"
+  assert.ok(matches('{a?:1}', {}), 'K?:V should match empty object');
+  assert.ok(matches('{a?:1}', {a: 1}), 'K?:V should match when key exists with right value');
 
-  // Bad entries are allowed (no bad#{0} constraint)
-  assert.ok(matches('{a:1?}', {a: 2}), 'K:V? should allow bad entries');
-  assert.ok(matches('{a:1?}', {b: 99}), 'K:V? should match unrelated keys');
+  // If key exists but value doesn't match, it fails
+  assert.ok(!matches('{a?:1}', {a: 2}), 'K?:V should fail when key exists with wrong value');
+  assert.ok(matches('{a?:1}', {b: 99}), 'K?:V should match unrelated keys');
 });
 
-test('K:V? for binding without assertion', () => {
+test('K?:V for optional binding', () => {
   // Common use case: optionally extract a value
-  const result1 = extract('{a:$x?}', {a: 1});
+  const result1 = extract('{a?:$x}', {a: 1});
   assert.deepEqual(result1, {x: 1});
 
-  const result2 = extract('{a:$x?}', {});
-  // When key doesn't exist, binding should not occur (or be undefined)
-  assert.ok(result2 === null || result2.x === undefined);
+  const result2 = extract('{a?:$x}', {});
+  // When key doesn't exist, match succeeds but no binding
+  assert.deepEqual(result2, {});
 });
 
 // ==================== each K:V ? (strong + optional - no bad, no existence) ====================

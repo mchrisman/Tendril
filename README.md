@@ -1,6 +1,6 @@
 # Tendril
 
-**Tendril** is a DSL for matching, joining, and transforming JSON-like structures.
+Tendril is a declarative language for matching, joining, and transforming JSON-like data—especially when structure matters more than paths.
 
 ## Status
 
@@ -54,7 +54,9 @@ Tendril("{ password:$p }").in(data).mutate({p: "REDACTED"});
 
 ---
 
-Do you want **joins across different structures** (in memory) using **path notation**?
+Do you want **joins across different structures** (in memory)?
+
+*No preprocessing, no indexes, no foreign keys — just paths + unification.*
 
 ```
 const users = [
@@ -79,18 +81,32 @@ Do you want to **restructure a VDOM**?
 
 Replace a `<label>` tag with a `placeholder` on the associated `<input>` tag,
 regardless of how distant the two nodes are in the tree.
-
-```js
+```
+<input id="x"> ... <label for="x">Name</label>
+→ <input id="x" placeholder="Name">.
+```
+```
 Tendril(`{
-  ** ({ tag:'label', props:{for:$id, children:[(_string* as @labelText)]  } } as $L)
-  **  { tag:'input', props:{id:$id (placeholder:_? as %p) } }
+    ** ({ 
+        tag:'label', 
+        props:{
+            for:$id, 
+            children:[(_string* as @labelText)]  
+        } 
+    } as $L)
+    **  { 
+        tag:'input', 
+        props:{
+            id:$id,
+            (placeholder:_? as %p) 
+        } 
+    }
 }`)
 .in(vdom)
 .mutate({
   L: undefined,                    // delete the <label>
   p: $ => ({placeholder: $.labelText})  // move its text into the <input>
 });
-// <label for="x">Name</label><input id="x"> → <input id="x" placeholder="Name">.
 ```
 
 Or **summarize a config**?
@@ -124,41 +140,21 @@ Tendril(`{
 );
 ```
 
----
-Do you want to **Summarize complicated config (real-world example)**?
+Do you want to **validate semi-structured data** without writing a schema?
 
-This example joins container *specs* with container *runtime status* by container name $c.
-
-```js
-const pod = {
-  metadata: { name: "api-7d9c9b8c6f-abcde", namespace: "prod" },
-  spec: {
-    containers: [
-      { name: "api",  image: "ghcr.io/acme/api:1.42.0" },
-      { name: "side", image: "ghcr.io/acme/sidecar:3.1.0" }
-    ]
-  },
-  status: {
-    containerStatuses: [
-      { name: "api",  ready: true,  restartCount: 0 },
-      { name: "side", ready: false, restartCount: 7 }
-    ]
-  }
-};
-
-Tendril(`{
-  metadata:{ name:$pod namespace:$ns }
-  spec.containers[_]: { name:$c image:$img }
-  status.containerStatuses[_]: { name:$c ready:$ready restartCount:$restarts }
-}`)
-.on(pod)
-.solutions()
-.map(({pod, ns, c, img, ready, restarts}) =>
-  `${ns}/${pod}  ${c}  ${img}  ready=${ready}  restarts=${restarts}`
-);
 ```
+// Assert: every service has a port, ports are numbers, and no service exposes port 22.
+// todo validate this
+Tendril(`{
+  services: [{
+    port: _number
+    (! port: 22)
+  }*]
+}`)
+.on(config)
+.test();
 
-
+```
 ## Documentation
 
 - **[Core Guide](doc/core.md)** — Learn Tendril in 20 minutes. Covers 80% of use cases.

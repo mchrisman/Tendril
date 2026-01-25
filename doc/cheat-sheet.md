@@ -92,7 +92,7 @@ a:b c:d e:f                // *Three* unordered key/value assertions
 { b:_  c:_ }   ~= { b:1, c:2 }        // every kv assertion satisfied
 { b:_      }   ~= { b:1, c:2 }        // every kv assertion satisfied
 { b:_  c:_ }  !~= { b:1 }             // unsatisfied assertion
-{ b:_  c?:_ }   ~= { b:1 }             // optional assertion
+{ b:_  c?:_ }  ~= { b:1 }              // c is optional (doesn't exist here)
 
 { b:_  % }   ~= { a:1, c:2, Z:1 }    // remainder % represents all key-value pairs where the keys did not match any of the assertions
 
@@ -175,7 +175,7 @@ Tendril("{ each /a.*/: 1 }").on({}).test()
 // => false (There must be at least one.)
 
 Tendril("{ each /a.*/?: 1 }").on({}).test()
-// => true ('?' makes the field optional, i.e. #{0,} instead of the default #{1,})
+// => true ('?' makes it optional — no matching keys is OK)
 
 Tendril("{ each /a.*/: 1 else 2 }").on({ab: 1, ac: 3}).test()
 // => false (`3` does not match `1 else 2`).
@@ -260,9 +260,19 @@ Tendril("{/a.*/: _#{2,4}}").on({a1: 1, a2: 2, a3: 3}).test()
 Tendril("{/a.*/: _#{5,}}").on({a1: 1, a2: 2}).test()
 // => false (only 2 keys)
 
-// Optional field (K?:V is preferred syntax)
+// Optional field: if key exists, value must match
+Tendril("{a: 1, b?: 2}").on({a: 1}).test()
+// => true (b doesn't exist — OK)
+
+Tendril("{a: 1, b?: 2}").on({a: 1, b: 2}).test()
+// => true (b exists and matches)
+
+Tendril("{a: 1, b?: 2}").on({a: 1, b: 99}).test()
+// => false (b exists but doesn't match)
+
+// Optional field with binding
 Tendril("{a: 1, b?: $x}").on({a: 1}).solve()
-// => {x: undefined} or similar (b doesn't exist)
+// => {} (no binding for x)
 
 Tendril("{a: 1, b?: $x}").on({a: 1, b: 2}).solve()
 // => {x: 2}

@@ -255,8 +255,8 @@ Tendril borrows quantifiers from regex, applying them to array elements rather t
 a b c // *Three* patterns in sequence (only allowed in an array context)
 [ a b c ]                  // *One* pattern: an Array with three items
 
-[ a ( b c )*2 ]  === [a b c b c ]      // ( ) indicates mere grouping (not a substructure)
-[ a [ b c ]*2 ]  === [a [b c] [b c] ]  // [ ] indicates an Array
+[ a ( b c ){2} ]  === [a b c b c ]      // ( ) indicates mere grouping (not a substructure)
+[ a [ b c ]{2} ]  === [a [b c] [b c] ]  // [ ] indicates an Array
 
 a:b c:d e:f // *Three* unordered key/value assertions
 // (only allowed in an object/map context)
@@ -337,8 +337,8 @@ Each field clause `K:V` defines a **slice**: the set of the object's properties 
 |------------|---------|
 | `K:V`      | At least one matching k:v pair exists |
 | `each K:V` | At least one matching k:v pair exists, AND no bad entries (all keys matching K must have values matching V) |
-| `K?:V`     | No existence requirement (use for optional binding). `K:V ?` also works. |
-| `each K?:V` | No bad entries allowed (but key doesn't need to exist). `each K:V ?` also works. |
+| `K?:V`     | Optional: if key exists, value must match. `K:V ?` also works. |
+| `each K?:V` | Optional + no bad entries: if key exists, value must match, and no bad entries. `each K:V ?` also works. |
 
 The `each` keyword triggers **strong semantics**: if a key matches K, its value MUST match V, or the pattern fails.
 
@@ -355,8 +355,8 @@ The `each` keyword triggers **strong semantics**: if a key matches K, its value 
 { each /a.*/: 1 }   // matches {"ab":1, "xyz":99}
                    // "xyz" doesn't match /a.*/, so it's not a bad entry
 
-{ a?: 1 }            // matches {} and {"a":1} and {"a":2}
-                   // No existence requirement - just for binding
+{ a?: 1 }            // matches {} and {"a":1}, but NOT {"a":2}
+                   // Optional: if key exists, value must match
 
 { each a: 1 }       // matches {"a":1} and {"a":1,"b":2}, but NOT {"a":2}
                    // 'a' must exist with value 1; 'b' is uncovered, irrelevant.
@@ -1118,7 +1118,7 @@ LABEL_REF     := '^' IDENT                   # label reference
 # --------------------------------------------------------------------
 
 ROOT_PATTERN := ITEM
-             |  '@{' O_GROUP+ '}'              # object slice pattern (find/first only)
+             |  '%{' O_GROUP+ '}'              # object slice pattern (find/first only)
              |  '@[' A_BODY ']'                # array slice pattern (find/first only)
 
 S_ITEM  := '$' IDENT
@@ -1245,8 +1245,8 @@ VALUE := ITEM
 # Object field semantics:
 # K:V          = weak: at least one k~K with v~V; bad entries (k~K, NOT v~V) allowed
 # each K:V     = strong: at least one k~K with v~V; bad entries forbidden
-# K?:V         = weak + optional: no existence requirement (K:V ? also works)
-# each K?:V    = strong + optional: no existence requirement, but bad entries forbidden
+# K?:V         = weak + optional: if key exists, value must match (K:V ? also works)
+# each K?:V    = strong + optional: if key exists, value must match, and no bad entries
 # V -> %bucket = flow k:v pairs into bucket; V -> @bucket = flow values only (accumulates, does not unify)
 
 # KV quantifier counts the slice (not the bad set). Defaults are semantic, not syntactic.
@@ -1311,8 +1311,8 @@ In the following short forms, `each` signifies "no bad values" (strong semantics
 |------------|----------------------|---------|
 | `K:V`      | `K:V  #{1,} bad#{0,}`  | At least one matching k,v |
 | `each K:V` | `K:V  #{1,} bad#{0}` | At least one matching k,v, and no bad values |
-| `K?:V`     | `K:V  #{0,} bad#{0,}`  | No existence requirement (use for binding) |
-| `each K?:V` | `K:V  #{0,} bad#{0}` | No bad values |
+| `K?:V`     | `K:V  #{0,1} bad#{0,}`  | Optional: if key exists, value must match |
+| `each K?:V` | `K:V  #{0,1} bad#{0}` | Optional + no bad entries |
 
 > Note: The "Equivalent long form" column uses `bad#{...}` as notation to describe semantics, not actual syntax.
 
@@ -1779,7 +1779,7 @@ Tendril(`{
     actions[$i].attempt.amt: $amount
     actions[($j where $j>$i)].type: settle
     actions[$j].amt: $amount
-    audit./risk.*/!: (_ where _<10)
+    each audit./risk.*/: (_ where _<10)   # TODO: K!:V shorthand not yet implemented
 }`)
 .on(record).solve()
 // => {orderId:"o_7712", amount:1299, i:1, j:3}

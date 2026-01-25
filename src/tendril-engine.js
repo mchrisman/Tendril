@@ -1386,19 +1386,21 @@ function matchObject(terms, spread, obj, path, sol, emit, ctx, outMatchedKeys = 
 
       // Apply constraints based on operator, quantifier, and optional flag
       //
-      // Semantics (from README):
-      //   K:V         => slice #{1,} bad #{0,}  (at least one matching k,v)
-      //   K:V else !  => slice #{1,} bad #{0}   (at least one, no bad entries)
-      //   K:V?        => slice #{0,} bad #{0,}  (optional, no assertion)
-      //   K:V else !? => slice #{0,} bad #{0}   (optional, no bad entries)
+      // Semantics:
+      //   K:V         => at least one (k,v) where k~K and v~V
+      //   each K:V    => at least one k~K, AND all k~K must have v~V
+      //   K?:V        => no k~K, OR at least one (k,v) where k~K and v~V
+      //   each K?:V   => all k~K must have v~V (vacuously true if no k~K)
       //
       // Explicit quantifier like #{2,4} overrides the default slice bounds.
 
       // 1. Slice count check
       const sliceCount = sliceKeys.length;
       const quant = term.quant;
-      // Default: #{1,} unless optional (#{0,})
-      const minSlice = quant ? quant.min : (isOptional ? 0 : 1);
+      // Default: #{1,} unless optional
+      // Optional semantics: if any key matches K, at least one must also match V
+      const minSlice = quant ? quant.min :
+                       (isOptional ? (matchingKeys.length > 0 ? 1 : 0) : 1);
       const maxSlice = quant ? quant.max : null; // null means unbounded
 
       if (sliceCount < minSlice) {

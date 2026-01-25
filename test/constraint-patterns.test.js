@@ -69,24 +69,10 @@ test('negative assertion does not leak bindings', () => {
   assert.equal(result[0].x, undefined); // x should not be bound
 });
 
-// ============================================================================
-// NEGATIVE ASSERTIONS - Known Limitations (V5)
-// ============================================================================
-
-test.skip('LIMITATION: bidirectional constraint - negation before binding', () => {
-  // This pattern SHOULD constrain $x to not equal any existing value
-  // But current implementation cannot handle this due to evaluation order
-  // See doc/v5-constraints-limitations.md
-  const result = Tendril('{(!_:$x) $x:_}').match({a: 1, b: 2}).solutions().toArray();
-  // Would need constraint propagation to work correctly
-  assert.equal(result.length, 0); // Should fail but currently succeeds
-});
-
-test('WORKAROUND: bind variable before negation', () => {
-  // This works because $x is bound before the negation checks it
+test('negation can reference previously bound variable', () => {
+  // $x must be bound before the negation can check against it
   const result = Tendril('{$x:_ (!_:$x)}').match({a: 1}).solutions().toArray();
-  // This checks: "for all OTHER keys, value != $x"
-  // But this is NOT the same as the bidirectional constraint above
+  // Matches key "a", then asserts no other field has value "a"
   assert.equal(result.length, 1);
 });
 
