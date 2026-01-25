@@ -56,9 +56,15 @@ This is a breaking change.
 The following syntax and semantics REPLACES the original object operators K:V, K?:V, 'each K:V', and 'each K?:V'; and REPLACES the original array operators *, ?, +, and variants; and REPLACES the original '!', lookahead, and lookbehinds.
 
 
+This is a draft, not a specification. Ignore underspecified pieces unless you see it going in a bad direction.
+
 ### Array local cuts 
 
-`[ A ! B ]`  Local split cut - The split point between A and B may not be renegotiated once A and B have been matched. The idiom `[ P* ! Q ]` then replaces the greedy possessive `[ P*+ Q ]`
+`[ A >> B ]` Find the rightmost split point such that A and B both match and then commit it. You can backtrack into A and B, but not change the split point (unless you backtrack past the whole expression). The implementation will optimize the case that A is a repetition.
+
+`[ A << B ]` Ditto, but find the *leftmost*.
+
+The idiom `[ P* >> Q ]` then supercedes the greedy possessive `[ P*+ Q ]` (The two are not 100% equivalent, but close enough.)
 
 
 ### Arrays
@@ -135,12 +141,10 @@ Solutions: [
 ```
    [ P ]          // Exactly one 
    [ P? ]         // Zero or one       
-   [ P* ]         // Zero or more, greedy
-   [ P+ ]         // One or more, greedy
+   [ P* ]         // Zero or more
+   [ P+ ]         // One or more
    [ P{m,n} ]     // given count
 
-   [ P*? ]         // Zero or more, lazy
-   [ P+? ]         // One or more, lazy
    
    [ ... $x ... ]    // Branch per index (this is a consequence of ... === _*). No change.
             
@@ -174,9 +178,25 @@ The ":V" piece is now a separate composable breadcrumb operator, analogous to th
 ```
 Thus { /foo/./bar/?:V } means { (/foo/./bar/):$x }, i.e. There is exactly one this./foo/, each of which has an optional single ./bar/, each of which has any value (not required all to be the same). 
 
----------------------------------------
+### Flow operator
 
-This is a draft, not a specification. Ignore underspecified pieces unless you see it going in a bad direction.
+Old behavior
+```
+The `->` operator collects matching key-value pairs into **buckets** during object iteration. This enables categorization and partitioning of object properties.
+
+{ $k: 1 -> %ones }              // collect all k:v where value is 1 into %ones
+{ $k: 1 -> %ones else 2 -> %twos }  // partition by value: 1s and 2s into separate buckets
+{ $k: 1 -> %ones else _ -> %rest }  // collect 1s; everything else goes to %rest
+```
+
+New behavior. Local scalar variables are automatically promoted to collections, in repetitions or object fields.  This can be a sparse array if some indices are skipped for whatever reason.
+```
+[ ($x,$x)* $y] ~= [ 3,3,5,5,7,7,9 ]
+// $x is local, so it is recorded as an array instead of a singleton.  
+// solution:
+//    {y:9, x:[3,5,7]}
+```
+
 
 ### Other syntax changes
 
