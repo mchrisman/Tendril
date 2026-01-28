@@ -1124,16 +1124,29 @@ ROOT_PATTERN := ITEM
 S_ITEM  := '$' IDENT
 S_GROUP := '@' IDENT
 
-ITEM :=
-      ITEM_TERM ('|' ITEM_TERM)*              # alternation: enumerate all matches
-    | ITEM_TERM ('else' ITEM_TERM)*           # prioritized: first match wins
+# ITEM is parameterized: allowStructures=true permits OBJ, ARR, @x, booleans, and null.
+# KEY positions use ITEM(false); VALUE positions use ITEM(true).
+#
+# Keys can be either strings (object property names) or numbers (array indices), since
+# breadcrumbs like foo.bar[3].baz navigate both. The grammar does not distinguish between
+# these cases to avoid further complexity. This does NOT imply automatic coercion.
+#
+# Note: This is a parse-time restriction only. Structures can still appear at runtime
+# in key position via variable bindings (e.g., {$k:$v} where $k is already bound to an
+# array). Such mismatches are simply match failures, not errors.
+
+ITEM := ITEM(true)                            # default: structures allowed
+
+ITEM(allowStructures) :=
+      ITEM_TERM(allowStructures) ('|' ITEM_TERM(allowStructures))*      # alternation
+    | ITEM_TERM(allowStructures) ('else' ITEM_TERM(allowStructures))*   # prioritized
 
 # The '->' suffix flows matching k:v pairs into a bucket during object iteration,
 # but may also appear elsewhere.
 # Precedence: 'as' (tightest) > '->' > 'else' (loosest)
 # So: K:V -> %x else W -> %y  parses as  K:((V -> %x) else (W -> %y))
-ITEM_TERM :=
-      ITEM_TERM_CORE ('->' BUCKET_REF FLOW_MOD?)?   # optional flow-into-bucket suffix
+ITEM_TERM(allowStructures) :=
+      ITEM_TERM_CORE(allowStructures) ('->' BUCKET_REF FLOW_MOD?)?
 
 BUCKET_REF :=
       '%' IDENT                                  # object bucket (collects k:v pairs)
@@ -1142,26 +1155,35 @@ BUCKET_REF :=
 FLOW_MOD :=
       '<' LABEL_REF '>'                       # label reference modifier: <^label>
 
-ITEM_TERM_CORE :=
-      '(' ITEM ')'
-    | '(' ITEM 'as' S_ITEM ('where' GUARD_EXPR)? ')'   # binding with pattern and optional guard
-    | '(' ITEM 'as' S_GROUP ')'               # group binding with pattern
-    | '(' ITEM 'where' GUARD_EXPR ')'         # anonymous guard (no binding)
-    | LOOK_AHEAD
+# Notation: [allowStructures] means "only if allowStructures=true"
+ITEM_TERM_CORE(allowStructures) :=
+      '(' ITEM(allowStructures) ')'
+    | '(' ITEM(allowStructures) 'as' S_ITEM ('where' GUARD_EXPR)? ')'
+    | [allowStructures] '(' ITEM(allowStructures) 'as' S_GROUP ')'   # group binding
+    | '(' ITEM(allowStructures) 'where' GUARD_EXPR ')'
+    | LOOK_AHEAD(allowStructures)
     | S_ITEM                                  # bare $x ≡ (_ as $x)
-    | S_GROUP                                 # bare @x ≡ (_* as @x)
-    | TYPED_WILD                              # _string, _number, _boolean
+    | [allowStructures] S_GROUP               # bare @x ≡ (_* as @x)
     | '_'
-    | LITERAL
-    | OBJ
-    | ARR
+    | '_string'
+    | '_number'
+    | [allowStructures] '_boolean'
+    | NUMBER
+    | [allowStructures] BOOLEAN
+    | [allowStructures] NULL
+    | QUOTED_STRING
+    | REGEX
+    | CI_STRING
+    | BAREWORD
+    | [allowStructures] LABEL_DECL? OBJ
+    | [allowStructures] LABEL_DECL? ARR
 
 GUARD_EXPR := <expression with operators: < > <= >= == != && || ! + - * / %>
             # References $variables, literals, _ (matched value), and functions: size(), number(), string(), boolean()
 
-LOOK_AHEAD :=
-      '(?' A_GROUP ')'
-    | '(!' A_GROUP ')'
+LOOK_AHEAD(allowStructures) :=
+      '(?' A_GROUP(allowStructures) ')'
+    | '(!' A_GROUP(allowStructures) ')'
 
 # --------------------------------------------------------------------
 # Arrays
@@ -1169,24 +1191,24 @@ LOOK_AHEAD :=
 
 ARR := LABEL_DECL? '[' A_BODY ']'             # optional label for scope control
 
-A_BODY := (A_GROUP (','? A_GROUP)*)?           # commas optional
+A_BODY := (A_GROUP(true) (','? A_GROUP(true))*)?    # commas optional; arrays allow structures
 
-A_GROUP :=
+A_GROUP(allowStructures) :=
       '...'                                    # ellipsis (three dots, or Unicode … U+2026)
-    | A_GROUP_BASE A_QUANT?                    # quantifiers bind tight
-      ( ('|' (A_GROUP_BASE A_QUANT?))*         # alternation: enumerate all
-      | ('else' (A_GROUP_BASE A_QUANT?))*      # prioritized: first match wins
+    | A_GROUP_BASE(allowStructures) A_QUANT?   # quantifiers bind tight
+      ( ('|' (A_GROUP_BASE(allowStructures) A_QUANT?))*      # alternation: enumerate all
+      | ('else' (A_GROUP_BASE(allowStructures) A_QUANT?))*   # prioritized: first match wins
       )
 
-A_GROUP_BASE :=
-      LOOK_AHEAD
+A_GROUP_BASE(allowStructures) :=
+      LOOK_AHEAD(allowStructures)
     | '(' A_BODY ')'                           # if >1 element => Seq node
     | '(' A_BODY 'as' S_GROUP ')'              # group binding with pattern
     | '(' A_BODY 'as' S_ITEM ('where' GUARD_EXPR)? ')'  # scalar binding with pattern and optional guard
     | '(' A_BODY 'where' GUARD_EXPR ')'        # anonymous guard (no binding)
     | S_GROUP                                  # bare @x ≡ (_* as @x)
     | S_ITEM                                   # bare $x ≡ (_ as $x)
-    | ITEM_TERM                                # including nested ARR/OBJ
+    | ITEM_TERM(allowStructures)
 
 A_QUANT :=
       '?' | '??' | '?+'
@@ -1239,8 +1261,8 @@ O_TERM :=
       KEY BREADCRUMB* ':' VALUE O_KV_QUANT?
     | '**' BREADCRUMB* ':' VALUE O_KV_QUANT?   # leading ** allowed (glob-style)
 
-KEY   := ITEM
-VALUE := ITEM
+KEY   := ITEM(false)                          # no structures, no booleans, no null
+VALUE := ITEM(true)                           # full ITEM
 
 # Object field semantics:
 # K:V          = weak: at least one k~K with v~V; bad entries (k~K, NOT v~V) allowed

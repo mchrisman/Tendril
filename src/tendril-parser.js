@@ -119,49 +119,50 @@ function eatVarName(p) {
 /**
  * Parse a parenthesized expression with optional binding and guard.
  * Handles: (INNER), (INNER as $x), (INNER as $x where EXPR), (INNER as @x), (INNER where EXPR)
- * @param {Parser} p - Parser instance
- * @param {Function} parseInner - Function to parse the inner content (returns AST node)
- * @param {Array<string>} stopTokens - Tokens that signal end of inner (besides 'as', 'where', ')')
- * @returns {Object|null} - AST node (SBind, GroupBind, Guarded, or plain inner), or null if no '('
+ * Uses backtracking style consistent with rest of parser.
+ * Note: Guard expressions on group bindings (@x) are not supported and will fail to parse.
  */
-function parseParenWithBindingAndGuard(p, parseInner, stopTokens = []) {
-  if (!p.maybe('(')) return null;
-
-  const inner = parseInner(p, [')', 'as', 'where', ...stopTokens]);
-
-  // Check for 'as $x' or 'as @x' binding suffix
-  if (p.maybe('as')) {
-    if (p.peek('$')) {
-      p.eat('$');
-      const name = eatVarName(p);
-      let guard = null;
-      if (p.maybe('where')) {
-        guard = parseExpr(p);
-      }
-      p.eat(')');
-      return SBind(name, inner, guard);
-    }
-    if (p.peek('@')) {
-      p.eat('@');
-      const name = eatVarName(p);
-      if (p.peek('where')) {
-        p.fail('guard expressions are not supported on group bindings (@var)');
-      }
-      p.eat(')');
-      return GroupBind(name, inner);
-    }
-    p.fail('expected $var or @var after "as"');
-  }
-
-  // Check for 'where EXPR' guard without binding (creates Guarded node)
-  if (p.maybe('where')) {
-    const guard = parseExpr(p);
-    p.eat(')');
-    return Guarded(inner, guard);
-  }
-
-  p.eat(')');
-  return inner;
+function parseParenWithBindingAndGuard(p, parseInner, allowStructures = true) {
+  return p.bt('paren-sbind-guard', () => {
+           p.eat('(');
+           const inner = parseInner(p);
+           p.eat('as'); p.eat('$');
+           const name = eatVarName(p);
+           p.eat('where');
+           const guard = parseExpr(p);
+           p.eat(')');
+           return SBind(name, inner, guard);
+         })
+      || p.bt('paren-sbind', () => {
+           p.eat('(');
+           const inner = parseInner(p);
+           p.eat('as'); p.eat('$');
+           const name = eatVarName(p);
+           p.eat(')');
+           return SBind(name, inner, null);
+         })
+      || (allowStructures && p.bt('paren-gbind', () => {
+           p.eat('(');
+           const inner = parseInner(p);
+           p.eat('as'); p.eat('@');
+           const name = eatVarName(p);
+           p.eat(')');
+           return GroupBind(name, inner);
+         }))
+      || p.bt('paren-guard', () => {
+           p.eat('(');
+           const inner = parseInner(p);
+           p.eat('where');
+           const guard = parseExpr(p);
+           p.eat(')');
+           return Guarded(inner, guard);
+         })
+      || p.bt('paren-plain', () => {
+           p.eat('(');
+           const inner = parseInner(p);
+           p.eat(')');
+           return inner;
+         });
 }
 
 /**
@@ -318,7 +319,7 @@ function parseArraySlicePattern(p) {
   // @[ A_BODY ]
   p.eat('@');
   p.eat('[');
-  const items = parseABody(p, ']');
+  const items = parseABody(p, true, ']');  // arrays always allow structures
   if (items.length === 0) {
     p.fail('empty array slice pattern @[ ] is not allowed');
   }
@@ -330,21 +331,24 @@ function parseArraySlicePattern(p) {
 
 // ---------- ITEM ----------
 
-function parseItem(p) {
+// ITEM is parameterized: allowStructures=true permits OBJ, ARR, @x, booleans, and null.
+// KEY positions use allowStructures=false; VALUE positions use allowStructures=true.
+
+function parseItem(p, allowStructures = true) {
   // ITEM := ITEM_TERM ('|' ITEM_TERM)* | ITEM_TERM ('else' ITEM_TERM)*
   // Both produce Alt nodes; else sets prioritized=true; cannot mix.
-  return p.span(() => parseItemInner(p));
+  return p.span(() => parseItemInner(p, allowStructures));
 }
 
-function parseItemInner(p) {
-  const first = parseItemTerm(p);
+function parseItemInner(p, allowStructures) {
+  const first = parseItemTerm(p, allowStructures);
 
   // Try alternation: A | B | C  (entire chain must succeed or we abandon it)
   const altChain = p.backtrack(() => {
     p.eat('|');
-    const alts = [first, parseItemTerm(p)];
+    const alts = [first, parseItemTerm(p, allowStructures)];
     while (p.backtrack(() => { p.eat('|'); return true; })) {
-      alts.push(parseItemTerm(p));
+      alts.push(parseItemTerm(p, allowStructures));
     }
     return Alt(alts, false);
   });
@@ -360,10 +364,10 @@ function parseItemInner(p) {
   const elseChain = p.backtrack(() => {
     p.eat('else');
     if (p.peek('!')) return null;  // 'else !' is for object strong semantics
-    const alts = [first, parseItemTerm(p)];
+    const alts = [first, parseItemTerm(p, allowStructures)];
     // Continue eating 'else' unless followed by '!' (object strong semantics)
     while (p.backtrack(() => { p.eat('else'); if (p.peek('!')) return null; return true; })) {
-      alts.push(parseItemTerm(p));
+      alts.push(parseItemTerm(p, allowStructures));
     }
     return Alt(alts, true);
   });
@@ -377,34 +381,33 @@ function parseItemInner(p) {
   return first;
 }
 
-function parseItemTerm(p) {
+function parseItemTerm(p, allowStructures = true) {
   // ITEM_TERM := ITEM_TERM_CORE ('->' S_GROUP FLOW_MOD?)? DIRECTIVE*
   // DIRECTIVE := '<collecting' COLLECT_EXPR 'in' ('%'|'@') IDENT 'across' '^' IDENT '>'
-  const core = parseItemTermCore(p);
+  const core = parseItemTermCore(p, allowStructures);
   // First check for flow operator (will be deprecated outside 'each' clauses)
   const withFlow = withOptionalFlow(p, core);
   // Then check for <collecting> directive
   return withOptionalCollecting(p, withFlow);
 }
 
-function parseItemTermCore(p) {
-  // ITEM_TERM_CORE := LOOK_AHEAD
-  //                 | '(' ITEM ')' | '(' ITEM 'as' ... ')' | '(' ITEM 'where' ... ')'
-  //                 | S_ITEM | S_GROUP | TYPED_WILD | '_' | LITERAL | OBJ | ARR
+function parseItemTermCore(p, allowStructures = true) {
+  // ITEM_TERM_CORE(allowStructures) - see grammar in README-old.md
+  // When allowStructures=false (KEY position): excludes OBJ, ARR, @x, _boolean, BOOLEAN, NULL
   //
   // Uses ordered backtracking: try each alternative, return first success.
 
-  return p.bt('lookahead', () => parseLookahead(p))
-      || parseParenWithBindingAndGuard(p, () => parseItem(p))
+  return p.bt('lookahead', () => parseLookahead(p, allowStructures))
+      || parseParenWithBindingAndGuard(p, () => parseItem(p, allowStructures), allowStructures)
       || p.bt('$bind', () => { p.eat('$'); return SBind(eatVarName(p), Any()); })
-      || p.bt('@bind', () => { p.eat('@'); return GroupBind(eatVarName(p), Quant(Any(), '*', 0, Infinity)); })
+      || (allowStructures && p.bt('@bind', () => { p.eat('@'); return GroupBind(eatVarName(p), Quant(Any(), '*', 0, Infinity)); }))
       || p.bt('any', () => { p.eat('any'); return Any(); })
       || p.bt('any_string', () => { p.eat('any_string'); return TypedAny('string'); })
       || p.bt('any_number', () => { p.eat('any_number'); return TypedAny('number'); })
-      || p.bt('any_boolean', () => { p.eat('any_boolean'); return TypedAny('boolean'); })
+      || (allowStructures && p.bt('any_boolean', () => { p.eat('any_boolean'); return TypedAny('boolean'); }))
       || p.bt('number', () => Lit(p.eat('num').v))
-      || p.bt('boolean', () => Bool(p.eat('bool').v))
-      || p.bt('null', () => { p.eat('null'); return Null(); })
+      || (allowStructures && p.bt('boolean', () => Bool(p.eat('bool').v)))
+      || (allowStructures && p.bt('null', () => { p.eat('null'); return Null(); }))
       || p.bt('string', () => Lit(p.eat('str').v))
       || p.bt('identifier', () => {
            const tok = p.eat('id');
@@ -423,17 +426,17 @@ function parseItemTermCore(p) {
            const {lower, desc} = p.eat('ci').v;
            return StringPattern('ci', desc, s => typeof s === 'string' && s.toLowerCase() === lower);
          })
-      || p.bt('labeled-obj', () => { p.eat('§'); const label = eatVarName(p); return parseObj(p, label); })
-      || p.bt('labeled-arr', () => { p.eat('§'); const label = eatVarName(p); return parseArr(p, label); })
-      || p.bt('object', () => parseObj(p))
-      || p.bt('array', () => parseArr(p))
-      || p.fail('expected item');
+      || (allowStructures && p.bt('labeled-obj', () => { p.eat('§'); const label = eatVarName(p); return parseObj(p, label); }))
+      || (allowStructures && p.bt('labeled-arr', () => { p.eat('§'); const label = eatVarName(p); return parseArr(p, label); }))
+      || (allowStructures && p.bt('object', () => parseObj(p)))
+      || (allowStructures && p.bt('array', () => parseArr(p)))
+      || p.fail(allowStructures ? 'expected item' : 'expected key');
 }
 
-function parseLookahead(p) {
+function parseLookahead(p, allowStructures = true) {
   // (? A_GROUP) or (! A_GROUP)
-  return p.backtrack(() => { p.eat('(?'); const pat = parseAGroup(p); p.eat(')'); return Look(false, pat); })
-      || p.backtrack(() => { p.eat('(!'); const pat = parseAGroup(p); p.eat(')'); return Look(true, pat); });
+  return p.backtrack(() => { p.eat('(?'); const pat = parseAGroup(p, allowStructures); p.eat(')'); return Look(false, pat); })
+      || p.backtrack(() => { p.eat('(!'); const pat = parseAGroup(p, allowStructures); p.eat(')'); return Look(true, pat); });
 }
 
 function parseObjectLookahead(p) {
@@ -445,10 +448,11 @@ function parseObjectLookahead(p) {
 // ---------- ARRAYS ----------
 
 // A_BODY := (A_GROUP (','? A_GROUP)*)?
-function parseABody(p, ...stopTokens) {
+// allowStructures defaults to true; arrays always allow nested structures
+function parseABody(p, allowStructures = true, ...stopTokens) {
   const items = [];
   while (!stopTokens.some(t => p.peek(t))) {
-    items.push(parseAGroup(p));
+    items.push(parseAGroup(p, allowStructures));
     p.maybe(',');  // Optional comma
   }
   return items;
@@ -458,13 +462,13 @@ function parseArr(p, label = null) {
   // ARR := '[' A_BODY ']'
   return p.span(() => {
     p.eat('[');
-    const items = parseABody(p, ']');
+    const items = parseABody(p, true, ']');  // arrays always allow structures
     p.eat(']');
     return Arr(items, label);
   });
 }
 
-function parseAGroup(p) {
+function parseAGroup(p, allowStructures = true) {
   // A_GROUP := '...' | A_GROUP_BASE A_QUANT? ('|' A_GROUP_BASE A_QUANT?)* | A_GROUP_BASE A_QUANT? ('else' A_GROUP_BASE A_QUANT?)*
 
   // Spread (quantifiers disallowed)
@@ -478,7 +482,7 @@ function parseAGroup(p) {
 
   // Parse base with optional quantifier
   const parseBaseWithQuant = () => {
-    const base = parseAGroupBase(p);
+    const base = parseAGroupBase(p, allowStructures);
     const q = parseAQuant(p);
     return q ? Quant(base, q.op, q.min, q.max) : base;
   };
@@ -512,17 +516,17 @@ function parseAGroup(p) {
   return first;
 }
 
-function parseAGroupBase(p) {
+function parseAGroupBase(p, allowStructures = true) {
   // Base A_GROUP without quantifiers or alternation
   // Uses ordered backtracking: try each alternative, return first success.
   // Note: $x and @x bindings are handled by parseItemTermCore (via parseItemTerm),
   // which also handles <collecting> suffixes. Don't duplicate those cases here.
-  return p.bt('arr-lookahead', () => parseLookahead(p))
-      || parseParenWithBindingAndGuard(p, (p, stopTokens) => {
-           const items = parseABody(p, ...stopTokens);
+  return p.bt('arr-lookahead', () => parseLookahead(p, allowStructures))
+      || parseParenWithBindingAndGuard(p, (p) => {
+           const items = parseABody(p, allowStructures, ')', 'as', 'where');
            return items.length === 1 ? items[0] : {type: 'Seq', items};
-         })
-      || parseItemTerm(p);
+         }, allowStructures)
+      || parseItemTerm(p, allowStructures);
 }
 
 // isAQuant removed - use backtracking with parseAQuant instead
@@ -676,7 +680,7 @@ function parseOTerm(p) {
     // match an initial key", while the breadcrumb does the actual depth navigation.
     // Example: { **:1 } → key=RootKey, breadcrumbs=[skip:Any], matches {x:{y:1}}.
     // Note: This does NOT match root-as-leaf (e.g., { **:1 } doesn't match bare 1).
-    const key = p.peek('**') ? RootKey() : parseItem(p);
+    const key = p.peek('**') ? RootKey() : parseItem(p, false);  // KEY: no structures
 
     // Parse breadcrumbs
     const breadcrumbs = [];
@@ -686,7 +690,7 @@ function parseOTerm(p) {
     const optional = !!p.maybe('?');
 
     p.eat(':');
-    const val = parseItem(p);
+    const val = parseItem(p);  // VALUE: structures allowed (default)
     const quant = parseOQuant(p);
 
     return OTerm(key, breadcrumbs, val, quant, optional, false);
@@ -695,10 +699,11 @@ function parseOTerm(p) {
 
 function parseBreadcrumb(p) {
   // BREADCRUMB := '**' ':'? | '**' '.'? KEY | '.' '**' ':'? | '.' '**' '.'? KEY | '.' KEY | '[' KEY ']'
-  return p.bt('bc-skip', () => { p.eat('**'); if (p.peek(':')) return Breadcrumb('skip', Any(), null); p.maybe('.'); return Breadcrumb('skip', parseItem(p), null); })
-      || p.bt('bc-dot-skip', () => { p.eat('.'); p.eat('**'); if (p.peek(':')) return Breadcrumb('skip', Any(), null); p.maybe('.'); return Breadcrumb('skip', parseItem(p), null); })
-      || p.bt('bc-dot', () => { p.eat('.'); return Breadcrumb('dot', parseItem(p), null); })
-      || p.bt('bc-bracket', () => { p.eat('['); const key = parseItem(p); p.eat(']'); return Breadcrumb('bracket', key, null); });
+  // All KEY positions use allowStructures=false
+  return p.bt('bc-skip', () => { p.eat('**'); if (p.peek(':')) return Breadcrumb('skip', Any(), null); p.maybe('.'); return Breadcrumb('skip', parseItem(p, false), null); })
+      || p.bt('bc-dot-skip', () => { p.eat('.'); p.eat('**'); if (p.peek(':')) return Breadcrumb('skip', Any(), null); p.maybe('.'); return Breadcrumb('skip', parseItem(p, false), null); })
+      || p.bt('bc-dot', () => { p.eat('.'); return Breadcrumb('dot', parseItem(p, false), null); })
+      || p.bt('bc-bracket', () => { p.eat('['); const key = parseItem(p, false); p.eat(']'); return Breadcrumb('bracket', key, null); });
 }
 
 // parseBQuant removed - breadcrumbs no longer support quantifiers in v5
