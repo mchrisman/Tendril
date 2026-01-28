@@ -333,12 +333,12 @@ Object patterns differ fundamentally from array patterns. Rather than matching p
 
 Each field clause `K:V` defines a **slice**: the set of the object's properties where the key matches K AND the value matches V. It also implicitly defines a **bad** set: pairs where the key matches K but the value does NOT match V.
 
-| Short form | Meaning |
-|------------|---------|
-| `K:V`      | At least one matching k:v pair exists |
+| Short form | Meaning                                                                                                     |
+|------------|-------------------------------------------------------------------------------------------------------------|
+| `K:V`      | At least one matching k:v pair exists                                                                       |
 | `each K:V` | At least one matching k:v pair exists, AND no bad entries (all keys matching K must have values matching V) |
-| `K?:V`     | Optional: if key exists, value must match. `K:V ?` also works. |
-| `each K?:V` | Optional + no bad entries: if key exists, value must match, and no bad entries. `each K:V ?` also works. |
+| `K?:V`     | Optional: if key exists, value must match. `K:V ?` also works.                                              |
+| `each K?:V` | Optional + no bad entries: if key exists, value must match, and no bad entries. `each K:V ?` also works.    |
 
 The `each` keyword triggers **strong semantics**: if a key matches K, its value MUST match V, or the pattern fails.
 

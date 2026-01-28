@@ -15,11 +15,14 @@ object syntax
 
 - Cases that don't seem very useful. 
 - Ambiguity about whether `{ _:$v }` forces all values to be the same (It doesn't because it branches on each key. )
-       
+
+There are a couple of bugs in how we handle matching of field keys. The first is that the optimization of doing a simple lookup if the key is '$var', an already bound variable or a literal, fails if it's a more complex structure like 'literal|$foo'.  The second is that matching of KEY is ad-hoc, repeats some but not all of the normal pattern-matching logic rather than using recursion to parse the sub-pattern properly.
+
+
 Array syntax, regex-like
 
-- Ambiguity about whether '[ $x* ]' forces all values to be the same (it does). 
-- How to write a pattern that matches '[ [foo,foo], [bar,bar], [baz,baz]]', since `[ [$x,$x]* ]` won't work? Proposed was `P~*` Which would automatically give a local scope to any variable that does not exist outside the pattern being repeated.
+- Ambiguity about whether '[ $x* ]' forces all values to be the same (it does, currently). 
+- How to write a pattern that matches '[ [foo,foo], [bar,bar], [baz,baz]]'?
 - Inherited from regular expressions, conflation between search strategy: (lazy, greedy, possessive) and quantifiers.  The former is not very composable. 
 
 General 
@@ -55,7 +58,6 @@ This is a breaking change.
 
 The following syntax and semantics REPLACES the original object operators K:V, K?:V, 'each K:V', and 'each K?:V'; and REPLACES the original array operators *, ?, +, and variants; and REPLACES the original '!', lookahead, and lookbehinds.
 
-
 This is a draft, not a specification. Ignore underspecified pieces unless you see it going in a bad direction.
 
 ### Array local cuts 
@@ -64,7 +66,7 @@ This is a draft, not a specification. Ignore underspecified pieces unless you se
 
 `[ A << B ]` Ditto, but find the *leftmost*.
 
-The idiom `[ P* >> Q ]` then supercedes the greedy possessive `[ P*+ Q ]` (The two are not 100% equivalent, but close enough.)
+The idiom `[ P* >> Q ]` then supercedes the greedy possessive `[ P*+ Q ]` (The two are not 100% equivalent, but close enough to support the same use cases with minimal tweaking.)
 
 
 ### Arrays
@@ -84,19 +86,29 @@ To state that shortly and more definitively: **We should be treating the set of 
 
 This offers an introductory explanation to how array repetitions work after we make them behave the same way as object fields.
 
-**"Unification:"**
+#### Unification in repeating patterns.
 
-**Variables are locally consistent.** When `$x` appears **inside** a repeating pattern (`*`, `+`, `...`, or object fields), the same variable must mean the same thing:
 
+In a repetition such as `FOO*` (FOO applies to more than one element) or `{ FOO:_ }` (FOO applies to more than one field name), the set of variable bindings splits into branches. Each application of the pattern can have its own values for the variables, which results in different "solutions". 
+
+Within a single application of the pattern, a variable's value must be consistent.
 ```
-[ ($x $x)* ]   // matches [3, 3, "p", "p", [8,9], [8,9]]
-               // solutions: x=3, x="p", x=[8,9]
+[ ($x $x)* ]   // matches [4, 4, "p", "p", [8,9], [8,9]]; the pattern ($x $x) is applied three times
+               // Three solutions: [ {x:4}, {x:"p"}, {x:[8,9]} ]
 ```
+Another way to say this: It's a repeated *pattern*, not repeated *data*.
 
-It's a repeated pattern, not repeated data.
-
-The same variable referenced **elsewhere** acts as a join constraint:
-
+Variables outside repetitions bind to a single value, forcing solutions to agree on that value.
+```
+[ ($x $x)* $x ]   // matches [4, 4, 4, 4, 4]
+                  // does not match [1, 1, 2, 2, 3] - every '$x' must agree with the terminal $x, which is global, outside the repetition
+```
+If there are two repetitions with different variables, both of them cause branching independently, resulting in a Cartesian product of solutions.
+```
+[$x+ '/' $y+]  // matches [1, 2, '/', 3, 4]
+               // solutions [{x:1,y:3},{x:1,y:4},{x:2,y:3},{x:2,y:4},]
+```
+In general, be careful with such independent loops, no matter whether nested or separate. These will result in Cartesian products, potentially O(m*n) solutions or worse. Sometimes that's what you need, but usually you are looking for something like an inner join, where a common variable ties together the loops and collapses the Cartesian product:
 ```
 {
     flowers: { $sku: $flower }  
@@ -107,39 +119,26 @@ The same variable referenced **elsewhere** acts as a join constraint:
 //       flowers: { "101":"rose", "102":"daffodil", "103":"tulip"},
 //       prices: ["101", 10.99, "102", 14.99]
 //    }
-```
-
-Results are like an inner join:
-
-```
 // Solutions:
-{ sku: 101, flower:"rose", price:10.99 }
-{ sku: 102, flower:"daffodil", price:14.99 }
+// { sku: 101, flower:"rose", price:10.99 }
+// { sku: 102, flower:"daffodil", price:14.99 }
 ```
 
-It merely *joins* on 'sku', it doesn't demand that every sku is the same.
 
 ---
 
-### Global uniication
+### Global unification
 
-We need a notation for variables that we wish to unify across repetitions as they do in the current implementation. Use postfix '^' for this.
-
+To force a variable to be global, when it would otherwise branch, use the postfix '^'.
 ```
-[ $x ([$x $x]* as @s) [$y $y]^* ] !~= [ 2, [2,2], [2,2], [3,3], [4,4], [5,5]]
-
-No solution
-
-[ $x ([$x $x]* as @s) [$y $y]^* ] ~= [ 2, [2,2], [2,2], [3,3], [3,3], [3,3]]
-
-Solutions: [
-{ x:2, s:[[2,2], [2,2]], y:3 },
-]
+[ $x* ]  // matches [1,2,3]
+[ $x^* ] // matches [4,4,4]; does not match [1,2,3]
 ```
 
 ## Simplified quantifiers
 ```
-   [ P ]          // Exactly one 
+   [ P ]          // Exactly one
+    
    [ P? ]         // Zero or one       
    [ P* ]         // Zero or more
    [ P+ ]         // One or more
@@ -149,38 +148,41 @@ Solutions: [
    [ ... $x ... ]    // Branch per index (this is a consequence of ... === _*). No change.
             
 ```
-### Objects, unified quantifiers, decoupled K:V
-```
-   { K }          // Exactly one matching key
-   { K? }         // Zero or one       
-   { K* }         // Zero or more
-   { K+ }         // One or more
-   { K#{m,n} }    // given count
 
-```
-The ":V" piece is now a separate composable breadcrumb operator, analogous to the repeated pattern P in an array repetition P*.  (But the user guide will continue to teach "K:V" as a single idiom.)
+### Objects
 
+Object field matching is simplified
 ```
-   // All of the following are composable with quantifiers on K. 
-   
-   { K  :V     }        // Behavior change: k~K implies v~V
+   { K:V }          // "required field" - One or more keys match K, and for all keys matching K, the value matches V
+   { K?:V }         // "optional field" - Zero or more keys match K, and for all keys matching K, the value matches V
+```
+Breadcrumbs in paths do not get their own quantifiers. Instead, the entire path is treated like a single compound key.
+```
+{ P.Q.R?: V } // If there exist any unbroken paths `p.q.r`, then they must each have a value matching `V`. 
+```
 
-   { K  .KEY   }        // Behavior change: now implies exactly one matching KEY per K; use KEY? if it's optional
-   { K  [KEY]  }        // Behavior change: now implies exactly one matching KEY per K; use KEY? if it's optional
-   
-   { K?  ./foo/+   }    // Example of separate quantifiers on K and the breadcrumb.   
-   { K#{10}  [$i+]  }   // Example of separate quantifiers on K and the breadcrumb. 
-   
-   { K  :V^    }        // Unifying globally
-   { K  .KEY^  }        // Unifying globally
-   { K  [KEY^] }        // Unifying globally
+For any other counting needs, we have our standard categorization idiom, explained elsewhere, which is an advanced usage. But we add a new shortcut operator to make counting very easy in both arrays and object fields.
+```
+// #{m,n} May be attached to anything within an array repetition clause or an object field clause, and it fails if the count is not within the specified range.
+[ (yes#{10,} | no) ]  // Matches an array with at least 10 'yes' votes
+{ (password|Password)#{1}: _ }  // matches an object having password or Password, but not both.
+```
+
+A more complex counting example, done manually with the standard categorization idiom (*Advanced usage*) explained elsewhere. I mention it here to show that we have an escape hatch to handle uncommon cases.
+
+```   
+   // 
+   ({ $k : /foo/ -> %groupA 
+          else /bar/ -> %groupB 
+          else _->%others 
+   } where size(%groupB) <= size(%groupA))
    
 ```
-Thus { /foo/./bar/?:V } means { (/foo/./bar/):$x }, i.e. There is exactly one this./foo/, each of which has an optional single ./bar/, each of which has any value (not required all to be the same). 
+
 
 ### Flow operator
 
-Old behavior
+Current behavior
 ```
 The `->` operator collects matching key-value pairs into **buckets** during object iteration. This enables categorization and partitioning of object properties.
 
@@ -189,14 +191,12 @@ The `->` operator collects matching key-value pairs into **buckets** during obje
 { $k: 1 -> %ones else _ -> %rest }  // collect 1s; everything else goes to %rest
 ```
 
-New behavior. Local scalar variables are automatically promoted to collections, in repetitions or object fields.  This can be a sparse array if some indices are skipped for whatever reason.
+New:
+The same may now also be used in arrays:
 ```
-[ ($x,$x)* $y] ~= [ 3,3,5,5,7,7,9 ]
-// $x is local, so it is recorded as an array instead of a singleton.  
-// solution:
-//    {y:9, x:[3,5,7]}
+[ (1 -> %ones else 2 -> %twos else _ -> %rest)* ...]   // This will iterate over the whole array. 
+[ (1 -> %ones else 2 -> %twos)* ... ]                  // This will stop at the first item that isn't 1 or 2
 ```
-
 
 ### Other syntax changes
 
@@ -204,9 +204,17 @@ These additional changes are incidental but planned.
 
 `[# ]` replaces `< >` as the syntax for directives.  (This is to free the angle brackets for other uses.)
 
-'!' Is no longer used for "not" nor for "emphasis/strong". To avoid confusion it will be reserved exclusively for cuts.
+'!' Is no longer used for "cut" nor for "emphasis/strong". To avoid confusion it will be reserved exclusively for negation.
 
-'(A ==> B)' Is a new **zero-width, short-circuiting, non-backtracking, non-binding "implies" operator**. `(B if A)` is an exact synonym. This will have other uses later, but to start with, `(==>B)` replaces `(?B)` as a positive look ahead, and `fail if A` replaces `(!A)` as a negative lookahead.
+'(A ==> B)' Is a new **zero-width, short-circuiting, non-backtracking, non-binding "implies" operator**. `(B if A)` is an exact synonym. This will have other uses later, but to start with, `(==>B)` can logically replace `(?B)` as a positive look ahead, and `fail if A` can replace `(!A)` as a negative lookahead.
+
+`(A ==> B)` is a new operator pronounced 'A implies B'. `(B if A)` is an exact synonym. It first tries to satisfy A. If it succeeds, it tries to also satisfy (?B) from the same starting point. Backtracking is permitted. `A` consumes, `B` is a zero-width lookahead from the start of the expression.  It is similar to `(?A)(?B)A|(!A)` except that A is evaluated only once.  Bound variables in A and B may escape.
+
+
+
+It is similar to `(!B) else A`. (Is it identical? probably.)
+
+This will have other uses later, but to start with, `(==>B)` can logically replace `(?B)` as a positive look ahead, and `fail if A` can replace `(!A)` as a negative lookahead.
 
 `(A & B)` is a new consuming (non-zero-width) operator indicating that an item or sequence of items match a but also match B under the same bindings. Vars that only appear inside the construction are local.
 
